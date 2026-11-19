@@ -17,6 +17,8 @@ export class Player {
   frozen = true;
   /** Fallback when pointer lock is blocked (e.g. inside an embedded page): drag with the mouse to look. */
   dragLook = false;
+  /** Multiplier on walk/run speed (cold slows you down). */
+  speedMul = 1;
   private dragging = false;
   private velY = 0;
   private grounded = false;
@@ -73,7 +75,7 @@ export class Player {
       if (this.keys.has('KeyS')) move.sub(forward);
       if (this.keys.has('KeyD')) move.add(right);
       if (this.keys.has('KeyA')) move.sub(right);
-      if (move.lengthSq() > 0) move.normalize().multiplyScalar(this.keys.has('ShiftLeft') ? RUN : WALK);
+      if (move.lengthSq() > 0) move.normalize().multiplyScalar((this.keys.has('ShiftLeft') ? RUN : WALK) * this.speedMul);
 
       if (this.grounded && this.keys.has('Space')) this.velY = JUMP;
       this.velY -= GRAVITY * dt;

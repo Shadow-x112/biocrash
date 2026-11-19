@@ -5,6 +5,7 @@ import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
 import { Player } from './player';
 import { Sky } from './sky';
+import { Survival } from './survival';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, DIG_RADIUS, DIG_STRENGTH, REACH, GEN_VERSION, SAVE_VERSION } from './config';
 
@@ -48,14 +49,17 @@ async function main() {
     player.teleport(new THREE.Vector3(meta.player.x, meta.player.y, meta.player.z));
     player.yaw = meta.player.yaw;
     player.pitch = meta.player.pitch;
-  } else {
-    const gen = createGenerator(seed);
-    player.teleport(new THREE.Vector3(0.5, gen.surfaceHeight(0.5, 0.5) + 6, 0.5));
   }
 
+  // The crash site: where a new world starts and where you recover after freezing.
+  const spawnPoint = new THREE.Vector3(0.5, createGenerator(seed).surfaceHeight(0.5, 0.5) + 6, 0.5);
+  if (!meta?.player) player.teleport(spawnPoint);
   if (meta?.timeOfDay !== undefined) sky.time = meta.timeOfDay;
+  const survival = new Survival();
+  if (meta?.vitals) { survival.health = meta.vitals.health; survival.warmth = meta.vitals.warmth; }
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
+    vitals: { health: survival.health, warmth: survival.warmth },
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0;
@@ -70,6 +74,7 @@ async function main() {
   setInterval(() => { void saveNow(); }, 10_000);
   window.addEventListener('pagehide', () => { void saveNow(); });
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'F3') { e.preventDefault(); hud.style.display = hud.style.display === 'none' ? '' : 'none'; }
     if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
   });
   window.addEventListener('keydown', (e) => { if (e.code === 'F5') { e.preventDefault(); void saveNow().then(() => flash('Saved')); } });
@@ -164,7 +169,23 @@ async function main() {
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival } });
+
+  // --- Vitals HUD -------------------------------------------------------------------------------
+  const deathEl = $('death'), frostEl = $('frost');
+  const hpBar = document.querySelector('#hp > div') as HTMLElement, heatBar = document.querySelector('#heat > div') as HTMLElement;
+  let dying = false;
+  const fahrenheit = navigator.language === 'en-US';
+  const fmtTemp = (c: number) => (fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
+  const updateVitals = () => {
+    hpBar.style.width = `${survival.health}%`;
+    heatBar.style.width = `${survival.warmth}%`;
+    heatBar.style.backgroundColor = survival.warmth > 60 ? '#e0a050' : survival.warmth > 30 ? '#c9b98a' : '#8fc3e8';
+    $('hpv').textContent = String(Math.ceil(survival.health));
+    $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
+    $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
+    frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
+  };
 
   // --- Loop ---------------------------------------------------------------------------------------
   const timer = new THREE.Timer();
@@ -180,6 +201,23 @@ async function main() {
     player.update(dt);
     physics.step();
     sky.update(dt, camera);
+
+    // Survival: warmth follows the air temperature; freezing costs health; death respawns you at the crash site.
+    if (!player.frozen && !dying) {
+      survival.update(dt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, meshes: world.meshes() });
+      player.speedMul = survival.moveFactor();
+      if (survival.dead) {
+        dying = true;
+        deathEl.style.display = 'flex';
+        setTimeout(() => {
+          player.teleport(spawnPoint);
+          survival.reset();
+          deathEl.style.display = 'none';
+          dying = false;
+        }, 3000);
+      }
+    }
+    updateVitals();
 
     const keyDig = playing && player.isDown('KeyE'), keyFill = playing && player.isDown('KeyQ');
     if (keyDig || keyFill || held.dig || held.fill) {

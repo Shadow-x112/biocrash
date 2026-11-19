@@ -55,6 +55,8 @@ export class Sky {
   readonly sunDir = new THREE.Vector3();
   /** 0 by day, 1 at full night. */
   night = 0;
+  /** 0 at night, 1 in full daylight: drives air temperature. */
+  daylight = 1;
   private dome: THREE.Mesh;
   private uniforms = {
     zenith: { value: new THREE.Color() }, horizon: { value: new THREE.Color() },
@@ -91,6 +93,7 @@ export class Sky {
     const dayW = THREE.MathUtils.smoothstep(elev, 0.02, 0.3);
     const nightW = THREE.MathUtils.smoothstep(-elev, 0.02, 0.18);
     this.night = nightW;
+    this.daylight = THREE.MathUtils.smoothstep(elev, -0.12, 0.4);
     const mixPal = (key: 'zenith' | 'horizon' | 'hemiSky' | 'hemiGround', out: THREE.Color) =>
       out.copy(DUSK[key]).lerp(DAY[key], dayW).lerp(NIGHT[key], nightW);
 

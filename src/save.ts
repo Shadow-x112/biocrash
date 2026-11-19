@@ -10,6 +10,7 @@ export interface SaveMeta {
   savedAt: number;
   /** 0..1 time of day; optional so older saves still load. */
   timeOfDay?: number;
+  vitals?: { health: number; warmth: number };
 }
 
 interface ExportFile extends SaveMeta {
