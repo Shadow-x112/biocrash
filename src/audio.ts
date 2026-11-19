@@ -305,12 +305,15 @@ export class Audio {
   footstep(run: boolean, sneak: boolean, surface: 'moss' | 'gravel' | 'soil') {
     if (!this.ctx) return;
     if (this.has(`step_${surface}_1`)) {
-      // Surfaces with their own crouch/run recordings (soil: Nebula Audio) use them; others reuse the walk set.
+      // Surfaces with their own crouch/run recordings (soil: Nebula Audio) use them; gravel/moss (MGW) reuse the walk set.
       const mode = sneak ? 'crouch_' : run ? 'run_' : '';
       const own = mode !== '' && this.has(`step_${surface}_${mode}1`);
       const set = own ? `step_${surface}_${mode}` : `step_${surface}_`;
+      let n = 1;
+      while (this.has(`${set}${n + 1}`)) n++; // sets have 5 (MGW) or 8 (Nebula) variants
       let id = this.lastStep;
-      while (id === this.lastStep) id = `${set}${1 + Math.floor(Math.random() * 8)}`;
+      while (id === this.lastStep && n > 1) id = `${set}${1 + Math.floor(Math.random() * n)}`;
+      if (n === 1) id = `${set}1`;
       this.lastStep = id;
       const level = sneak ? (own ? 0.45 : 0.3) : run ? 0.85 : 0.6;
       this.play(id, { gain: level * Math.pow(10, (Math.random() * 2 - 1) * 1.5 / 20), rate: (run && !own ? 1.04 : 1) * (1 + (Math.random() * 2 - 1) * 0.04) });
