@@ -1,30 +1,41 @@
-// Carried resources. M1 keeps it to stack counts; slots, weight and storage come later.
-export type ItemId = 'stone' | 'stalkwood' | 'fiber';
+// Carried resources and tools. M1 keeps it to stack counts; slots, weight and storage come later.
+export type ItemId = 'stone' | 'stalkwood' | 'fiber' | 'cordage' | 'stone_pick' | 'stone_knife' | 'spear';
+export type Cost = Partial<Record<ItemId, number>>;
 
 export const ITEM_NAMES: Record<ItemId, string> = {
   stone: 'Stone',
   stalkwood: 'Stalkwood',
   fiber: 'Fiber',
+  cordage: 'Cordage',
+  stone_pick: 'Stone pick',
+  stone_knife: 'Stone knife',
+  spear: 'Spear',
 };
 
+/** Materials show in the inventory panel; tools live on the hotbar. */
+export const MATERIALS: ItemId[] = ['stone', 'stalkwood', 'fiber', 'cordage'];
+export const TOOLS: ItemId[] = ['stone_pick', 'stone_knife', 'spear'];
+
 export class Inventory {
-  readonly counts: Record<ItemId, number> = { stone: 0, stalkwood: 0, fiber: 0 };
+  readonly counts: Record<ItemId, number> = {
+    stone: 0, stalkwood: 0, fiber: 0, cordage: 0, stone_pick: 0, stone_knife: 0, spear: 0,
+  };
   onChange: () => void = () => {};
 
   add(id: ItemId, n = 1) { this.counts[id] += n; this.onChange(); }
 
-  has(cost: Partial<Record<ItemId, number>>) {
+  has(cost: Cost) {
     return (Object.keys(cost) as ItemId[]).every((k) => this.counts[k] >= (cost[k] ?? 0));
   }
 
-  take(cost: Partial<Record<ItemId, number>>) {
+  take(cost: Cost) {
     if (!this.has(cost)) return false;
     for (const k of Object.keys(cost) as ItemId[]) this.counts[k] -= cost[k] ?? 0;
     this.onChange();
     return true;
   }
 
-  load(c: Partial<Record<ItemId, number>> | undefined) {
+  load(c: Partial<Record<string, number>> | undefined) {
     if (c) for (const k of Object.keys(this.counts) as ItemId[]) this.counts[k] = c[k] ?? 0;
     this.onChange();
   }

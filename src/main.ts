@@ -7,10 +7,12 @@ import { Player } from './player';
 import { Sky } from './sky';
 import { Survival } from './survival';
 import { Props } from './props';
-import { Inventory, ITEM_NAMES, type ItemId } from './inventory';
+import { Inventory, ITEM_NAMES, MATERIALS, type ItemId } from './inventory';
+import { RECIPES } from './crafting';
+import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER } from './tools';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
 import { SaveStore, type SaveMeta } from './save';
-import { CHUNK, VIEW_RADIUS, DIG_RADIUS, DIG_STRENGTH, REACH, GEN_VERSION, SAVE_VERSION } from './config';
+import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION } from './config';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const hud = $('hud'), overlay = $('overlay'), status = $('status');
@@ -48,6 +50,8 @@ async function main() {
   if (meta) for (const [k, v] of await store.loadChunks()) world.edits.set(k, v);
 
   const player = new Player(RAPIER, physics, camera);
+  scene.add(camera); // the held tool is a child of the camera
+  const hotbar = new Hotbar(camera);
   if (meta?.player) {
     player.teleport(new THREE.Vector3(meta.player.x, meta.player.y, meta.player.z));
     player.yaw = meta.player.yaw;
@@ -120,12 +124,13 @@ async function main() {
     }
   };
   $('play').onclick = () => { void startPlay(); };
+  let craftOpen = false;
   document.addEventListener('pointerlockchange', () => {
     playing = document.pointerLockElement === canvas;
-    overlay.style.display = playing ? 'none' : 'flex';
+    overlay.style.display = playing || craftOpen ? 'none' : 'flex';
   });
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'Escape' && player.dragLook && playing) { playing = false; overlay.style.display = 'flex'; }
+    if (e.code === 'Escape' && player.dragLook && playing && !craftOpen) { playing = false; overlay.style.display = 'flex'; }
   });
   $('export').onclick = async () => {
     await saveNow();
@@ -183,16 +188,17 @@ async function main() {
     ray.setFromCamera(new THREE.Vector2(0, 0), camera);
     const hit = ray.intersectObjects(world.meshes(), false)[0];
     if (!hit || !hit.face) return;
+    const power = DIG_POWER[hotbar.slot];
     if (held.dig) {
-      world.brush(hit.point, DIG_RADIUS, DIG_STRENGTH, -1);
+      world.brush(hit.point, power.radius, power.strength, -1);
     } else if (held.fill) {
       const p = hit.point.clone().addScaledVector(hit.face.normal, 0.6);
-      if (p.distanceTo(player.position) < DIG_RADIUS + 0.9) return; // don't bury yourself
-      world.brush(p, DIG_RADIUS, DIG_STRENGTH, +1);
+      if (p.distanceTo(player.position) < power.radius + 0.9) return; // don't bury yourself
+      world.brush(p, power.radius, power.strength, +1);
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar } });
 
   // --- Vitals HUD -------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost');
@@ -213,8 +219,10 @@ async function main() {
   // --- Gathering, campfires and the inventory panel ---------------------------------------------
   const promptEl = $('prompt'), invEl = $('inv');
   const renderInv = () => {
-    invEl.innerHTML = (Object.keys(inventory.counts) as ItemId[])
+    invEl.innerHTML = MATERIALS
       .map((k) => `<div class="row"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`).join('');
+    renderHotbar();
+    if (craftOpen) renderCraft();
   };
   inventory.onChange = renderInv;
   inventory.load(meta?.inventory as Partial<Record<ItemId, number>> | undefined);
@@ -240,7 +248,11 @@ async function main() {
     if (!playing || e.repeat) return;
     if (e.code === 'KeyE') {
       const { fire, prop } = look();
-      if (prop) { props.pick(prop); inventory.add(prop.kind); }
+      if (prop) {
+        props.pick(prop);
+        inventory.add(prop.kind, prop.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
+        hotbar.swing();
+      }
       else if (fire) {
         if (fire.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
         else if (inventory.take({ stalkwood: 1 })) campfires.addFuel(fire);
@@ -248,6 +260,67 @@ async function main() {
       }
     }
     if (e.code === 'KeyC') placeCampfire();
+    const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
+    if (n >= 0 && !hotbar.select(SLOTS[n], (id) => inventory.counts[id] > 0)) flash(`Craft a ${SLOT_NAMES[SLOTS[n]].toLowerCase()} first (Tab).`);
+  });
+  window.addEventListener('wheel', (e) => {
+    if (!playing) return;
+    const owned = SLOTS.filter((s) => s === 'hands' || inventory.counts[s] > 0);
+    const i = owned.indexOf(hotbar.slot);
+    hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
+  });
+
+  // --- Hotbar and crafting menu -------------------------------------------------------------------
+  const craftEl = $('craft'), recipesEl = $('recipes');
+  function renderHotbar() {
+    $('hotbar').innerHTML = SLOTS.map((s, i) => {
+      const owned = s === 'hands' || inventory.counts[s] > 0;
+      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}"><b>${i + 1}</b>${SLOT_NAMES[s]}</div>`;
+    }).join('');
+  }
+  hotbar.onChange = renderHotbar;
+  function renderCraft() {
+    $('recipes').innerHTML = RECIPES.map((r) => {
+      const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
+        const ok = inventory.counts[k] >= (r.cost[k] ?? 0);
+        return `<span class="${ok ? 'ok' : 'no'}">${r.cost[k]} ${ITEM_NAMES[k].toLowerCase()}</span>`;
+      }).join(' · ');
+      const owned = r.unique && r.makes !== 'campfire' && inventory.counts[r.makes] > 0;
+      const can = inventory.has(r.cost) && !owned;
+      const name = r.makes === 'campfire' ? 'Campfire' : ITEM_NAMES[r.makes];
+      const btn = r.makes === 'campfire' ? '<span class="hint">press C in the world</span>'
+        : owned ? '<span class="hint">owned</span>'
+        : `<button data-r="${r.id}" ${can ? '' : 'disabled'}>Craft</button>`;
+      return `<div class="recipe"><div><div class="rname">${name}${r.amount > 1 ? ' ×' + r.amount : ''}</div>
+        <div class="rcost">${costs}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
+    }).join('');
+  }
+  recipesEl.addEventListener('click', (e) => {
+    const id = (e.target as HTMLElement).dataset.r;
+    const r = RECIPES.find((x) => x.id === id);
+    if (!r || r.makes === 'campfire' || !inventory.take(r.cost)) return;
+    inventory.add(r.makes, r.amount);
+    if (r.unique) hotbar.select(r.makes as typeof SLOTS[number], () => true);
+  });
+  const openCraft = () => {
+    craftOpen = true;
+    playing = false;
+    renderCraft();
+    craftEl.style.display = 'flex';
+    if (document.pointerLockElement) document.exitPointerLock();
+  };
+  const closeCraft = () => {
+    craftOpen = false;
+    craftEl.style.display = 'none';
+    if (player.dragLook) playing = true;
+    else void startPlay();
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Tab') {
+      e.preventDefault();
+      if (craftOpen) closeCraft();
+      else if (playing) openCraft();
+    } else if (e.code === 'Escape' && craftOpen) closeCraft();
   });
   const updatePrompt = () => {
     if (!playing) { promptEl.textContent = ''; return; }
@@ -289,6 +362,7 @@ async function main() {
     }
     updateVitals();
     campfires.update(dt, player.position);
+    hotbar.update(dt, playing && ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k)));
     if ((promptTimer -= dt) <= 0) { promptTimer = 0.1; updatePrompt(); }
 
     const keyDig = playing && player.isDown('KeyR'), keyFill = playing && player.isDown('KeyF');
@@ -296,9 +370,9 @@ async function main() {
       if ((held.cooldown -= dt) <= 0) {
         const prev = { dig: held.dig, fill: held.fill };
         if (keyDig) held.dig = true; else if (keyFill) held.fill = true;
-        tryBrush();
+        if (hotbar.slot === 'spear' && held.dig && !held.fill) { hotbar.swing(); held.cooldown = 0.55; } // jab; hits creatures in step 5
+        else { tryBrush(); hotbar.swing(); held.cooldown = DIG_POWER[hotbar.slot].interval; }
         held.dig = prev.dig; held.fill = prev.fill;
-        held.cooldown = 0.12;
       }
     } else held.cooldown = 0;
 

@@ -38,6 +38,23 @@
       #toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); color: #fff; opacity: 0;
                transition: opacity 0.4s; background: rgba(0,0,0,0.5); padding: 6px 12px; border-radius: 6px;
                font: 13px system-ui, sans-serif; pointer-events: none; }
+      #hotbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; }
+      #hotbar .slot { width: 86px; padding: 6px 6px 7px; border-radius: 6px; background: rgba(0,0,0,0.4); color: #e8edf2;
+                      font: 12px system-ui, sans-serif; text-align: center; border: 2px solid transparent; }
+      #hotbar .slot b { display: block; font-size: 10px; color: #9aa6b2; }
+      #hotbar .slot.sel { border-color: #e07a2f; background: rgba(0,0,0,0.6); }
+      #hotbar .slot.locked { opacity: 0.35; }
+      #craft { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(8,10,14,0.55); }
+      #craft .panel { width: 460px; max-height: 80vh; overflow: auto; padding: 18px 20px; background: #161b22; border-radius: 10px; color: #e8edf2; }
+      #craft h2 { margin: 0 0 4px; font-size: 18px; }
+      #craft .sub { margin: 0 0 12px; font-size: 12px; color: #8a96a3; }
+      .recipe { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #262d36; }
+      .rname { font-weight: 600; font-size: 14px; }
+      .rcost { font-size: 12px; margin: 2px 0; } .rcost .ok { color: #9fd18b; } .rcost .no { color: #e08a7a; }
+      .rblurb { font-size: 12px; color: #9aa6b2; }
+      .recipe button { padding: 7px 14px; border: 0; border-radius: 6px; background: #e07a2f; color: #111; font-weight: 600; cursor: pointer; }
+      .recipe button:disabled { background: #2b3440; color: #6b7682; cursor: default; }
+      .recipe .hint { font-size: 11px; color: #8a96a3; white-space: nowrap; }
       #status { margin-top: 10px; font-size: 12px; color: #8a96a3; min-height: 1em; }
     </style>
   </head>
@@ -53,6 +70,8 @@
     <div id="prompt"></div>
     <div id="toast"></div>
     <div id="inv"></div>
+    <div id="hotbar"></div>
+    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub">Tab or Esc to close</p><div id="recipes"></div></div></div>
     <div id="death">You froze. Recovering at the crash site…</div>
     <div id="crosshair"></div>
     <div id="overlay">
@@ -60,7 +79,8 @@
         <h1>Biocrash</h1>
         <p>M0 tech test: smooth terrain, digging, collision and saving.</p>
         <div class="keys">WASD move · Space jump · Shift run
-E pick up / use · C build campfire
+E pick up / use · Tab crafting · 1-4 tools
+C build campfire
 Left click dig · Right click fill (or R / F)
 Arrow keys also look around
 T fast time · F3 debug info · F5 save now · Esc pause</div>
