@@ -126,7 +126,9 @@ async function main() {
   $('play').onclick = () => { void startPlay(); };
   let craftOpen = false;
   document.addEventListener('pointerlockchange', () => {
-    playing = document.pointerLockElement === canvas;
+    const locked = document.pointerLockElement === canvas;
+    if (locked) playing = true;
+    else if (!craftOpen) playing = false; // Esc: pause
     overlay.style.display = playing || craftOpen ? 'none' : 'flex';
   });
   window.addEventListener('keydown', (e) => {
@@ -314,9 +316,19 @@ async function main() {
   const closeCraft = () => {
     craftOpen = false;
     craftEl.style.display = 'none';
-    if (player.dragLook) playing = true;
-    else void startPlay();
+    playing = true; // keys work straight away; mouse capture follows (or a click restores it)
+    if (!player.dragLook) {
+      canvas.requestPointerLock({ unadjustedMovement: true })
+        .catch(() => canvas.requestPointerLock())
+        .catch(() => flash('Click to resume mouse look.'));
+    }
   };
+  // If mouse capture was lost without opening the pause menu, a click on the game takes it back.
+  canvas.addEventListener('mousedown', () => {
+    if (playing && !player.dragLook && document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => canvas.requestPointerLock()).catch(() => {});
+    }
+  });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Tab') {
       e.preventDefault();
