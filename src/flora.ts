@@ -1,8 +1,9 @@
 // Fungal forest flora: giant mushrooms you can harvest for stalkwood, glowing sprouts, and drifting
 // spores at night. Placement comes from the worker's decoration pass (unedited terrain, seeded per chunk).
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
+import { InstancePool } from './pool';
 
 export const STALK_HARVESTS = 4;   // uses per mushroom
 export const STALK_YIELD = 2;      // stalkwood per use
@@ -12,22 +13,20 @@ interface Shroom {
   id: string; source: number; kind: 'giant' | 'small';
   base: THREE.Vector3; radius: number; height: number;
   collider: RAPIER.Collider | null;
-  stalkIdx: number; capMesh: number; capIdx: number;
+  slots: { stalk: number; gill: number; cap: number; spots: number[] };
   alive: boolean;
 }
 interface ChunkFlora {
-  meshes: THREE.InstancedMesh[];
-  stalks: THREE.InstancedMesh | null; gills: THREE.InstancedMesh | null; spots: THREE.InstancedMesh | null;
-  caps: THREE.InstancedMesh[];
   shrooms: Shroom[];
-  sprouts: THREE.InstancedMesh | null; sproutSource: number[];
+  sprouts: { slot: number; source: number }[];
 }
 
 const STALK = new THREE.MeshStandardMaterial({ color: 0xd8ccb4, roughness: 0.9, flatShading: true });
 const GILLS = new THREE.MeshStandardMaterial({ color: 0x8c6f86, roughness: 1, flatShading: true, side: THREE.DoubleSide });
 const SPOTS = new THREE.MeshStandardMaterial({ color: 0x20302c, emissive: 0x6ff0d8, emissiveIntensity: 0.3, flatShading: true });
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
-const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.75, flatShading: true }));
+const CAP = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, flatShading: true }); // tinted per instance
+const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.Color(c));
 
 // Unit geometries, scaled per instance: 1 m tall stalk, 1 m radius cap.
 const stalkGeo = new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0);
@@ -47,13 +46,17 @@ const sproutGeo = (() => {
   out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   return out;
 })();
-const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
 export class Flora {
   readonly group = new THREE.Group();
   /** How many times each mushroom has been harvested (saved). */
   readonly harvested = new Map<string, number>();
   private chunks = new Map<string, ChunkFlora>();
+  private stalks: InstancePool;
+  private gills: InstancePool;
+  private caps: InstancePool;
+  private spots: InstancePool;
+  private sprouts: InstancePool;
   private spores: THREE.Points;
   private sporeVel: Float32Array;
   // Scratch objects for look-ups (no per-call allocation).
@@ -64,6 +67,11 @@ export class Flora {
   private dir = new THREE.Vector3();
 
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, private avoid: THREE.Vector3) {
+    this.stalks = new InstancePool(stalkGeo, STALK, this.group, 1024);
+    this.gills = new InstancePool(gillGeo, GILLS, this.group, 1024);
+    this.caps = new InstancePool(capGeo, CAP, this.group, 1024, true);
+    this.spots = new InstancePool(spotGeo, SPOTS, this.group, 1024 * SPOTS_PER);
+    this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
     const n = 260;
     const pos = new Float32Array(n * 3);
     this.sporeVel = new Float32Array(n * 3);
@@ -89,13 +97,13 @@ export class Flora {
   onChunkUnload(key: string) {
     const c = this.chunks.get(key);
     if (!c) return;
-    for (const m of c.meshes) { this.group.remove(m); m.dispose(); }
-    for (const s of c.shrooms) if (s.collider) this.physics.removeCollider(s.collider, false);
+    for (const s of c.shrooms) this.removeShroom(s);
+    for (const sp of c.sprouts) this.sprouts.release(sp.slot);
     this.chunks.delete(key);
   }
 
   private spawn(key: string, deco: DecoData) {
-    const c: ChunkFlora = { meshes: [], stalks: null, gills: null, spots: null, caps: [], shrooms: [], sprouts: null, sproutSource: [] };
+    const c: ChunkFlora = { shrooms: [], sprouts: [] };
     type Placed = { p: THREE.Vector3; h: number; r: number; cap: number; tilt: number; spin: number; color: number; id: string; source: number; kind: 'giant' | 'small' };
     const placed: Placed[] = [];
     for (const kind of ['giant', 'small'] as const) {
@@ -114,86 +122,60 @@ export class Flora {
       }
     }
 
-    if (placed.length) {
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), v = new THREE.Vector3(), local = new THREE.Vector3();
-      const stalks = new THREE.InstancedMesh(stalkGeo, STALK, placed.length);
-      const gills = new THREE.InstancedMesh(gillGeo, GILLS, placed.length);
-      const caps = CAP_COLORS.map((mat) => new THREE.InstancedMesh(capGeo, mat, placed.length));
-      const capCount = CAP_COLORS.map(() => 0);
-      const spots = new THREE.InstancedMesh(spotGeo, SPOTS, placed.length * SPOTS_PER);
-      placed.forEach((o, i) => {
-        e.set(o.tilt, o.spin, o.tilt * 0.6);
-        q.setFromEuler(e);
-        m.compose(v.copy(o.p).setY(o.p.y - 0.3), q, sc.set(o.r, o.h + 0.3, o.r));
-        stalks.setMatrixAt(i, m);
-        const topP = v.set(0, o.h, 0).applyQuaternion(q).add(o.p).clone();
-        m.compose(topP, q, sc.setScalar(o.cap));
-        const capIdx = capCount[o.color]++;
-        caps[o.color].setMatrixAt(capIdx, m);
-        m.compose(v.copy(topP).setY(topP.y + 0.02), q, sc.setScalar(o.cap));
-        gills.setMatrixAt(i, m);
-        for (let k = 0; k < SPOTS_PER; k++) {
-          const a = k * 2.4 + o.spin, rr = 0.35 + (k % 3) * 0.2;
-          local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55, Math.sin(a) * rr).multiplyScalar(o.cap);
-          m.compose(local.applyQuaternion(q).add(topP), q, sc.setScalar(o.cap * 0.9));
-          spots.setMatrixAt(i * SPOTS_PER + k, m);
-        }
-        const collider = o.h > 5
-          ? this.physics.createCollider(this.rapier.ColliderDesc.cylinder(o.h / 2, o.r * 0.85).setTranslation(o.p.x, o.p.y + o.h / 2, o.p.z))
-          : null;
-        c.shrooms.push({ id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, collider, stalkIdx: i, capMesh: o.color, capIdx, alive: true });
-      });
-      caps.forEach((im, i) => { im.count = capCount[i]; });
-      for (const im of [stalks, gills, spots, ...caps]) {
-        im.instanceMatrix.needsUpdate = true;
-        im.computeBoundingSphere();
-        this.group.add(im);
-        c.meshes.push(im);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), v = new THREE.Vector3(), local = new THREE.Vector3(), topP = new THREE.Vector3();
+    for (const o of placed) {
+      e.set(o.tilt, o.spin, o.tilt * 0.6);
+      q.setFromEuler(e);
+      m.compose(v.copy(o.p).setY(o.p.y - 0.3), q, sc.set(o.r, o.h + 0.3, o.r));
+      const stalk = this.stalks.alloc(m);
+      topP.set(0, o.h, 0).applyQuaternion(q).add(o.p);
+      m.compose(topP, q, sc.setScalar(o.cap));
+      const cap = this.caps.alloc(m, CAP_COLORS[o.color]);
+      m.compose(v.copy(topP).setY(topP.y + 0.02), q, sc.setScalar(o.cap));
+      const gill = this.gills.alloc(m);
+      const spots: number[] = [];
+      for (let k = 0; k < SPOTS_PER; k++) {
+        const a = k * 2.4 + o.spin, rr = 0.35 + (k % 3) * 0.2;
+        local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55, Math.sin(a) * rr).multiplyScalar(o.cap);
+        m.compose(local.applyQuaternion(q).add(topP), q, sc.setScalar(o.cap * 0.9));
+        spots.push(this.spots.alloc(m));
       }
-      c.stalks = stalks; c.gills = gills; c.spots = spots; c.caps = caps;
+      const collider = o.h > 5
+        ? this.physics.createCollider(this.rapier.ColliderDesc.cylinder(o.h / 2, o.r * 0.85).setTranslation(o.p.x, o.p.y + o.h / 2, o.p.z))
+        : null;
+      c.shrooms.push({ id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, collider, slots: { stalk, gill, cap, spots }, alive: true });
     }
 
     // Glowing sprouts.
     const sd = deco.sprout;
-    const keep: number[] = [];
-    for (let i = 0; i < sd.length / STRIDE; i++) if (sd[i * STRIDE + 8]) keep.push(i);
-    if (keep.length) {
-      const im = new THREE.InstancedMesh(sproutGeo, SPROUT, keep.length);
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), sc = new THREE.Vector3();
-      keep.forEach((i, idx) => {
-        const o = i * STRIDE, s = 0.6 + sd[o + 4] * 0.9;
-        m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(s));
-        im.setMatrixAt(idx, m);
-      });
-      im.instanceMatrix.needsUpdate = true;
-      im.computeBoundingSphere();
-      this.group.add(im);
-      c.meshes.push(im);
-      c.sprouts = im;
-      c.sproutSource = keep;
+    const up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3();
+    for (let i = 0; i < sd.length / STRIDE; i++) {
+      const o = i * STRIDE;
+      if (!sd[o + 8]) continue;
+      m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(0.6 + sd[o + 4] * 0.9));
+      c.sprouts.push({ slot: this.sprouts.alloc(m), source: i });
     }
     this.chunks.set(key, c);
   }
 
+  private removeShroom(s: Shroom) {
+    if (!s.alive) return;
+    s.alive = false;
+    if (s.collider) { this.physics.removeCollider(s.collider, false); s.collider = null; }
+    this.stalks.release(s.slots.stalk);
+    this.gills.release(s.slots.gill);
+    this.caps.release(s.slots.cap);
+    for (const sp of s.slots.spots) this.spots.release(sp);
+  }
+
   /** After digging or filling: mushrooms and sprouts whose ground changed are removed (with their colliders). */
   private applyValidity(c: ChunkFlora, deco: DecoData) {
-    for (const s of c.shrooms) {
-      if (!s.alive || deco[s.kind][s.source * STRIDE + 8]) continue;
-      s.alive = false;
-      if (s.collider) { this.physics.removeCollider(s.collider, false); s.collider = null; }
-      c.stalks!.setMatrixAt(s.stalkIdx, ZERO); c.stalks!.instanceMatrix.needsUpdate = true;
-      c.gills!.setMatrixAt(s.stalkIdx, ZERO); c.gills!.instanceMatrix.needsUpdate = true;
-      c.caps[s.capMesh].setMatrixAt(s.capIdx, ZERO); c.caps[s.capMesh].instanceMatrix.needsUpdate = true;
-      for (let k = 0; k < SPOTS_PER; k++) c.spots!.setMatrixAt(s.stalkIdx * SPOTS_PER + k, ZERO);
-      c.spots!.instanceMatrix.needsUpdate = true;
-    }
-    if (c.sprouts) {
-      let changed = false;
-      c.sproutSource.forEach((i, idx) => {
-        if (i >= 0 && !deco.sprout[i * STRIDE + 8]) { c.sprouts!.setMatrixAt(idx, ZERO); c.sproutSource[idx] = -1; changed = true; }
-      });
-      if (changed) c.sprouts.instanceMatrix.needsUpdate = true;
-    }
+    for (const s of c.shrooms) if (s.alive && !deco[s.kind][s.source * STRIDE + 8]) this.removeShroom(s);
+    c.sprouts = c.sprouts.filter((sp) => {
+      if (deco.sprout[sp.source * STRIDE + 8]) return true;
+      this.sprouts.release(sp.slot);
+      return false;
+    });
   }
 
   /** The mushroom stalk the camera faces within reach (for harvesting stalkwood). */

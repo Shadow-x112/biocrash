@@ -325,16 +325,19 @@ export class Fauna {
   }
 
   /** The creature (or carcass) the camera points at within reach. */
+  private lookRay = new THREE.Ray();
+  private lookSphere = new THREE.Sphere();
+  private lookHit = new THREE.Vector3();
   lookAt(camera: THREE.Camera, reach: number) {
-    const origin = camera.getWorldPosition(new THREE.Vector3());
-    const dir = camera.getWorldDirection(new THREE.Vector3());
+    camera.getWorldPosition(this.lookRay.origin);
+    camera.getWorldDirection(this.lookRay.direction);
     let best: Creature | null = null, bestT = reach;
-    const ray = new THREE.Ray(origin, dir), centre = new THREE.Vector3(), hit = new THREE.Vector3();
     for (const c of this.list) {
       if (c.harvested) continue;
-      const sphere = new THREE.Sphere(c.hitCentre(centre), c.species.radius * (c.alive ? 1 : 1.3));
-      if (ray.intersectSphere(sphere, hit)) {
-        const t = hit.distanceTo(origin);
+      c.hitCentre(this.lookSphere.center);
+      this.lookSphere.radius = c.species.radius * (c.alive ? 1 : 1.3);
+      if (this.lookRay.intersectSphere(this.lookSphere, this.lookHit)) {
+        const t = this.lookHit.distanceTo(this.lookRay.origin);
         if (t < bestT) { bestT = t; best = c; }
       }
     }

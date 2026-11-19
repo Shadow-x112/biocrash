@@ -1,6 +1,6 @@
 // Chunk streaming, player edits, worker pool and physics colliders for the terrain.
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import { CHUNK, PAD, MIN_CY, MAX_CY, VIEW_RADIUS, COLLIDER_RADIUS, chunkKey } from '../config';
 import type { MeshRequest, MeshResponse } from './mesher.worker';
 import type { DecoData } from './deco';

@@ -1,6 +1,6 @@
 // Biocrash: entry point. Builds the world and systems, runs the game-state machine and the frame loop.
 import * as THREE from 'three';
-import RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIERType from '@dimforge/rapier3d';
 import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
 import { Input } from './input';
@@ -30,7 +30,10 @@ const ATTACK: Record<Slot, { reach: number; damage: number }> = {
 const USE_REACH = 3.2;
 
 async function main() {
-  await RAPIER.init();
+  // Physics is a separate ~3 MB WebAssembly file: load it while the page is already showing.
+  hud.textContent = 'Loading physics…';
+  const RAPIER: typeof RAPIERType = await import('@dimforge/rapier3d');
+  hud.textContent = '';
 
   // --- Renderer, scene, camera ---------------------------------------------------------------
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -402,6 +405,9 @@ async function main() {
   const timer = new THREE.Timer();
   timer.connect(document);
   let fps = 0, frameMs = 0, uiTimer = 0, actionCooldown = 0;
+  // Per-section timings (ms, smoothed) for the F3 profiler.
+  const prof = { world: 0, physics: 0, sim: 0, render: 0 };
+  const smooth = (k: keyof typeof prof, v: number) => { prof[k] = prof[k] * 0.9 + v * 0.1; };
   const floorY = MIN_CY * CHUNK - 8;
   renderer.setAnimationLoop(() => {
     timer.update();
@@ -409,12 +415,17 @@ async function main() {
     const t0 = performance.now();
     const simulating = state === 'playing' || state === 'dead';
 
+    let tm = performance.now();
     world.update(player.position);
+    smooth('world', performance.now() - tm);
     player.frozen = !world.isReadyAt(player.position) || state === 'dead';
     if (simulating) {
+      tm = performance.now();
       player.update(dt);
       physics.step();
       world.afterPhysics();
+      smooth('physics', performance.now() - tm);
+      tm = performance.now();
       if (player.position.y < floorY) player.teleport(spawnPoint); // fell out of the world
 
       sky.update(dt, camera);
@@ -445,11 +456,14 @@ async function main() {
         else if (dig && hotbar.slot === 'spear') { hotbar.swing(); actionCooldown = 0.55; } // a jab at nothing
         else { brush(fill && !dig); hotbar.swing(); actionCooldown = DIG_POWER[hotbar.slot].interval; }
       } else if (!dig && !fill) actionCooldown = 0;
+      smooth('sim', performance.now() - tm);
     } else {
       player.update(0); // keep the camera placed while paused
     }
 
+    tm = performance.now();
     renderer.render(scene, camera);
+    smooth('render', performance.now() - tm);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;
     fps = fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
 
@@ -463,7 +477,9 @@ async function main() {
         hud.textContent =
           `FPS ${fps.toFixed(0)}   frame ${frameMs.toFixed(1)} ms\n` +
           `chunks ${world.stats.loaded}  queued ${world.stats.queued}  mesh ${world.stats.meshMs.toFixed(1)} ms\n` +
-          `tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  draws ${renderer.info.render.calls}\n` +
+          `tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  draws ${renderer.info.render.calls}  geos ${renderer.info.memory.geometries}\n` +
+          `ms  world ${prof.world.toFixed(2)}  physics ${prof.physics.toFixed(2)}  sim ${prof.sim.toFixed(2)}  render ${prof.render.toFixed(2)}\n` +
+          `props ${props.count}  creatures ${fauna.list.length}\n` +
           `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}${player.frozen ? '  (loading ground…)' : ''}\n` +
           `time ${sky.clock()}${sky.speed > 1 ? ' (fast)' : ''}  edited chunks ${world.edits.size}  last save ${lastSaveMs.toFixed(1)} ms\n` +
           `seed ${seed}  ${state}${store.owner ? '' : '  (read-only tab)'}`;

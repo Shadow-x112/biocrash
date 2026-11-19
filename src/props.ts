@@ -14,11 +14,8 @@ interface PropKind {
 }
 
 interface ChunkProps {
-  meshes: THREE.InstancedMesh[];
-  /** Per mesh: prop ids by instance index ('' once picked or gone). */
-  ids: string[][];
-  /** Per mesh: candidate index in the deco data, to match validity updates after edits. */
-  source: number[][];
+  /** Live instances: pool slot and prop id per kind. */
+  slots: { kind: PropKind; slot: number; id: string; source: number }[];
 }
 
 function fiberGeometry() {
@@ -57,113 +54,129 @@ const KINDS: PropKind[] = [
   },
 ];
 
-const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+import { InstancePool } from './pool';
 
 export class Props {
   readonly group = new THREE.Group();
   readonly picked = new Set<string>();
   private chunks = new Map<string, ChunkProps>();
+  private pools: Map<PropKind['id'], InstancePool>;
+  /** Pool slot -> owning chunk and entry, per kind. */
+  private owners = new Map<THREE.InstancedMesh, Map<number, { key: string; id: string }>>();
   private ray = new THREE.Raycaster();
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private spin = new THREE.Quaternion();
+  private lie = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
   private s = new THREE.Vector3();
   private p = new THREE.Vector3();
   private n = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
-  private xAxis = new THREE.Vector3(1, 0, 0);
   private centre = new THREE.Vector2(0, 0);
+
+  constructor() {
+    this.pools = new Map(KINDS.map((k) => {
+      const pool = new InstancePool(k.geometry, k.material, this.group, 2048);
+      pool.mesh.userData.kind = k.id;
+      return [k.id, pool] as const;
+    }));
+  }
 
   /** Called by the world whenever a chunk gets new data. */
   onChunkMesh(key: string, deco: DecoData) {
     const existing = this.chunks.get(key);
-    if (existing) this.applyValidity(existing, deco);
+    if (existing) this.applyValidity(key, existing, deco);
     else this.spawn(key, deco);
   }
 
   onChunkUnload(key: string) {
     const c = this.chunks.get(key);
     if (!c) return;
-    for (const m of c.meshes) { this.group.remove(m); m.dispose(); }
+    for (const e of c.slots) this.releaseSlot(e.kind, e.slot);
     this.chunks.delete(key);
   }
 
+  private ownerMap(kind: PropKind) {
+    const mesh = this.pools.get(kind.id)!.mesh;
+    let map = this.owners.get(mesh);
+    if (!map) { map = new Map(); this.owners.set(mesh, map); }
+    return map;
+  }
+
+  private releaseSlot(kind: PropKind, slot: number) {
+    this.ownerMap(kind).delete(slot);
+    this.pools.get(kind.id)!.release(slot);
+  }
+
   private spawn(key: string, deco: DecoData) {
-    const c: ChunkProps = { meshes: [], ids: [], source: [] };
+    const c: ChunkProps = { slots: [] };
+    const meshesBefore = [...this.pools.values()].map((p) => p.mesh);
     for (const kind of KINDS) {
       const d = deco[kind.id];
-      const keep: number[] = [];
+      const pool = this.pools.get(kind.id)!;
       for (let i = 0; i < d.length / STRIDE; i++) {
-        if (!d[i * STRIDE + 8]) continue; // ground dug away or buried
-        if (this.picked.has(`${key}:${kind.id}:${i}`)) continue;
-        keep.push(i);
-      }
-      if (keep.length === 0) continue;
-      const im = new THREE.InstancedMesh(kind.geometry, kind.material, keep.length);
-      im.userData.kind = kind.id;
-      const ids: string[] = [];
-      keep.forEach((i, idx) => {
         const o = i * STRIDE;
+        if (!d[o + 8]) continue; // ground dug away or buried
+        const id = `${key}:${kind.id}:${i}`;
+        if (this.picked.has(id)) continue;
         const sc = kind.scale[0] + d[o + 5] * (kind.scale[1] - kind.scale[0]);
         // Tilt to the slope: approximate the normal from ny with a seeded lean direction.
         const lean = Math.acos(Math.min(1, d[o + 3])), dir = d[o + 6] * Math.PI * 2;
         this.n.set(Math.sin(lean) * Math.cos(dir), d[o + 3], Math.sin(lean) * Math.sin(dir)).normalize();
         this.q.setFromUnitVectors(this.up, this.n);
         this.spin.setFromAxisAngle(this.up, d[o + 4] * Math.PI * 2);
-        if (kind.lying) this.spin.multiply(new THREE.Quaternion().setFromAxisAngle(this.xAxis, Math.PI / 2));
+        if (kind.lying) this.spin.multiply(this.lie);
         this.q.multiply(this.spin);
         this.p.set(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, kind.yOffset * sc);
         this.m.compose(this.p, this.q, this.s.setScalar(sc));
-        im.setMatrixAt(idx, this.m);
-        ids.push(`${key}:${kind.id}:${i}`);
-      });
-      im.instanceMatrix.needsUpdate = true;
-      im.computeBoundingSphere();
-      this.group.add(im);
-      c.meshes.push(im); c.ids.push(ids); c.source.push(keep);
+        const slot = pool.alloc(this.m);
+        c.slots.push({ kind, slot, id, source: i });
+      }
     }
     this.chunks.set(key, c);
+    // If a pool grew it now has a new mesh, so the owner maps must be rebuilt; otherwise just add ours.
+    if ([...this.pools.values()].some((p, i) => p.mesh !== meshesBefore[i])) this.rebuildOwners();
+    else for (const e of c.slots) this.ownerMap(e.kind).set(e.slot, { key, id: e.id });
+  }
+
+  /** Owner lookup is keyed by the current pool meshes (which change when a pool grows). */
+  private rebuildOwners() {
+    this.owners.clear();
+    for (const [key, c] of this.chunks) for (const e of c.slots) this.ownerMap(e.kind).set(e.slot, { key, id: e.id });
   }
 
   /** After digging or filling: props whose ground changed disappear (not marked as picked). */
-  private applyValidity(c: ChunkProps, deco: DecoData) {
-    c.meshes.forEach((im, mi) => {
-      const d = deco[im.userData.kind as DecoKind];
-      let changed = false;
-      c.source[mi].forEach((i, idx) => {
-        if (!c.ids[mi][idx] || d[i * STRIDE + 8]) return;
-        c.ids[mi][idx] = '';
-        im.setMatrixAt(idx, ZERO);
-        changed = true;
-      });
-      if (changed) im.instanceMatrix.needsUpdate = true;
+  private applyValidity(_key: string, c: ChunkProps, deco: DecoData) {
+    c.slots = c.slots.filter((e) => {
+      if (deco[e.kind.id][e.source * STRIDE + 8]) return true;
+      this.releaseSlot(e.kind, e.slot);
+      return false;
     });
   }
 
   /** What prop (if any) the camera is looking at within reach. */
   lookAt(camera: THREE.Camera, reach: number): { kind: ItemId; mesh: THREE.InstancedMesh; index: number; id: string; dist: number } | null {
+    for (const pool of this.pools.values()) pool.prepareRaycast();
     this.ray.setFromCamera(this.centre, camera);
     this.ray.far = reach;
     const hit = this.ray.intersectObjects(this.group.children, false)[0];
     if (!hit || hit.instanceId === undefined) return null;
     const mesh = hit.object as THREE.InstancedMesh;
-    for (const c of this.chunks.values()) {
-      const mi = c.meshes.indexOf(mesh);
-      if (mi < 0) continue;
-      const id = c.ids[mi][hit.instanceId];
-      if (!id) return null;
-      return { kind: mesh.userData.kind as ItemId, mesh, index: hit.instanceId, id, dist: hit.distance };
-    }
-    return null;
+    const owner = this.owners.get(mesh)?.get(hit.instanceId);
+    if (!owner) return null;
+    return { kind: mesh.userData.kind as ItemId, mesh, index: hit.instanceId, id: owner.id, dist: hit.distance };
   }
 
   pick(target: { mesh: THREE.InstancedMesh; index: number; id: string }) {
     this.picked.add(target.id);
-    target.mesh.setMatrixAt(target.index, ZERO);
-    target.mesh.instanceMatrix.needsUpdate = true;
-    for (const c of this.chunks.values()) {
-      const mi = c.meshes.indexOf(target.mesh);
-      if (mi >= 0) c.ids[mi][target.index] = '';
-    }
+    const owner = this.owners.get(target.mesh)?.get(target.index);
+    if (!owner) return;
+    const c = this.chunks.get(owner.key);
+    const kind = KINDS.find((k) => k.id === target.mesh.userData.kind)!;
+    if (c) c.slots = c.slots.filter((e) => !(e.kind === kind && e.slot === target.index));
+    this.releaseSlot(kind, target.index);
   }
+
+  /** Live prop count (debug overlay). */
+  get count() { let n = 0; for (const p of this.pools.values()) n += p.size; return n; }
 }

@@ -1,6 +1,6 @@
 // First-person survivor: mouse look, WASD, jump, sneak, Rapier character controller.
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { Input } from './input';
 
 const RADIUS = 0.35;
