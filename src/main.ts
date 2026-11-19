@@ -146,7 +146,14 @@ async function main() {
     clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => { t.style.opacity = '0'; }, 3000);
   };
-  if (!store.owner) flash('This world is open in another tab. Changes here will not be saved.');
+  if (store.incompatible) {
+    flash(`${store.incompatible.reason} Your old world is kept: Export it from the pause menu, or choose New world.`);
+    $('status').textContent = store.incompatible.reason + ' This session is not saved.';
+  } else if (!store.owner) {
+    flash('This world is open in another tab. Changes here will not be saved.');
+    for (const id of ['import', 'reset']) { const b = $<HTMLButtonElement>(id); b.disabled = true; b.title = 'Open in another tab: manage the world there.'; }
+  }
+  SaveStore.onVersionChange = () => { stopSaving(); flash('A newer Biocrash opened in another tab. This tab stopped saving: reload it.'); };
 
   // --- Saving --------------------------------------------------------------------------------------
   const currentMeta = (): SaveMeta => ({
@@ -178,6 +185,14 @@ async function main() {
   };
   const autosave = window.setInterval(() => { void saveNow(); }, 10_000);
   window.addEventListener('pagehide', () => { void saveNow(); });
+  // Hidden is the likely end of the session (mobile, tab switching): save, pause and stop the audio clock now.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      void saveNow();
+      if (state === 'playing' || state === 'craft') setState('menu');
+      audio.suspend();
+    } else audio.resume();
+  });
   const stopSaving = () => { store.suppressed = true; clearInterval(autosave); };
 
   // --- Game state ----------------------------------------------------------------------------------
@@ -196,7 +211,36 @@ async function main() {
     if (s !== 'playing') $('prompt').textContent = '';
     audio.setWorldPaused(s !== 'playing' && s !== 'dead');
   };
-  const requestLock = () => canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => canvas.requestPointerLock());
+  /** Captures the mouse. Resolves/rejects from the pointerlockchange/pointerlockerror events, because the Promise form
+   *  of requestPointerLock() isn't available in every browser; unadjustedMovement (raw input) is Chromium-only. */
+  const requestLock = () => new Promise<void>((resolve, reject) => {
+    if (document.pointerLockElement === canvas) { resolve(); return; }
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      document.removeEventListener('pointerlockchange', onChange);
+      document.removeEventListener('pointerlockerror', onError);
+      if (ok) resolve(); else reject(new Error('Mouse capture was refused'));
+    };
+    const onChange = () => { if (document.pointerLockElement === canvas) finish(true); };
+    let retried = false;
+    const plain = () => {
+      retried = true;
+      try { (canvas.requestPointerLock() as unknown as Promise<void> | undefined)?.catch?.(() => finish(false)); } catch { finish(false); }
+    };
+    // With the Promise form, a refused raw-input option shows up as a rejection (and maybe an error event): retry plain.
+    const onError = () => { if (retried || !usedPromise) finish(false); };
+    const timer = setTimeout(() => finish(false), 1500);
+    document.addEventListener('pointerlockchange', onChange);
+    document.addEventListener('pointerlockerror', onError);
+    let usedPromise = false;
+    try {
+      const r = canvas.requestPointerLock({ unadjustedMovement: true }) as unknown as Promise<void> | undefined;
+      if (r && typeof r.catch === 'function') { usedPromise = true; r.catch(() => { if (!settled && !retried) plain(); }); }
+    } catch { plain(); }
+  });
   const resume = async () => {
     audio.unlock();
     if (player.dragLook) { setState('playing'); return; }
@@ -231,13 +275,22 @@ async function main() {
   $('export').onclick = async () => {
     await saveNow();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(store.exportFile(currentMeta(), world.edits));
+    a.href = URL.createObjectURL(store.exportRaw() ?? store.exportFile(currentMeta(), world.edits));
     a.download = `biocrash-save-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    flash('Save exported');
+    flash(store.incompatible ? 'Old world exported (unchanged)' : 'Save exported');
   };
+  // The graphics driver can drop the WebGL context (driver reset, GPU switch). three.js restores it; pause meanwhile.
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    if (state === 'playing' || state === 'craft') setState('menu');
+    if (document.pointerLockElement) document.exitPointerLock();
+    flash('Graphics were reset. Waiting for them to come back\u2026');
+  });
+  canvas.addEventListener('webglcontextrestored', () => flash('Graphics restored. Click to play.'));
   $('import').onclick = () => {
+    if (!store.owner) { flash('This world is open in another tab. Import it there.'); return; }
     const picker = document.createElement('input');
     picker.type = 'file';
     picker.accept = 'application/json';
@@ -254,6 +307,7 @@ async function main() {
   };
   let resetArmed = false;
   $('reset').onclick = async () => {
+    if (!store.owner) { flash('This world is open in another tab. Reset it there.'); return; }
     if (!resetArmed) {
       resetArmed = true;
       flash('Click "New world" again to delete this world.');
@@ -473,7 +527,8 @@ async function main() {
       return;
     }
     if (e.code === 'Escape') {
-      if (state === 'craft') { setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.')); }
+      // Esc isn't a user gesture, so it can't recapture the mouse: go to the pause menu, whose button can.
+      if (state === 'craft') setState(player.dragLook ? 'playing' : 'menu');
       else if (state === 'playing' && player.dragLook) setState('menu');
       return;
     }
@@ -620,7 +675,7 @@ async function main() {
             player.teleport(spawnPoint);
             survival.reset();
             deathEl.style.display = 'none';
-            setState('playing');
+            setState(player.dragLook || document.pointerLockElement === canvas ? 'playing' : 'menu');
           }, 3000);
         }
       }
@@ -693,5 +748,24 @@ async function main() {
 
 main().catch((err) => {
   console.error(err);
-  hud.textContent = `Failed to start: ${(err as Error).message}`;
+  // Safe start: never leave the player stuck. Offer the raw save and a clean start, even if the game itself can't run.
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d1014;color:#e8edf2;font:14px system-ui,sans-serif;z-index:10';
+  box.innerHTML = `<div style="max-width:440px;padding:24px;background:#161b22;border-radius:10px"><h2 style="margin:0 0 8px">Biocrash couldn\u2019t start</h2>
+    <p style="color:#b9c2cc"></p><button id="fx-export">Export raw save</button> <button id="fx-new">Start a new world</button></div>`;
+  box.querySelector('p')!.textContent = (err as Error).message;
+  document.body.append(box);
+  box.querySelector<HTMLButtonElement>('#fx-export')!.onclick = async () => {
+    const blob = await SaveStore.dumpRaw();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `biocrash-raw-save-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+  };
+  let armed = false;
+  box.querySelector<HTMLButtonElement>('#fx-new')!.onclick = async (e) => {
+    if (!armed) { armed = true; (e.target as HTMLButtonElement).textContent = 'Click again to delete the old world'; return; }
+    await SaveStore.wipe();
+    location.reload();
+  };
 });

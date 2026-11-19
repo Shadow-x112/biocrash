@@ -26,7 +26,9 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.held.delete(e.code));
     window.addEventListener('blur', () => this.held.clear());
-    target.addEventListener('mousedown', (e) => this.held.add(`Mouse${e.button}`));
+    // Mouse buttons only count while the mouse is captured: the click that recaptures it must not also dig or attack.
+    // (In drag-to-look mode mouseActions is false, so mouse buttons never act anyway.)
+    target.addEventListener('mousedown', (e) => { if (document.pointerLockElement === target) this.held.add(`Mouse${e.button}`); });
     window.addEventListener('mouseup', (e) => this.held.delete(`Mouse${e.button}`));
     target.addEventListener('contextmenu', (e) => e.preventDefault());
   }

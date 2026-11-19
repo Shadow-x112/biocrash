@@ -17,7 +17,9 @@ export class Audio {
   private insectTimer = 0;
   private last = new Map<string, number>(); // per-sound cooldowns
   ambShelf!: BiquadFilterNode;
-  private world!: GainNode;          // sfx + ambience pass through here so they can be ducked under scares
+  private world!: GainNode;
+  private pause!: GainNode;          // 0 while a menu is open
+  private paused = false;          // sfx + ambience pass through here so they can be ducked under scares
   private reverbIn!: GainNode;       // shared reverb send
   private reverbOpen!: GainNode;     // short, airy tail outdoors
   private reverbCave!: GainNode;     // long, dark tail underground
@@ -42,7 +44,9 @@ export class Audio {
     const lim = ctx.createDynamicsCompressor();
     lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.003; lim.release.value = 0.25;
     this.master.connect(lim).connect(ctx.destination);
-    this.world = ctx.createGain(); this.world.connect(this.master);
+    // world -> pause -> master: the pause gain silences every game sound (not the UI) without touching the duck automation on world.
+    this.pause = ctx.createGain();
+    this.world = ctx.createGain(); this.world.connect(this.pause).connect(this.master);
     this.sfx = ctx.createGain(); this.amb = ctx.createGain(); this.ui = ctx.createGain();
     // Ambience low-shelf, flat by default: cutting the drones' low end measured cleaner but sounded thinner and less
     // ominous to Jorge (A/B at matched loudness, 2026-11-19). Keep the weight; adjust here only by ear.
@@ -60,6 +64,7 @@ export class Audio {
     this.reverbOpen = mkVerb(1.2, 0.55, 0.5);
     this.reverbCave = mkVerb(3.5, 0.3, 0);
     this.applyVolumes();
+    this.pause.gain.value = this.paused ? 0 : 1;
     // One second of white noise, reused by every noisy sound.
     this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -191,10 +196,16 @@ export class Audio {
 
   /** Pause/resume with the game (menus mute the world, not the UI). */
   setWorldPaused(paused: boolean) {
+    this.paused = paused;
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    this.amb.gain.setTargetAtTime(paused ? 0 : this.volumes.ambience, t, 0.1);
+    this.pause.gain.cancelScheduledValues(t);
+    this.pause.gain.setTargetAtTime(paused ? 0 : 1, t, 0.08);
   }
+
+  /** Tab hidden: stop the audio clock entirely. Visible again: resume (menus stay muted by the pause gain). */
+  suspend() { if (this.ctx?.state === 'running') void this.ctx.suspend(); }
+  resume() { if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume(); }
 
   /** Move the listener with the camera. */
   updateListener(camera: THREE.Camera) {

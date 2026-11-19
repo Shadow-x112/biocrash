@@ -39,15 +39,72 @@ const MIGRATIONS: Record<number, (m: SaveMeta) => void> = {
   1: (m) => { delete m.picked; delete m.stalks; },
 };
 
+/** Checks and clamps every field of a save's metadata. Never throws: bad fields are dropped or reset to safe values,
+ * so a damaged save or import can't crash startup. Returns null only when the core (seed, versions) is unusable. */
+export function sanitizeMeta(raw: unknown): SaveMeta | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  const num = (v: unknown, lo: number, hi: number): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined;
+  if (typeof m.seed !== 'string' || !m.seed || typeof m.saveVersion !== 'number' || typeof m.genVersion !== 'number') return null;
+  const out: SaveMeta = { saveVersion: m.saveVersion, genVersion: m.genVersion, seed: m.seed.slice(0, 64), savedAt: num(m.savedAt, 0, 1e15) ?? 0, player: null };
+  const p = m.player as Record<string, unknown> | null;
+  if (p && typeof p === 'object') {
+    const [x, y, z, yaw, pitch] = [num(p.x, -1e6, 1e6), num(p.y, -1e4, 1e4), num(p.z, -1e6, 1e6), num(p.yaw, -1e4, 1e4), num(p.pitch, -1.55, 1.55)];
+    if (x !== undefined && y !== undefined && z !== undefined) out.player = { x, y, z, yaw: yaw ?? 0, pitch: pitch ?? 0 };
+  }
+  const tod = num(m.timeOfDay, 0, 1);
+  if (tod !== undefined) out.timeOfDay = tod % 1;
+  const v = m.vitals as Record<string, unknown> | undefined;
+  if (v && typeof v === 'object') out.vitals = { health: num(v.health, 1, 100) ?? 100, warmth: num(v.warmth, 0, 100) ?? 100 };
+  if (m.inventory && typeof m.inventory === 'object') {
+    out.inventory = {};
+    for (const [k, n] of Object.entries(m.inventory as Record<string, unknown>)) {
+      const c = num(n, 0, 1e6);
+      if (c !== undefined) out.inventory[k] = Math.floor(c);
+    }
+  }
+  if (Array.isArray(m.picked)) out.picked = m.picked.filter((id): id is string => typeof id === 'string').slice(0, 200_000);
+  if (Array.isArray(m.campfires)) {
+    out.campfires = [];
+    for (const f of m.campfires as Record<string, unknown>[]) {
+      if (!f || typeof f !== 'object') continue;
+      const [x, y, z] = [num(f.x, -1e6, 1e6), num(f.y, -1e4, 1e4), num(f.z, -1e6, 1e6)];
+      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0 });
+    }
+    out.campfires = out.campfires.slice(0, 500);
+  }
+  if (m.stalks && typeof m.stalks === 'object') {
+    out.stalks = {};
+    for (const [k, n] of Object.entries(m.stalks as Record<string, unknown>)) {
+      const c = num(n, 0, 1000);
+      if (c !== undefined) out.stalks[k] = Math.floor(c);
+    }
+  }
+  const step = num(m.tutorialStep, 0, 1000);
+  if (step !== undefined) out.tutorialStep = Math.floor(step);
+  return out;
+}
+
+/** Why a stored save can't be played by this build (it is kept untouched, never deleted). */
+export type Incompatible = { reason: string; raw: unknown; edits: Map<string, Float32Array> };
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
+    // Another tab holds an older version of the database open: tell the player instead of hanging on "Loading".
+    req.onblocked = () => reject(new Error('Biocrash is open in another tab with an older version. Close it and reload.'));
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
       if (!db.objectStoreNames.contains(CHUNKS)) db.createObjectStore(CHUNKS);
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // A newer build wants to upgrade the database: let it (this tab stops saving rather than blocking it).
+      db.onversionchange = () => { db.close(); SaveStore.onVersionChange?.(); };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -70,6 +127,9 @@ export class SaveStore {
   owner = true;
   /** Set before reset/import so the pagehide/autosave can't write the old world back. */
   suppressed = false;
+  /** Set when the stored save can't be loaded by this build: the game runs a fresh world without saving over it. */
+  incompatible: Incompatible | null = null;
+  static onVersionChange?: () => void;
 
   private constructor(private db: IDBDatabase) {}
 
@@ -103,17 +163,65 @@ export class SaveStore {
       if (keys.length && this.owner) await this.clear(); // orphaned chunks from a discarded world
       return null;
     }
-    if (meta.genVersion !== GEN_VERSION || meta.saveVersion > SAVE_VERSION || !this.migrate(meta)) {
-      console.warn('Save cannot be upgraded; starting a new world.', meta);
-      if (this.owner) await this.clear();
-      return null;
-    }
     const edits = new Map<string, Float32Array>();
     keys.forEach((k, i) => {
       const buf = values[i] as ArrayBuffer;
       if (buf?.byteLength === EDIT_BYTES) edits.set(String(k), new Float32Array(buf));
     });
-    return { meta, edits };
+    // Never delete a save we can't read: an old cached build must not wipe a newer world, and a generator change
+    // must not wipe everyone's. Keep it, run a fresh world without saving, and offer Export / New world.
+    const clean = sanitizeMeta(meta);
+    let reason = '';
+    if (!clean) reason = 'The saved world is damaged.';
+    else if (clean.saveVersion > SAVE_VERSION || clean.genVersion > GEN_VERSION) reason = 'This world was saved by a newer version of Biocrash. Reload to update.';
+    else if (clean.genVersion !== GEN_VERSION) reason = 'This world was made by an older world generator and can\u2019t be loaded.';
+    else {
+      const from = clean.saveVersion;
+      if (!this.migrate(clean)) reason = 'This save is too old to load.';
+      else if (from < SAVE_VERSION && this.owner) {
+        // Keep the pre-upgrade metadata next to the save, just in case.
+        const bt = this.db.transaction([META], 'readwrite');
+        bt.objectStore(META).put(meta, `meta-backup-v${from}`);
+        await done(bt);
+      }
+    }
+    if (reason || !clean) {
+      console.warn(reason, meta);
+      this.incompatible = { reason, raw: meta, edits };
+      this.suppressed = true;
+      return null;
+    }
+    return { meta: clean, edits };
+  }
+
+  /** Last-resort export when the game can't even start: whatever is stored, unchecked. */
+  static async dumpRaw(): Promise<Blob> {
+    const db = await openDb();
+    const tx = db.transaction([META, CHUNKS], 'readonly');
+    const meta = await request(tx.objectStore(META).get('meta'));
+    const store = tx.objectStore(CHUNKS);
+    const [keys, values] = await Promise.all([request(store.getAllKeys()), request(store.getAll())]);
+    const chunks: Record<string, string> = {};
+    keys.forEach((k, i) => { const b = values[i] as ArrayBuffer; if (b instanceof ArrayBuffer) chunks[String(k)] = toBase64(new Uint8Array(b)); });
+    return new Blob([JSON.stringify({ ...(meta as object ?? {}), chunks })], { type: 'application/json' });
+  }
+
+  /** Last-resort wipe from the startup error screen. */
+  static async wipe() {
+    const db = await openDb();
+    const tx = db.transaction([META, CHUNKS], 'readwrite');
+    tx.objectStore(META).clear();
+    tx.objectStore(CHUNKS).clear();
+    await done(tx);
+  }
+
+  /** Export exactly what's stored, unchecked (for a save this build can't load). */
+  exportRaw(): Blob | null {
+    const inc = this.incompatible;
+    if (!inc) return null;
+    const chunks: Record<string, string> = {};
+    for (const [k, v] of inc.edits) chunks[k] = toBase64(new Uint8Array(v.buffer));
+    return new Blob([JSON.stringify({ ...(inc.raw as object), chunks })], { type: 'application/json' });
   }
 
   private migrate(meta: SaveMeta) {
@@ -133,7 +241,9 @@ export class SaveStore {
     tx.objectStore(META).put(meta, 'meta');
     const chunks = tx.objectStore(CHUNKS);
     for (const [k, v] of dirty) chunks.put(v.buffer.slice(0), k);
-    await done(tx);
+    const finished = done(tx);
+    tx.commit?.(); // flush now: this may be the last thing the page gets to do before it's hidden or closed
+    await finished;
     return true;
   }
 
@@ -146,6 +256,7 @@ export class SaveStore {
 
   /** Delete this world for good (stops all further saving first). */
   async reset() {
+    if (!this.owner) throw new Error('This world is open in another tab. Reset it there.');
     this.suppressed = true;
     await this.clear();
   }
@@ -159,6 +270,7 @@ export class SaveStore {
 
   /** Validate an export completely, then replace the current world in one transaction. */
   async importFile(text: string) {
+    if (!this.owner) throw new Error('This world is open in another tab. Import it there.');
     let file: ExportFile;
     try { file = JSON.parse(text) as ExportFile; } catch { throw new Error('That file is not a Biocrash save.'); }
     if (!file || typeof file !== 'object' || typeof file.seed !== 'string' || typeof file.chunks !== 'object' || file.chunks === null)
@@ -175,10 +287,11 @@ export class SaveStore {
       if (f.some((x) => !Number.isFinite(x))) throw new Error('The save file is damaged (invalid values).');
       edits.set(k, f);
     }
-    const { chunks: _unused, ...meta } = file;
+    const { chunks: _unused, ...rawMeta } = file;
     void _unused;
+    const meta = sanitizeMeta(rawMeta);
+    if (!meta) throw new Error('The save file is damaged.');
     if (!this.migrate(meta)) throw new Error('This save is too old to load.');
-    if (meta.inventory) for (const [k, v] of Object.entries(meta.inventory)) if (!Number.isFinite(v) || v < 0) meta.inventory[k] = 0;
 
     // Everything checked: stop autosaves, then swap the whole world atomically.
     this.suppressed = true;
