@@ -11,6 +11,7 @@ import { Inventory, ITEM_NAMES, MATERIALS, type ItemId } from './inventory';
 import { RECIPES } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, type Creature } from './creatures';
+import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION } from './config';
@@ -70,8 +71,11 @@ async function main() {
   const props = new Props(seed);
   for (const id of meta?.picked ?? []) props.picked.add(id);
   scene.add(props.group);
-  world.onChunkMesh = (key, mesh, cx, cy, cz) => props.onChunkMesh(key, mesh, cx, cy, cz);
-  world.onChunkUnload = (key) => props.onChunkUnload(key);
+  const flora = new Flora(seed, RAPIER, physics, spawnPoint);
+  for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
+  scene.add(flora.group);
+  world.onChunkMesh = (key, mesh, cx, cy, cz) => { props.onChunkMesh(key, mesh, cx, cy, cz); flora.onChunkMesh(key, mesh, cx, cy, cz); };
+  world.onChunkUnload = (key) => { props.onChunkUnload(key); flora.onChunkUnload(key); };
   const inventory = new Inventory();
   const campfires = new Campfires(survival.heatSources);
   scene.add(campfires.group);
@@ -82,6 +86,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth },
     inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
+    stalks: Object.fromEntries(flora.harvested),
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0;
@@ -203,7 +208,7 @@ async function main() {
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora } });
 
   // --- Vitals HUD -------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost');
@@ -279,6 +284,14 @@ async function main() {
         props.pick(prop);
         inventory.add(prop.kind, prop.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
         hotbar.swing();
+      }
+      else if (!fire && flora.lookAt(camera, 3)) {
+        const sh = flora.lookAt(camera, 3)!;
+        if (inventory.counts.stone_knife <= 0 && inventory.counts.stone_pick <= 0) flash('Cut stalkwood with a stone knife or pick.');
+        else {
+          const got = flora.harvest(sh);
+          if (got) { inventory.add('stalkwood', got); hotbar.swing(); } else flash('This stalk has been cut back as far as it goes.');
+        }
       }
       else if (fire) {
         if (fire.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
@@ -371,6 +384,11 @@ async function main() {
     }
     const { fire, prop } = look();
     if (prop) promptEl.textContent = `E  pick up ${ITEM_NAMES[prop.kind].toLowerCase()}`;
+    else if (!fire && flora.lookAt(camera, 3)) {
+      const left = flora.usesLeft(flora.lookAt(camera, 3)!);
+      promptEl.textContent = left <= 0 ? 'Cut back' : inventory.counts.stone_knife + inventory.counts.stone_pick > 0
+        ? `E  cut stalkwood  ·  ${left} left` : 'Stalkwood · needs a knife or pick';
+    }
     else if (fire) promptEl.textContent = fire.lit ? `E  add stalkwood  ·  burns ${fmtTime(fire.fuel)}` : 'E  relight with stalkwood';
     else promptEl.textContent = '';
   };
@@ -407,6 +425,7 @@ async function main() {
     }
     updateVitals();
     campfires.update(dt, player.position);
+    flora.update(dt, camera.position, sky.night);
     const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k));
     fauna.update(dt, player.position, moving && player.isDown('ShiftLeft') && !player.crouching, player.crouching, sky.night);
     hotbar.update(dt, playing && ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k)));

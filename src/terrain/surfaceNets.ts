@@ -20,7 +20,7 @@ const EDGES: [number, number][] = [
   [0, 4], [1, 5], [2, 6], [3, 7],
 ];
 
-export function meshSurfaceNets(d: Float32Array, worldY0: number): MeshData {
+export function meshSurfaceNets(d: Float32Array, worldX0: number, worldY0: number, worldZ0: number): MeshData {
   const cellVert = new Int32Array(CELLS * CELLS * CELLS).fill(-1);
   const pos: number[] = [];
   const nrm: number[] = [];
@@ -72,12 +72,21 @@ export function meshSurfaceNets(d: Float32Array, worldY0: number): MeshData {
         pos.push(lx, ly, lz);
         nrm.push(nx, ny, nz);
 
-        // Placeholder palette until the biome art pass: moss on flats, rock on slopes, dark deep down.
-        const wy = worldY0 + ly;
-        const flat = Math.max(0, Math.min(1, (ny - 0.55) / 0.3));
-        const deep = Math.max(0, Math.min(1, (-wy + 4) / 40));
-        let r = 0.42 + (0.30 - 0.42) * flat, g = 0.38 + (0.52 - 0.38) * flat, b = 0.34 + (0.36 - 0.34) * flat;
-        r *= 1 - deep * 0.55; g *= 1 - deep * 0.55; b *= 1 - deep * 0.45;
+        // Fungal forest palette: teal moss on flats with violet and lichen patches, mauve rock on slopes.
+        const wx = worldX0 + lx, wy = worldY0 + ly, wz = worldZ0 + lz;
+        const patch = Math.sin(wx * 0.11 + Math.sin(wz * 0.07) * 2.0) * Math.cos(wz * 0.09 - Math.sin(wx * 0.05) * 1.7);
+        const fleck = Math.sin(wx * 0.9 + wz * 1.3) * Math.sin(wz * 0.8 - wx * 0.6);
+        const flat = Math.max(0, Math.min(1, (ny - 0.62) / 0.25));
+        const deep = Math.max(0, Math.min(1, (-wy + 2) / 36));
+        // Moss base, shifted toward violet or lichen by the patch pattern.
+        let mr = 0.25, mg = 0.44, mb = 0.38;
+        if (patch > 0.25) { const t = Math.min(1, (patch - 0.25) * 2.2); mr += (0.36 - mr) * t; mg += (0.33 - mg) * t; mb += (0.47 - mb) * t; }
+        else if (patch < -0.45) { const t = Math.min(1, (-patch - 0.45) * 2.5); mr += (0.52 - mr) * t; mg += (0.47 - mg) * t; mb += (0.28 - mb) * t; }
+        mr *= 1 + fleck * 0.06; mg *= 1 + fleck * 0.06; mb *= 1 + fleck * 0.06;
+        // Rock: soft mauve-grey.
+        const rr = 0.44, rg = 0.39, rb = 0.43;
+        let r = rr + (mr - rr) * flat, g = rg + (mg - rg) * flat, b = rb + (mb - rb) * flat;
+        r *= 1 - deep * 0.6; g *= 1 - deep * 0.6; b *= 1 - deep * 0.5;
         col.push(r, g, b);
       }
 

@@ -17,7 +17,7 @@ export const DIG_POWER: Record<Slot, { strength: number; radius: number; interva
 const wood = new THREE.MeshStandardMaterial({ color: 0xcdbfa3, roughness: 0.9, flatShading: true });
 const rock = new THREE.MeshStandardMaterial({ color: 0x8a857c, roughness: 1, flatShading: true });
 const cord = new THREE.MeshStandardMaterial({ color: 0x8aa46f, roughness: 1, flatShading: true });
-const skin = new THREE.MeshStandardMaterial({ color: 0xc9a07e, roughness: 0.8 });
+const skin = new THREE.MeshStandardMaterial({ color: 0x4d535b, roughness: 0.85 }); // suit glove
 const suit = new THREE.MeshStandardMaterial({ color: 0xe6e8ea, roughness: 0.6 });
 const hazard = new THREE.MeshStandardMaterial({ color: 0xe07a2f, roughness: 0.6 });
 

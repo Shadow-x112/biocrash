@@ -32,7 +32,7 @@ self.onmessage = (e: MessageEvent<MeshRequest>) => {
   if (!gen || genSeed !== seed) { gen = createGenerator(seed); genSeed = seed; }
   gen.fillChunk(cx, cy, cz, density);
   if (edits) for (let i = 0; i < density.length; i++) density[i] += edits[i];
-  const mesh = meshSurfaceNets(density, cy * CHUNK);
+  const mesh = meshSurfaceNets(density, cx * CHUNK, cy * CHUNK, cz * CHUNK);
   const res: MeshResponse = { id, cx, cy, cz, ...mesh, ms: performance.now() - t0 };
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(res, [
     mesh.positions.buffer, mesh.normals.buffer, mesh.colors.buffer, mesh.indices.buffer,

@@ -16,6 +16,8 @@ export interface SaveMeta {
   /** Ids of props the player has picked up. */
   picked?: string[];
   campfires?: CampfireSave[];
+  /** Times each giant mushroom stalk has been cut. */
+  stalks?: Record<string, number>;
 }
 
 interface ExportFile extends SaveMeta {
