@@ -56,7 +56,7 @@ export class Survival {
     t -= Math.max(0, ctx.eye.y - TEMP.lapseFrom) * TEMP.lapseCPerM;
     for (const h of this.heatSources) {
       const d = h.position.distanceTo(ctx.eye);
-      if (d < h.radius) t += h.heatC * (1 - d / h.radius) ** 1.5;
+      if (d < h.radius) t += h.heatC * (1 - d / h.radius);
     }
     // Smooth so walking under a branch doesn't flicker the reading.
     this.ambientC += (t - this.ambientC) * Math.min(1, dt * 1.5);

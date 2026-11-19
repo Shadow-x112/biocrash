@@ -31,6 +31,13 @@
                background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(170,205,235,0.55) 100%); }
       #death { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none;
                background: rgba(10,16,24,0.6); color: #dbe7f2; font: 600 28px system-ui, sans-serif; letter-spacing: 0.04em; }
+      #prompt { position: fixed; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); color: #fff;
+                font: 600 14px system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0,0,0,0.8); pointer-events: none; }
+      #inv { position: fixed; right: 16px; bottom: 16px; width: 150px; color: #e8edf2; font: 12px/1.7 system-ui, sans-serif;
+             background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 6px; pointer-events: none; }
+      #toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); color: #fff; opacity: 0;
+               transition: opacity 0.4s; background: rgba(0,0,0,0.5); padding: 6px 12px; border-radius: 6px;
+               font: 13px system-ui, sans-serif; pointer-events: none; }
       #status { margin-top: 10px; font-size: 12px; color: #8a96a3; min-height: 1em; }
     </style>
   </head>
@@ -43,6 +50,9 @@
       <div class="row"><span id="heatlabel">Body heat</span><span id="tempv"></span></div>
       <div class="bar" id="heat"><div></div></div>
     </div>
+    <div id="prompt"></div>
+    <div id="toast"></div>
+    <div id="inv"></div>
     <div id="death">You froze. Recovering at the crash site…</div>
     <div id="crosshair"></div>
     <div id="overlay">
@@ -50,7 +60,8 @@
         <h1>Biocrash</h1>
         <p>M0 tech test: smooth terrain, digging, collision and saving.</p>
         <div class="keys">WASD move · Space jump · Shift run
-Left click dig · Right click fill (or E / Q)
+E pick up / use · C build campfire
+Left click dig · Right click fill (or R / F)
 Arrow keys also look around
 T fast time · F3 debug info · F5 save now · Esc pause</div>
         <button id="play" class="primary">Click to play</button>

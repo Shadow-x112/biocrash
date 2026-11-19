@@ -37,6 +37,9 @@ export class World {
   private physics: RAPIER.World;
 
   stats = { meshMs: 0, meshed: 0, loaded: 0, queued: 0 };
+  /** Called when a chunk gets (or loses) its mesh, and when it unloads. */
+  onChunkMesh: (key: string, mesh: THREE.Mesh | null, cx: number, cy: number, cz: number) => void = () => {};
+  onChunkUnload: (key: string) => void = () => {};
 
   constructor(readonly seed: string, rapier: typeof RAPIER, physics: RAPIER.World) {
     this.rapier = rapier;
@@ -148,6 +151,7 @@ export class World {
     }
     this.removeCollider(c);
     this.syncCollider(c);
+    this.onChunkMesh(c.key, c.mesh, c.cx, c.cy, c.cz);
     this.dispatch();
   }
 
@@ -169,6 +173,7 @@ export class World {
   private unload(c: Chunk) {
     if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh = null; }
     this.removeCollider(c);
+    this.onChunkUnload(c.key);
   }
 
   /** True once the chunk under this point is meshed and has physics (or is empty air). */

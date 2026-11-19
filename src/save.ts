@@ -1,6 +1,7 @@
 // Saves = world seed + only the chunks the player has edited, in IndexedDB.
 // Browsers can evict site data, so we ask for persistent storage and offer a file export.
 import { GEN_VERSION, SAVE_VERSION } from './config';
+import type { CampfireSave } from './campfire';
 
 export interface SaveMeta {
   saveVersion: number;
@@ -11,6 +12,10 @@ export interface SaveMeta {
   /** 0..1 time of day; optional so older saves still load. */
   timeOfDay?: number;
   vitals?: { health: number; warmth: number };
+  inventory?: Record<string, number>;
+  /** Ids of props the player has picked up. */
+  picked?: string[];
+  campfires?: CampfireSave[];
 }
 
 interface ExportFile extends SaveMeta {

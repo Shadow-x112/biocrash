@@ -6,6 +6,9 @@ import { createGenerator } from './terrain/density';
 import { Player } from './player';
 import { Sky } from './sky';
 import { Survival } from './survival';
+import { Props } from './props';
+import { Inventory, ITEM_NAMES, type ItemId } from './inventory';
+import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, DIG_RADIUS, DIG_STRENGTH, REACH, GEN_VERSION, SAVE_VERSION } from './config';
 
@@ -57,9 +60,21 @@ async function main() {
   if (meta?.timeOfDay !== undefined) sky.time = meta.timeOfDay;
   const survival = new Survival();
   if (meta?.vitals) { survival.health = meta.vitals.health; survival.warmth = meta.vitals.warmth; }
+
+  // Gathering and campfires (M1 step 3).
+  const props = new Props(seed);
+  for (const id of meta?.picked ?? []) props.picked.add(id);
+  scene.add(props.group);
+  world.onChunkMesh = (key, mesh, cx, cy, cz) => props.onChunkMesh(key, mesh, cx, cy, cz);
+  world.onChunkUnload = (key) => props.onChunkUnload(key);
+  const inventory = new Inventory();
+  const campfires = new Campfires(survival.heatSources);
+  scene.add(campfires.group);
+  campfires.load(meta?.campfires);
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth },
+    inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0;
@@ -81,7 +96,15 @@ async function main() {
 
   // --- Overlay / pointer lock ------------------------------------------------------------------
   const canvas = renderer.domElement;
-  const flash = (msg: string) => { status.textContent = msg; };
+  let toastTimer = 0;
+  const flash = (msg: string) => {
+    status.textContent = msg;
+    const t = $('toast');
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => { t.style.opacity = '0'; }, 3000);
+  };
   let playing = false; // true while the game has focus (mouse captured, or drag-look fallback)
   const startPlay = async () => {
     try {
@@ -92,7 +115,7 @@ async function main() {
         player.dragLook = true;
         playing = true;
         overlay.style.display = 'none';
-        flash('Mouse capture is blocked here: drag to look, E dig, Q fill.');
+        flash('Mouse capture is blocked here: drag to look, R dig, F fill.');
       }
     }
   };
@@ -169,7 +192,7 @@ async function main() {
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires } });
 
   // --- Vitals HUD -------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost');
@@ -187,10 +210,57 @@ async function main() {
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
   };
 
+  // --- Gathering, campfires and the inventory panel ---------------------------------------------
+  const promptEl = $('prompt'), invEl = $('inv');
+  const renderInv = () => {
+    invEl.innerHTML = (Object.keys(inventory.counts) as ItemId[])
+      .map((k) => `<div class="row"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`).join('');
+  };
+  inventory.onChange = renderInv;
+  inventory.load(meta?.inventory as Partial<Record<ItemId, number>> | undefined);
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const look = () => {
+    const fire = campfires.lookAt(camera, 3.2);
+    const prop = fire ? null : props.lookAt(camera, 3.2);
+    return { fire, prop };
+  };
+  const placeCampfire = () => {
+    ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+    ray.far = 5;
+    const hit = ray.intersectObjects(world.meshes(), false)[0];
+    if (!hit?.face || hit.face.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
+    if (!inventory.take(CAMPFIRE_COST)) {
+      flash(`A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`);
+      return;
+    }
+    campfires.add(hit.point.clone());
+    flash('Campfire built. Add stalkwood (E) to keep it burning.');
+  };
+  window.addEventListener('keydown', (e) => {
+    if (!playing || e.repeat) return;
+    if (e.code === 'KeyE') {
+      const { fire, prop } = look();
+      if (prop) { props.pick(prop); inventory.add(prop.kind); }
+      else if (fire) {
+        if (fire.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
+        else if (inventory.take({ stalkwood: 1 })) campfires.addFuel(fire);
+        else flash('You need stalkwood to feed the fire.');
+      }
+    }
+    if (e.code === 'KeyC') placeCampfire();
+  });
+  const updatePrompt = () => {
+    if (!playing) { promptEl.textContent = ''; return; }
+    const { fire, prop } = look();
+    if (prop) promptEl.textContent = `E  pick up ${ITEM_NAMES[prop.kind].toLowerCase()}`;
+    else if (fire) promptEl.textContent = fire.lit ? `E  add stalkwood  ·  burns ${fmtTime(fire.fuel)}` : 'E  relight with stalkwood';
+    else promptEl.textContent = '';
+  };
+
   // --- Loop ---------------------------------------------------------------------------------------
   const timer = new THREE.Timer();
   timer.connect(document);
-  let fps = 0, frameMs = 0;
+  let fps = 0, frameMs = 0, promptTimer = 0;
   renderer.setAnimationLoop(() => {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.05);
@@ -218,8 +288,10 @@ async function main() {
       }
     }
     updateVitals();
+    campfires.update(dt, player.position);
+    if ((promptTimer -= dt) <= 0) { promptTimer = 0.1; updatePrompt(); }
 
-    const keyDig = playing && player.isDown('KeyE'), keyFill = playing && player.isDown('KeyQ');
+    const keyDig = playing && player.isDown('KeyR'), keyFill = playing && player.isDown('KeyF');
     if (keyDig || keyFill || held.dig || held.fill) {
       if ((held.cooldown -= dt) <= 0) {
         const prev = { dig: held.dig, fill: held.fill };
