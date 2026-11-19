@@ -18,6 +18,8 @@ import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
 import { SaveStore, type SaveMeta } from './save';
+import { loadSettings, buildSettingsForm, type Settings } from './settings';
+import { Tutorial } from './tutorial';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION, MIN_CY } from './config';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -112,6 +114,28 @@ async function main() {
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
   scene.add(fauna.group);
 
+  // --- Settings (per browser) and the station core's first-night objectives ------------------------
+  const settings = loadSettings();
+  const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0);
+  tutorial.onLine = () => { if (audio.has('ui_2')) audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: 1.3 }); };
+  const compassEl = $('compass');
+  let uiBlip = 0;
+  const applySetting = (k: keyof Settings) => {
+    if (k === 'master' || k === 'sfx' || k === 'ambience' || k === 'ui') {
+      Object.assign(audio.volumes, { master: settings.master, sfx: settings.sfx, ambience: settings.ambience, ui: settings.ui });
+      audio.applyVolumes();
+      audio.setWorldPaused(state !== 'playing' && state !== 'dead');
+      if ((k === 'ui' || k === 'master') && performance.now() - uiBlip > 150 && audio.has('ui_1')) { uiBlip = performance.now(); audio.play('ui_1', { bus: 'ui', gain: 0.5 }); }
+    }
+    player.sensitivity = 0.0022 * settings.sensitivity;
+    player.invertY = settings.invertY;
+    player.baseFov = settings.fov;
+    player.headBob = settings.headBob;
+    player.shakeScale = settings.shake ? 1 : 0;
+    compassEl.style.display = settings.compass ? '' : 'none';
+    tutorial.enabled = settings.tutorial;
+  };
+
   // --- Messages ----------------------------------------------------------------------------------
   let toastTimer = 0;
   const flash = (msg: string) => {
@@ -129,7 +153,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth },
     inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
-    stalks: Object.fromEntries(flora.harvested),
+    stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0, saveErrorShown = false;
@@ -158,6 +182,7 @@ async function main() {
 
   // --- Game state ----------------------------------------------------------------------------------
   let state: GameState = 'menu';
+  for (const k of ['master', 'fov'] as const) applySetting(k); // everything else is applied with these
   let lockWorked = false; // once mouse capture has worked, never fall back to drag-look
   const craftEl = $('craft');
   const setState = (s: GameState) => {
@@ -165,6 +190,7 @@ async function main() {
     input.enabled = s === 'playing';
     if (s !== 'playing') input.release();
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
+    if (s !== 'menu') overlay.classList.remove('showsettings');
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
     if (s === 'craft') { renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
     if (s !== 'playing') $('prompt').textContent = '';
@@ -199,6 +225,9 @@ async function main() {
   });
 
   // --- Pause-menu buttons --------------------------------------------------------------------------
+  buildSettingsForm($('settingsform'), settings, applySetting);
+  $('opensettings').onclick = () => overlay.classList.add('showsettings');
+  $('closesettings').onclick = () => overlay.classList.remove('showsettings');
   $('export').onclick = async () => {
     await saveNow();
     const a = document.createElement('a');
@@ -237,7 +266,7 @@ async function main() {
   };
 
   // --- Inventory, hotbar and crafting UI -----------------------------------------------------------
-  const invEl = $('inv'), recipesEl = $('recipes');
+  const invEl = $('inv'), recipesEl = $('recipes'), craftMsg = $('craftmsg');
   function renderHotbar() {
     $('hotbar').innerHTML = SLOTS.map((s, i) => {
       const owned = s === 'hands' || inventory.counts[s] > 0;
@@ -246,16 +275,17 @@ async function main() {
     }).join('');
   }
   function renderCraft() {
-    recipesEl.innerHTML = RECIPES.map((r) => {
+    $('craftinv').innerHTML = 'Carrying: ' + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
+    recipesEl.innerHTML = RECIPES.map((r, i) => {
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
-        const ok = inventory.counts[k] >= (r.cost[k] ?? 0);
-        return `<span class="${ok ? 'ok' : 'no'}">${r.cost[k]} ${ITEM_NAMES[k].toLowerCase()}</span>`;
+        const need = r.cost[k] ?? 0, have = inventory.counts[k];
+        return `<span class="${have >= need ? 'ok' : 'no'}">${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
       }).join(' · ');
       const name = r.makes === 'campfire' ? 'Campfire' : ITEM_NAMES[r.makes];
       const have = r.makes === 'campfire' ? 0 : inventory.counts[r.makes];
       const btn = r.makes === 'campfire' ? '<span class="hint">press B in the world</span>'
-        : `<button data-r="${r.id}" ${inventory.has(r.cost) ? '' : 'disabled'}>Craft</button>`;
-      return `<div class="recipe"><div><div class="rname">${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have ? ` <span class="hint">(have ${have})</span>` : ''}</div>
+        : `<button data-r="${r.id}"${inventory.has(r.cost) ? '' : ' class="off"'}>Craft</button>`;
+      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
@@ -272,14 +302,31 @@ async function main() {
   };
   hotbar.onChange = renderHotbar;
   inventory.load(meta?.inventory);
+  let craftMsgTimer = 0;
+  const craftNote = (msg: string) => {
+    craftMsg.textContent = msg;
+    clearTimeout(craftMsgTimer);
+    craftMsgTimer = window.setTimeout(() => { craftMsg.textContent = ''; }, 2500);
+  };
+  /** Crafts recipe `r` up to `times` times; reports what was made or what's missing. */
+  const craft = (r: (typeof RECIPES)[number], times: number) => {
+    if (r.makes === 'campfire') { craftNote('Build campfires in the world: close this, look at flat ground, press B.'); audio.deny(); return; }
+    let made = 0;
+    const first = inventory.counts[r.makes] === 0;
+    while (made < times && inventory.take(r.cost)) { inventory.add(r.makes, r.amount); made++; }
+    if (!made) {
+      const short = (Object.keys(r.cost) as ItemId[]).filter((k) => inventory.counts[k] < (r.cost[k] ?? 0))
+        .map((k) => `${(r.cost[k] ?? 0) - inventory.counts[k]} more ${ITEM_NAMES[k].toLowerCase()}`);
+      audio.deny(); craftNote(`Need ${short.join(' and ')}.`); return;
+    }
+    if (audio.has('ui_3')) audio.playAny('ui', 6, { bus: 'ui', gain: 0.8 }); else audio.craft();
+    const total = made * r.amount;
+    craftNote(`Made ${ITEM_NAMES[r.makes].toLowerCase()}${total > 1 ? ' \u00d7' + total : ''}. You have ${inventory.counts[r.makes]}.`);
+    if (r.tool && first) hotbar.select(r.makes as Slot, () => true); // equip your first one
+  };
   recipesEl.addEventListener('click', (e) => {
     const r = RECIPES.find((x) => x.id === (e.target as HTMLElement).dataset.r);
-    if (!r || r.makes === 'campfire') return;
-    if (!inventory.take(r.cost)) { audio.deny(); return; }
-    if (audio.has('ui_3')) audio.playAny('ui', 6, { bus: 'ui', gain: 0.8 }); else audio.craft();
-    const first = inventory.counts[r.makes] === 0;
-    inventory.add(r.makes, r.amount);
-    if (r.tool && first) hotbar.select(r.makes as Slot, () => true); // equip your first one
+    if (r) craft(r, (e as MouseEvent).shiftKey ? 5 : 1);
   });
 
   // --- What you're looking at: one query, used by the prompt and by E ------------------------------
@@ -320,6 +367,17 @@ async function main() {
 
   // --- Actions -----------------------------------------------------------------------------------
   const digRay = new THREE.Raycaster();
+  const hitEl = $('hitmark'), crossEl = $('crosshair');
+  /** Crosshair state: enemy in reach, something to use, a creature out of reach, terrain to dig, or nothing. */
+  const crosshairFor = (t: Target): string => {
+    const prey = fauna.lookAt(camera, ATTACK[hotbar.slot].reach);
+    if (prey?.alive) return 'enemy';
+    if (t && t.kind !== 'creature') return 'use';
+    if (t?.kind === 'creature') return !t.c.alive && t.c.position.distanceTo(player.position) <= USE_REACH + 1 ? 'use' : 'far';
+    digRay.setFromCamera(centre, camera);
+    digRay.far = REACH;
+    return digRay.intersectObjects(world.meshes(), false).length ? 'dig' : 'none';
+  };
   const buildRay = new THREE.Raycaster();
   const centre = new THREE.Vector2(0, 0);
   const use = () => {
@@ -374,6 +432,8 @@ async function main() {
     const hit = c.damage(ATTACK[hotbar.slot].damage, player.position);
     const at = c.hitCentre();
     if (hit) {
+      hitEl.className = c.alive ? 'on' : 'on kill';
+      requestAnimationFrame(() => requestAnimationFrame(() => { hitEl.className = c.alive ? '' : 'kill'; }));
       audio.hit(at, !c.alive);
       if (!c.alive) audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 });
       particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
@@ -415,6 +475,13 @@ async function main() {
     if (e.code === 'Escape') {
       if (state === 'craft') { setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.')); }
       else if (state === 'playing' && player.dragLook) setState('menu');
+      return;
+    }
+    if (state === 'craft' && !e.repeat) {
+      const n = Number(e.key);
+      if (n >= 1 && n <= RECIPES.length) craft(RECIPES[n - 1], e.shiftKey ? 5 : 1);
+      // Shift+digit gives a symbol in e.key on most layouts: fall back to the physical key.
+      else if (e.shiftKey && /^Digit[1-9]$/.test(e.code)) { const d = Number(e.code.slice(5)); if (d <= RECIPES.length) craft(RECIPES[d - 1], 5); }
       return;
     }
     if (state !== 'playing' || e.repeat) return;
@@ -482,6 +549,36 @@ async function main() {
     }
     const low = survival.health < 35 ? (35 - survival.health) / 35 : 0;
     hurtEl.style.opacity = low ? String(low * (0.7 + 0.3 * Math.sin(performance.now() / 180))) : '0';
+  };
+
+  // --- Compass: heading strip with the crash site and the nearest lit fire ------------------------
+  // North is -Z (the way you face at yaw 0). 2 px per degree, ±90° visible.
+  const TICKS: [number, string, boolean][] = [];
+  for (let d = 0; d < 360; d += 15) {
+    const card = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][d / 45];
+    TICKS.push([d, d % 45 === 0 ? card : String(d), d % 45 !== 0]);
+  }
+  compassEl.innerHTML = TICKS.map(([, l, minor]) => `<span${minor ? ' class="minor"' : ''}>${l}</span>`).join('')
+    + '<span class="mark" style="color:#e07a2f"></span><span class="mark" style="color:#ffb35c"></span>';
+  const tickEls = [...compassEl.children] as HTMLElement[];
+  const wrap = (a: number) => ((a % 360) + 540) % 360 - 180;
+  const place = (el: HTMLElement, bearing: number, heading: number) => {
+    const d = wrap(bearing - heading);
+    if (Math.abs(d) > 88) { if (el.style.display !== 'none') el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.style.left = `${180 + d * 2}px`;
+  };
+  const bearingTo = (p: THREE.Vector3) => Math.atan2(p.x - player.position.x, -(p.z - player.position.z)) * 180 / Math.PI;
+  const updateCompass = () => {
+    const jitter = horror.glitch > 0 ? (Math.random() - 0.5) * 60 : 0; // the readout drifts when the core glitches
+    const heading = -player.yaw * 180 / Math.PI + jitter;
+    TICKS.forEach(([d], i) => place(tickEls[i], d, heading));
+    const wreck = tickEls[TICKS.length], fire = tickEls[TICKS.length + 1];
+    const dw = player.position.distanceTo(spawnPoint);
+    if (dw > 12) { wreck.textContent = `\u25BC wreck ${Math.round(dw)} m`; place(wreck, bearingTo(spawnPoint), heading); } else wreck.style.display = 'none';
+    let best: THREE.Vector3 | null = null, bd = Infinity;
+    for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f.position; } }
+    if (best && bd > 8) { fire.textContent = `\u25B2 fire ${Math.round(bd)} m`; place(fire, bearingTo(best), heading); } else fire.style.display = 'none';
   };
 
   // --- Frame loop ----------------------------------------------------------------------------------
@@ -554,6 +651,8 @@ async function main() {
       player.update(0); // keep the camera placed while paused
     }
 
+    tutorial.update(state === 'playing' ? dt : 0, inventory, campfires.list.length, horror.glitch);
+    if (settings.compass) updateCompass();
     audio.updateListener(camera);
     audio.updateLoops();
     renderer.toneMappingExposure = horror.exposure;
@@ -570,7 +669,11 @@ async function main() {
     // UI at 10 Hz: the look-at prompt, vitals and debug text.
     if ((uiTimer -= dt) <= 0) {
       uiTimer = 0.1;
-      if (state === 'playing') { target = queryTarget(); promptEl.textContent = promptFor(target); }
+      if (state === 'playing') {
+        target = queryTarget(); promptEl.textContent = promptFor(target);
+        const cls = crosshairFor(target);
+        if (crossEl.className !== cls) crossEl.className = cls;
+      }
       updateVitals();
       if (hud.style.display !== 'none') {
         const p = player.position;

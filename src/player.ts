@@ -31,6 +31,9 @@ export class Player {
   sensitivity = 0.0022;
   baseFov = 75;
   headBob = true;
+  invertY = false;
+  /** 0 turns camera shake off (comfort setting). */
+  shakeScale = 1;
   /** Sound/feel hooks set by the game. */
   onStep?: (run: boolean, sneak: boolean) => void;
   onJump?: () => void;
@@ -73,7 +76,7 @@ export class Player {
       if (!this.input.enabled) return;
       if (document.pointerLockElement === null && !(this.dragLook && this.dragging)) return;
       this.yaw -= e.movementX * this.sensitivity;
-      this.pitch -= e.movementY * this.sensitivity;
+      this.pitch -= e.movementY * this.sensitivity * (this.invertY ? -1 : 1);
       this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
     });
   }
@@ -87,7 +90,7 @@ export class Player {
   }
 
   /** A short camera shake (hits, heavy landings). */
-  shake(amount: number) { this.shakeAmt = Math.max(this.shakeAmt, amount); }
+  shake(amount: number) { this.shakeAmt = Math.max(this.shakeAmt, amount * this.shakeScale); }
 
   update(dt: number) {
     const inp = this.input;

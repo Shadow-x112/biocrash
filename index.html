@@ -3,17 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Biocrash — M0 tech test</title>
+    <title>Biocrash</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1014; font-family: system-ui, sans-serif; }
       canvas { display: block; }
       #hud { position: fixed; top: 10px; left: 10px; color: #e8edf2; font: 12px/1.5 ui-monospace, monospace;
              background: rgba(0,0,0,0.45); padding: 8px 10px; border-radius: 6px; white-space: pre; pointer-events: none; }
-      #crosshair { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
-                   border-radius: 50%; background: rgba(255,255,255,0.85); pointer-events: none; }
+      #crosshair { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; transform: translate(-50%,-50%);
+                   border-radius: 50%; background: rgba(255,255,255,0.85); pointer-events: none;
+                   transition: width 0.12s, height 0.12s, background 0.12s, border-color 0.12s, opacity 0.2s; border: 2px solid transparent; box-sizing: border-box; }
+      #crosshair.none { opacity: 0.35; }
+      #crosshair.dig { width: 6px; height: 6px; }
+      #crosshair.use { width: 18px; height: 18px; background: transparent; border-color: rgba(255,255,255,0.9); }
+      #crosshair.enemy { width: 22px; height: 22px; background: rgba(230,80,60,0.15); border-color: #ff6a50; }
+      #crosshair.far { width: 14px; height: 14px; background: transparent; border-color: rgba(255,255,255,0.35); }
+      #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%,-50%) rotate(45deg); pointer-events: none; opacity: 0; }
+      #hitmark::before, #hitmark::after { content: ''; position: absolute; background: #fff; left: 50%; top: 50%; transform: translate(-50%,-50%); }
+      #hitmark::before { width: 22px; height: 2px; } #hitmark::after { width: 2px; height: 22px; }
+      #hitmark.on { opacity: 1; transition: none; } #hitmark { transition: opacity 0.25s; }
+      #hitmark.kill::before, #hitmark.kill::after { background: #ff6a50; }
+      #compass { position: fixed; left: 50%; top: 12px; width: 360px; height: 30px; transform: translateX(-50%); pointer-events: none; overflow: hidden;
+                 background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,0.35) 20%, rgba(0,0,0,0.35) 80%, rgba(0,0,0,0)); border-radius: 4px;
+                 color: #e8edf2; font: 600 12px system-ui, sans-serif; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
+      #compass::after { content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 6px; margin-left: -1px; background: #e07a2f; }
+      #compass span { position: absolute; top: 9px; transform: translateX(-50%); white-space: nowrap; }
+      #compass span.minor { color: #8a96a3; font-weight: 400; font-size: 10px; top: 10px; }
+      #compass span.mark { top: 15px; font-size: 10px; font-weight: 600; }
+      #core { position: fixed; right: 16px; top: 16px; width: 290px; padding: 9px 12px 10px; border-radius: 6px; pointer-events: none; display: none;
+              background: rgba(6,14,18,0.62); border-left: 3px solid #5fd3c4; color: #d8f3ef; font: 13px/1.45 system-ui, sans-serif; }
+      #core .tc-h { font: 600 10px ui-monospace, monospace; letter-spacing: 0.08em; color: #5fd3c4; margin-bottom: 4px; }
+      #core .tc-say { min-height: 2.9em; }
+      #core .tc-goal { margin-top: 7px; font-size: 12px; color: #ffd27a; }
+      #core .tc-goal b { color: #fff; font-weight: 600; }
+      #core .tc-box { display: inline-block; width: 11px; height: 11px; margin-right: 6px; border: 1px solid #ffd27a; border-radius: 2px;
+                      font-size: 10px; line-height: 11px; text-align: center; vertical-align: -1px; }
       #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
                  background: rgba(8,10,14,0.72); color: #e8edf2; }
-      #overlay .panel { max-width: 420px; padding: 24px 28px; background: #161b22; border-radius: 10px; }
+      #overlay .panel { max-width: 440px; max-height: 88vh; overflow: auto; padding: 24px 28px; background: #161b22; border-radius: 10px; }
       #overlay h1 { margin: 0 0 4px; font-size: 22px; }
       #overlay p { margin: 6px 0; font-size: 14px; color: #b9c2cc; }
       #overlay .keys { font: 13px/1.7 ui-monospace, monospace; color: #e8edf2; margin: 12px 0; white-space: pre-line; }
@@ -64,8 +90,20 @@
       .rcost { font-size: 12px; margin: 2px 0; } .rcost .ok { color: #9fd18b; } .rcost .no { color: #e08a7a; }
       .rblurb { font-size: 12px; color: #9aa6b2; }
       .recipe button { padding: 7px 14px; border: 0; border-radius: 6px; background: #e07a2f; color: #111; font-weight: 600; cursor: pointer; }
-      .recipe button:disabled { background: #2b3440; color: #6b7682; cursor: default; }
+      .recipe button.off { background: #2b3440; color: #6b7682; cursor: default; }
       .recipe .hint { font-size: 11px; color: #8a96a3; white-space: nowrap; }
+      #craft .have { font-size: 12px; color: #9aa6b2; margin: 0 0 6px; }
+      #craft .have b { color: #e8edf2; font-weight: 600; }
+      #craftmsg { min-height: 1.2em; margin-top: 8px; font-size: 12px; color: #ffd27a; }
+      .recipe .key { display: inline-block; min-width: 14px; padding: 0 3px; margin-right: 6px; border: 1px solid #3a4450; border-radius: 3px;
+                     font: 10px/14px ui-monospace, monospace; text-align: center; color: #9aa6b2; vertical-align: 1px; }
+      #settings { display: none; }
+      #settings .sgroup { margin: 12px 0 2px; font: 600 11px system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #8a96a3; }
+      #settings .srow { display: grid; grid-template-columns: 1fr 150px 48px; align-items: center; gap: 10px; padding: 3px 0; font-size: 13px; color: #e8edf2; }
+      #settings input[type=range] { width: 150px; accent-color: #e07a2f; }
+      #settings input[type=checkbox] { justify-self: start; width: 16px; height: 16px; accent-color: #e07a2f; }
+      #settings output { font: 12px ui-monospace, monospace; color: #9aa6b2; text-align: right; }
+      #overlay.showsettings #settings { display: block; } #overlay.showsettings #mainmenu { display: none; }
       #status { margin-top: 10px; font-size: 12px; color: #8a96a3; min-height: 1em; }
     </style>
   </head>
@@ -82,13 +120,16 @@
     <div id="toast"></div>
     <div id="inv"></div>
     <div id="hotbar"></div>
-    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub">Tab or Esc to close</p><div id="recipes"></div></div></div>
+    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub">Number keys or click to craft · Shift+click makes up to 5 · Tab or Esc to close</p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
     <div id="death">You froze. Recovering at the crash site…</div>
-    <div id="crosshair"></div>
+    <div id="crosshair"></div><div id="hitmark"></div>
+    <div id="compass"></div>
+    <div id="core"></div>
     <div id="overlay">
       <div class="panel">
+        <div id="mainmenu">
         <h1>Biocrash</h1>
-        <p>M0 tech test: smooth terrain, digging, collision and saving.</p>
+        <p>The station came down hard. You walked away from it. Now survive the night.</p>
         <div class="keys">WASD move · Space jump · Shift run · C sneak
 E pick up / use · Tab crafting · 1-4 tools
 B build campfire
@@ -99,6 +140,9 @@ T fast time · F3 debug info · F5 save now · Esc pause</div>
         <button id="export">Export save</button>
         <button id="import">Import save</button>
         <button id="reset">New world</button>
+        <button id="opensettings">Settings</button>
+        </div>
+        <div id="settings"><h1>Settings</h1><div id="settingsform"></div><button id="closesettings" class="primary">Back</button></div>
         <div id="status"></div>
       </div>
     </div>

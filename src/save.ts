@@ -19,6 +19,8 @@ export interface SaveMeta {
   campfires?: CampfireSave[];
   /** Times each giant mushroom stalk has been cut. */
   stalks?: Record<string, number>;
+  /** Station-core objective reached (first-night tutorial). */
+  tutorialStep?: number;
 }
 
 interface ExportFile extends SaveMeta {
