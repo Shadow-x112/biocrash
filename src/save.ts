@@ -12,7 +12,7 @@ export interface SaveMeta {
   savedAt: number;
   /** 0..1 time of day; optional so older saves still load. */
   timeOfDay?: number;
-  vitals?: { health: number; warmth: number };
+  vitals?: { health: number; warmth: number; fed?: number; afterglow?: number };
   inventory?: Record<string, number>;
   /** Ids of props the player has picked up. */
   picked?: string[];
@@ -21,7 +21,15 @@ export interface SaveMeta {
   stalks?: Record<string, number>;
   /** Station-core objective reached (first-night tutorial). */
   tutorialStep?: number;
+  /** Station-core milestone lines already shown. */
+  milestones?: string[];
+  /** Packs of materials dropped where you froze. */
+  packs?: PackSave[];
+  /** A night has passed since the last dawn line (for the dawn milestone). */
+  wasNight?: boolean;
 }
+
+export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
 
 interface ExportFile extends SaveMeta {
   chunks: Record<string, string>; // key -> base64 Float32Array
@@ -56,7 +64,7 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
   const tod = num(m.timeOfDay, 0, 1);
   if (tod !== undefined) out.timeOfDay = tod % 1;
   const v = m.vitals as Record<string, unknown> | undefined;
-  if (v && typeof v === 'object') out.vitals = { health: num(v.health, 1, 100) ?? 100, warmth: num(v.warmth, 0, 100) ?? 100 };
+  if (v && typeof v === 'object') out.vitals = { health: num(v.health, 1, 100) ?? 100, warmth: num(v.warmth, 0, 100) ?? 100, fed: num(v.fed, 0, 3600) ?? 0, afterglow: num(v.afterglow, 0, 600) ?? 0 };
   if (m.inventory && typeof m.inventory === 'object') {
     out.inventory = {};
     for (const [k, n] of Object.entries(m.inventory as Record<string, unknown>)) {
@@ -70,7 +78,8 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     for (const f of m.campfires as Record<string, unknown>[]) {
       if (!f || typeof f !== 'object') continue;
       const [x, y, z] = [num(f.x, -1e6, 1e6), num(f.y, -1e4, 1e4), num(f.z, -1e6, 1e6)];
-      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0 });
+      const cooking = Array.isArray(f.cooking) ? (f.cooking as unknown[]).map((c) => num(c, 0, 60)).filter((c): c is number => c !== undefined).slice(0, 20) : [];
+      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0, cooking });
     }
     out.campfires = out.campfires.slice(0, 500);
   }
@@ -81,6 +90,19 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       if (c !== undefined) out.stalks[k] = Math.floor(c);
     }
   }
+  if (Array.isArray(m.milestones)) out.milestones = m.milestones.filter((x): x is string => typeof x === 'string').slice(0, 100);
+  if (Array.isArray(m.packs)) {
+    out.packs = [];
+    for (const pk of m.packs as Record<string, unknown>[]) {
+      if (!pk || typeof pk !== 'object') continue;
+      const [x, y, z] = [num(pk.x, -1e6, 1e6), num(pk.y, -1e4, 1e4), num(pk.z, -1e6, 1e6)];
+      const items: Record<string, number> = {};
+      if (pk.items && typeof pk.items === 'object') for (const [k, n] of Object.entries(pk.items as Record<string, unknown>)) { const c = num(n, 0, 1e6); if (c) items[k] = Math.floor(c); }
+      if (x !== undefined && y !== undefined && z !== undefined) out.packs.push({ x, y, z, items });
+    }
+    out.packs = out.packs.slice(0, 50);
+  }
+  if (typeof m.wasNight === 'boolean') out.wasNight = m.wasNight;
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);
   return out;

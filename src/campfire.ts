@@ -10,7 +10,9 @@ const HEAT_RADIUS = 8;
 const HEAT_C = 45;
 const MAX_LIGHTS = 4;
 
-export interface CampfireSave { x: number; y: number; z: number; fuel: number; }
+export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; }
+/** Seconds to cook one piece of meat over a lit fire. */
+export const COOK_TIME = 9;
 
 class Campfire {
   readonly group = new THREE.Group();
@@ -18,8 +20,11 @@ class Campfire {
   private flame: THREE.Mesh;
   private inner: THREE.Mesh;
   private t = Math.random() * 10;
+  /** Seconds left on each piece of meat on the spit (only the first cooks; the fire must be lit). */
+  cooking: number[] = [];
+  private meat: THREE.Mesh;
 
-  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { stone: THREE.BufferGeometry; log: THREE.BufferGeometry; flame: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
+  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { stone: THREE.BufferGeometry; log: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
     this.group.position.copy(position);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
@@ -40,15 +45,26 @@ class Campfire {
     this.inner = new THREE.Mesh(parts.flame, parts.mats.flameCore);
     this.inner.position.y = 0.38;
     this.inner.scale.setScalar(0.55);
-    this.group.add(this.flame, this.inner);
+    this.meat = new THREE.Mesh(parts.meat, parts.mats.meat.clone());
+    this.meat.position.y = 0.95;
+    this.meat.visible = false;
+    this.group.add(this.flame, this.inner, this.meat);
     this.heat = { position: position.clone().add(new THREE.Vector3(0, 0.6, 0)), radius: HEAT_RADIUS, heatC: 0 };
   }
 
   get lit() { return this.fuel > 0; }
 
-  update(dt: number) {
+  /** Returns how many pieces finished cooking this frame (via `done`). */
+  update(dt: number, done: () => void = () => {}) {
     this.fuel = Math.max(0, this.fuel - dt);
     this.t += dt;
+    if (this.lit && this.cooking.length && (this.cooking[0] -= dt) <= 0) { this.cooking.shift(); done(); }
+    this.meat.visible = this.cooking.length > 0;
+    if (this.meat.visible) {
+      this.meat.rotation.y += dt * 0.8;
+      const c = 1 - Math.max(0, this.cooking[0]) / COOK_TIME; // browns as it cooks
+      (this.meat.material as THREE.MeshStandardMaterial).color.setRGB(0.75 - c * 0.38, 0.32 - c * 0.12, 0.3 - c * 0.17);
+    }
     // Small fires (low fuel) burn lower and give less heat.
     const strength = this.lit ? Math.min(1, 0.45 + this.fuel / FUEL_START) : 0;
     const flicker = 1 + Math.sin(this.t * 13) * 0.06 + Math.sin(this.t * 23.7) * 0.04;
@@ -68,8 +84,10 @@ export class Campfires {
     stone: new THREE.DodecahedronGeometry(0.16, 0),
     log: new THREE.CylinderGeometry(0.05, 0.07, 0.8, 6),
     flame: new THREE.ConeGeometry(0.28, 0.9, 7, 1, true).translate(0, 0.1, 0),
+    meat: new THREE.DodecahedronGeometry(0.13, 0).scale(1.3, 0.8, 1),
     mats: {
       stone: new THREE.MeshStandardMaterial({ color: 0x7c776f, roughness: 1, flatShading: true }),
+      meat: new THREE.MeshStandardMaterial({ color: 0xbf5249, roughness: 0.7, flatShading: true }),
       log: new THREE.MeshStandardMaterial({ color: 0x5a4636, roughness: 1, flatShading: true }),
       flame: new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
       flameCore: new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
@@ -107,8 +125,11 @@ export class Campfires {
 
   addFuel(f: Campfire) { f.fuel = Math.min(FUEL_MAX, f.fuel + FUEL_PER_WOOD); }
 
+  /** Called when a piece of meat finishes cooking on a fire. */
+  onCooked: (f: Campfire) => void = () => {};
+
   update(dt: number, viewer: THREE.Vector3) {
-    const strengths = this.list.map((f) => f.update(dt));
+    const strengths = this.list.map((f) => f.update(dt, () => this.onCooked(f)));
     const lit = this.list.map((f, i) => ({ f, s: strengths[i], d: f.position.distanceToSquared(viewer) }))
       .filter((x) => x.s > 0).sort((a, b) => a.d - b.d);
     this.lights.forEach((l, i) => {
@@ -120,10 +141,10 @@ export class Campfires {
   }
 
   save(): CampfireSave[] {
-    return this.list.map((f) => ({ x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel }));
+    return this.list.map((f) => ({ x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel, cooking: [...f.cooking] }));
   }
 
   load(list: CampfireSave[] | undefined) {
-    for (const s of list ?? []) this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel);
+    for (const s of list ?? []) this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel).cooking = [...(s.cooking ?? [])];
   }
 }

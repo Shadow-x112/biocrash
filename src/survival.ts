@@ -8,14 +8,16 @@ export const TEMP = {
   dayC: 24,          // open ground at midday
   nightC: -14,       // open ground in the middle of the night
   shadeC: -6,        // daytime shade compared with full sun
-  shelterC: 13,      // caves and deep overhangs hold this steady (just above comfort)
+  shelterC: 5,       // caves and overhangs hold this: it slows the cold, only fire stops it
   lapseCPerM: 0.12,  // colder with height above LAPSE_FROM
   lapseFrom: 30,
   comfortC: 12,      // at or above this you slowly warm up
   loseRate: 0.35,    // warmth lost per second per °C below comfort
   gainRate: 4,       // warmth regained per second when comfortable
   freezeDamage: 3,   // health lost per second at zero warmth
-  regen: 0.6,        // health regained per second when warm
+  regen: 0.15,       // health regained per second when warm
+  fedRegen: 0.8,     // ...and when warm and fed
+  fedTime: 300,      // seconds one cooked meat keeps you fed
 };
 
 export class Survival {
@@ -26,13 +28,25 @@ export class Survival {
   sheltered = false;
   shaded = false;
   readonly heatSources: HeatSource[] = [];
+  /** Seconds of "fed" left: faster healing and slower heat loss. */
+  fed = 0;
+  /** Wearing a hide wrap: heat loss x0.6. */
+  wrapped = false;
+  /** Seconds after a respawn with slower heat loss, so penalties don't stack up. */
+  afterglow = 0;
   private probeTimer = 0;
   private ray = new THREE.Raycaster();
 
   get cold() { return this.warmth < 30; }
   get dead() { return this.health <= 0; }
 
-  reset() { this.health = 100; this.warmth = 100; }
+  reset() { this.health = 100; this.warmth = 100; this.fed = 0; this.afterglow = 0; }
+
+  /** Back at the crash site after freezing: half health, some warmth, two minutes of grace. */
+  respawn() { this.health = 50; this.warmth = 60; this.fed = 0; this.afterglow = 120; }
+
+  /** Multiplier on heat loss from food, clothing and respawn grace. */
+  lossFactor() { return (this.wrapped ? 0.6 : 1) * (this.fed > 0 ? 0.8 : 1) * (this.afterglow > 0 ? 0.5 : 1); }
 
   /** Speed multiplier for the player (cold makes you sluggish). */
   moveFactor() { return this.cold ? 0.7 + (this.warmth / 30) * 0.3 : 1; }
@@ -61,12 +75,14 @@ export class Survival {
     // Smooth so walking under a branch doesn't flicker the reading.
     this.ambientC += (t - this.ambientC) * Math.min(1, dt * 1.5);
 
-    if (this.ambientC < TEMP.comfortC) this.warmth -= (TEMP.comfortC - this.ambientC) * TEMP.loseRate * dt / 10;
+    this.fed = Math.max(0, this.fed - dt);
+    this.afterglow = Math.max(0, this.afterglow - dt);
+    if (this.ambientC < TEMP.comfortC) this.warmth -= (TEMP.comfortC - this.ambientC) * TEMP.loseRate * this.lossFactor() * dt / 10;
     else this.warmth += TEMP.gainRate * dt * Math.min(1, (this.ambientC - TEMP.comfortC) / 6 + 0.3);
     this.warmth = THREE.MathUtils.clamp(this.warmth, 0, 100);
 
     if (this.warmth <= 0) this.health -= TEMP.freezeDamage * dt;
-    else if (this.warmth > 50) this.health += TEMP.regen * dt;
+    else if (this.warmth > 50) this.health += (this.fed > 0 ? TEMP.fedRegen : TEMP.regen) * dt;
     this.health = THREE.MathUtils.clamp(this.health, 0, 100);
   }
 }

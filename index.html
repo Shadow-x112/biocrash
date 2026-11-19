@@ -103,6 +103,13 @@
       #settings input[type=range] { width: 150px; accent-color: #e07a2f; }
       #settings input[type=checkbox] { justify-self: start; width: 16px; height: 16px; accent-color: #e07a2f; }
       #settings output { font: 12px ui-monospace, monospace; color: #9aa6b2; text-align: right; }
+      #corelog { display: none; } #overlay.showlog #corelog { display: block; } #overlay.showlog #mainmenu { display: none; }
+      #logtext { max-height: 55vh; overflow: auto; font-size: 13px; line-height: 1.5; color: #d8f3ef; }
+      #logtext p { margin: 0 0 8px; padding-left: 10px; border-left: 2px solid #5fd3c4; color: #d8f3ef; }
+      #buffs { font-size: 11px; color: #ffd27a; min-height: 1em; margin-top: -4px; }
+      #inv .row.gear { color: #9fd18b; }
+      #death { text-align: center; } #deathhint { margin-top: 10px; font: 400 15px system-ui, sans-serif; color: #b9c8d6; max-width: 520px; }
+      #death .sub { margin-top: 14px; font: 400 12px system-ui, sans-serif; color: #7f8e9c; }
       #overlay.showsettings #settings { display: block; } #overlay.showsettings #mainmenu { display: none; }
       #status { margin-top: 10px; font-size: 12px; color: #8a96a3; min-height: 1em; }
     </style>
@@ -115,13 +122,14 @@
       <div class="bar" id="hp"><div></div></div>
       <div class="row"><span id="heatlabel">Body heat</span><span id="tempv"></span></div>
       <div class="bar" id="heat"><div></div></div>
+      <div id="buffs"></div>
     </div>
     <div id="prompt"></div>
     <div id="toast"></div>
     <div id="inv"></div>
     <div id="hotbar"></div>
     <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub">Number keys or click to craft · Shift+click makes up to 5 · Tab or Esc to close</p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
-    <div id="death">You froze. Recovering at the crash site…</div>
+    <div id="death"><div><div id="deathtext">You froze.</div><div id="deathhint"></div><div class="sub">Recovering at the crash site…</div></div></div>
     <div id="crosshair"></div><div id="hitmark"></div>
     <div id="compass"></div>
     <div id="core"></div>
@@ -132,16 +140,18 @@
         <p>The station came down hard. You walked away from it. Now survive the night.</p>
         <div class="keys">WASD move · Space jump · Shift run · C sneak
 E pick up / use · Tab crafting · 1-4 tools
-B build campfire
+B build campfire · Q cook at a fire / eat
 Left click dig · Right click fill (or R / F)
 Arrow keys also look around
-T fast time · F3 debug info · F5 save now · Esc pause</div>
+F3 debug info · F5 save now · Esc pause</div>
         <button id="play" class="primary">Click to play</button>
         <button id="export">Export save</button>
         <button id="import">Import save</button>
         <button id="reset">New world</button>
         <button id="opensettings">Settings</button>
+        <button id="openlog">Core log</button>
         </div>
+        <div id="corelog"><h1>Core log</h1><div id="logtext"></div><button id="closelog" class="primary">Back</button></div>
         <div id="settings"><h1>Settings</h1><div id="settingsform"></div><button id="closesettings" class="primary">Back</button></div>
         <div id="status"></div>
       </div>

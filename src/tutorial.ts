@@ -36,48 +36,107 @@ const STEPS: Step[] = [
 
 const GLYPHS = '#%&@$░▒▓/\\|_';
 
+/** One-off core lines after the first night's objectives, triggered by what happens in play. A goal (if any) is
+ *  ticked by `goalMet` from the game. Ids are saved so each line plays once per world. */
+export const MILESTONES = {
+  first_kill: { say: 'Lifeform down. A knife will get the useful parts off it. Look at it and press E.', goal: '' },
+  raw_meat: { say: 'Raw meat. Don’t. Cook it over a fire first: look at a lit fire and press Q.', goal: 'Cook raw meat at a fire (Q)' },
+  cooked: { say: 'Cooked. Eat it with Q when you’re away from a fire. Fed, your body holds heat and heals faster.', goal: 'Eat (Q)' },
+  hide: { say: 'Hide. Shape a bone into a needle and you can stitch a wrap. It’ll hold your heat at night.', goal: 'Craft a hide wrap (Tab)' },
+  cold: { say: 'Core temperature dropping. Get to a fire. Shelter only slows it.', goal: '' },
+  sunset: { say: 'Sunset in about three minutes. Make sure your fire has wood.', goal: '' },
+  dawn: { say: 'Sunrise. You made it through a night here. The wreck’s med bay might still have power. Go and look.', goal: 'Return to the wreck' },
+  wreck: { say: 'Med bay is dark. The distress beacon is still transmitting. Nobody has answered. Yet.', goal: '' },
+  death: { say: 'I pulled your vitals back at the crash site. What you carried is where you fell: it’s on your compass.', goal: 'Recover your pack' },
+} as const;
+export type MilestoneId = keyof typeof MILESTONES;
+
 export class Tutorial {
   step = 0;
   enabled = true;
-  private t = 0;           // seconds on this step
+  /** Milestones already shown (saved). */
+  readonly seen = new Set<MilestoneId>();
+  private t = 0;           // seconds on this step / milestone
   private typed = 0;       // characters of the line shown so far
   private shown = '';
   private greeted = false;
+  private queue: MilestoneId[] = [];
+  private current: MilestoneId | null = null;
+  private metAt = -1;
   onLine?: () => void;
+  /** Set by the game: is this milestone's goal done right now? */
+  goalMet: (id: MilestoneId) => boolean = () => false;
 
-  constructor(private el: HTMLElement, step = 0) {
+  constructor(private el: HTMLElement, step = 0, seen: string[] = []) {
     this.step = Math.min(step, STEPS.length);
+    for (const id of seen) if (id in MILESTONES) this.seen.add(id as MilestoneId);
     this.el.innerHTML = '<div class="tc-h">STATION CORE · WRIST LINK</div><div class="tc-say"></div><div class="tc-goal"></div>';
   }
 
   get done() { return this.step >= STEPS.length; }
 
-  update(dt: number, inv: Inventory, fires: number, glitch: number) {
-    if (this.done || !this.enabled) { this.el.style.display = 'none'; return; }
-    this.el.style.display = 'block';
-    this.t += dt;
-    const g: TutorialState = { inv, fires, t: this.t };
-    // Skip ahead past anything already achieved (an old save, or a player who knows the game).
-    let advanced = false;
-    if (fires > 0 && this.step > 0 && this.step < STEPS.length - 1) { this.step = STEPS.length - 1; this.t = 0; g.t = 0; this.typed = 0; advanced = true; }
-    while (!this.done) {
-      const [have, need] = STEPS[this.step].progress(g);
-      if (have < need) break;
-      this.step++; this.t = 0; g.t = 0; this.typed = 0; advanced = true;
-    }
-    if (this.done) { this.el.style.display = 'none'; return; }
-    if (advanced || !this.greeted) { this.greeted = true; this.onLine?.(); }
-    const s = STEPS[this.step];
-    this.typed = Math.min(s.say.length, this.typed + dt * 45);
-    let line = s.say.slice(0, Math.floor(this.typed));
+  /** Queue a one-off line (ignored if already seen). Milestones wait until the first-night objectives are done. */
+  milestone(id: MilestoneId) {
+    if (this.seen.has(id) || this.queue.includes(id) || this.current === id) return;
+    this.queue.push(id);
+  }
+
+  /** Everything the core has said so far, oldest first (for the log in the pause menu). */
+  log(): string[] {
+    const out = STEPS.slice(0, Math.min(this.step + 1, STEPS.length)).map((s) => s.say);
+    for (const id of this.seen) out.push(MILESTONES[id].say);
+    return out;
+  }
+
+  private render(text: string, goal: string, glitch: number, dt: number) {
+    this.typed = Math.min(text.length, this.typed + dt * 45);
+    let line = text.slice(0, Math.floor(this.typed));
     if (glitch > 0) line = [...line].map((c) => (c !== ' ' && Math.random() < 0.25 ? GLYPHS[Math.floor(Math.random() * GLYPHS.length)] : c)).join('');
-    const [have, need] = s.progress(g);
-    const goal = s.goal ? `<span class="tc-box">${have >= need ? '✓' : ''}</span>${s.goal}${need > 1 && this.step > 0 ? ` <b>${Math.min(have, need)}/${need}</b>` : ''}` : '';
     const html = `${line}|${goal}`;
     if (html !== this.shown) {
       this.shown = html;
       (this.el.children[1] as HTMLElement).textContent = line;
       (this.el.children[2] as HTMLElement).innerHTML = goal;
     }
+  }
+
+  update(dt: number, inv: Inventory, fires: number, glitch: number) {
+    if (!this.enabled) { this.el.style.display = 'none'; return; }
+    this.t += dt;
+    if (!this.done) {
+      this.el.style.display = 'block';
+      const g: TutorialState = { inv, fires, t: this.t };
+      // Skip ahead past anything already achieved (an old save, or a player who knows the game).
+      let advanced = false;
+      if (fires > 0 && this.step > 0 && this.step < STEPS.length - 1) { this.step = STEPS.length - 1; this.t = 0; g.t = 0; this.typed = 0; advanced = true; }
+      while (!this.done) {
+        const [have, need] = STEPS[this.step].progress(g);
+        if (have < need) break;
+        this.step++; this.t = 0; g.t = 0; this.typed = 0; advanced = true;
+      }
+      if (!this.done) {
+        if (advanced || !this.greeted) { this.greeted = true; this.onLine?.(); }
+        const s = STEPS[this.step];
+        const [have, need] = s.progress(g);
+        const goal = s.goal ? `<span class="tc-box">${have >= need ? '✓' : ''}</span>${s.goal}${need > 1 && this.step > 0 ? ` <b>${Math.min(have, need)}/${need}</b>` : ''}` : '';
+        this.render(s.say, goal, glitch, dt);
+        return;
+      }
+    }
+    // Milestones: one at a time; a line stays ~14 s, or until 4 s after its goal is met (up to 3 minutes).
+    if (!this.current && this.queue.length) {
+      this.current = this.queue.shift()!;
+      this.seen.add(this.current);
+      this.t = 0; this.typed = 0; this.metAt = -1;
+      this.onLine?.();
+    }
+    if (!this.current) { this.el.style.display = 'none'; return; }
+    const m = MILESTONES[this.current];
+    const met = !!m.goal && this.goalMet(this.current);
+    if (met && this.metAt < 0) this.metAt = this.t;
+    const expired = m.goal ? (this.metAt >= 0 && this.t - this.metAt > 4) || this.t > 180 : this.t > 14;
+    if (expired) { this.current = null; this.el.style.display = 'none'; return; }
+    this.el.style.display = 'block';
+    this.render(m.say, m.goal ? `<span class="tc-box">${met ? '✓' : ''}</span>${m.goal}` : '', glitch, dt);
   }
 }

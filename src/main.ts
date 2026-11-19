@@ -6,20 +6,21 @@ import { createGenerator } from './terrain/density';
 import { Input } from './input';
 import { Player } from './player';
 import { Sky } from './sky';
-import { Survival } from './survival';
+import { Survival, TEMP } from './survival';
 import { Props } from './props';
-import { Inventory, ITEM_NAMES, MATERIALS, type ItemId } from './inventory';
+import { Inventory, ITEM_NAMES, MATERIALS, GEAR, type ItemId } from './inventory';
 import { RECIPES } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, type Creature } from './creatures';
 import { Flora } from './flora';
-import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
+import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
+import { Packs } from './packs';
 import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
 import { SaveStore, type SaveMeta } from './save';
 import { loadSettings, buildSettingsForm, type Settings } from './settings';
-import { Tutorial } from './tutorial';
+import { Tutorial, type MilestoneId } from './tutorial';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION, MIN_CY } from './config';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -98,7 +99,7 @@ async function main() {
   if (meta?.timeOfDay !== undefined) sky.time = meta.timeOfDay;
 
   const survival = new Survival();
-  if (meta?.vitals) { survival.health = meta.vitals.health; survival.warmth = meta.vitals.warmth; }
+  if (meta?.vitals) { survival.health = meta.vitals.health; survival.warmth = meta.vitals.warmth; survival.fed = meta.vitals.fed ?? 0; survival.afterglow = meta.vitals.afterglow ?? 0; }
   const props = new Props();
   for (const id of meta?.picked ?? []) props.picked.add(id);
   scene.add(props.group);
@@ -111,6 +112,10 @@ async function main() {
   const campfires = new Campfires(survival.heatSources);
   scene.add(campfires.group);
   campfires.load(meta?.campfires);
+  const packs = new Packs();
+  scene.add(packs.group);
+  packs.load(meta?.packs);
+  let wasNight = meta?.wasNight ?? false;
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
   scene.add(fauna.group);
 
@@ -121,7 +126,17 @@ async function main() {
 
   // --- Settings (per browser) and the station core's first-night objectives ------------------------
   const settings = loadSettings();
-  const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0);
+  const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0, meta?.milestones);
+  tutorial.goalMet = (id: MilestoneId) => {
+    switch (id) {
+      case 'raw_meat': return inventory.counts.cooked_meat > 0 || survival.fed > 0 || campfires.list.some((f) => f.cooking.length > 0);
+      case 'cooked': return survival.fed > 0;
+      case 'hide': return inventory.counts.hide_wrap > 0;
+      case 'dawn': return player.position.distanceTo(spawnPoint) < 15;
+      case 'death': return packs.list.length === 0;
+      default: return false;
+    }
+  };
   tutorial.onLine = () => { if (audio.has('ui_2')) audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: 1.3 }); };
   const compassEl = $('compass');
   let uiBlip = 0;
@@ -164,7 +179,8 @@ async function main() {
   // --- Saving --------------------------------------------------------------------------------------
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
-    vitals: { health: survival.health, warmth: survival.warmth },
+    vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
+    milestones: [...tutorial.seen], packs: packs.save(), wasNight,
     inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
@@ -211,7 +227,7 @@ async function main() {
     input.enabled = s === 'playing';
     if (s !== 'playing') input.release();
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
-    if (s !== 'menu') overlay.classList.remove('showsettings');
+    if (s !== 'menu') overlay.classList.remove('showsettings', 'showlog');
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
     if (s === 'craft') { renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
     if (s !== 'playing') $('prompt').textContent = '';
@@ -278,6 +294,13 @@ async function main() {
   buildSettingsForm($('settingsform'), settings, applySetting);
   $('opensettings').onclick = () => overlay.classList.add('showsettings');
   $('closesettings').onclick = () => overlay.classList.remove('showsettings');
+  $('openlog').onclick = () => {
+    const log = $('logtext');
+    log.innerHTML = '';
+    for (const line of tutorial.log()) { const p = document.createElement('p'); p.textContent = line; log.append(p); }
+    overlay.classList.add('showlog');
+  };
+  $('closelog').onclick = () => overlay.classList.remove('showlog');
   $('export').onclick = async () => {
     await saveNow();
     const a = document.createElement('a');
@@ -341,12 +364,14 @@ async function main() {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
         return `<span class="${have >= need ? 'ok' : 'no'}">${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
       }).join(' · ');
-      const name = r.makes === 'campfire' ? 'Campfire' : ITEM_NAMES[r.makes];
-      const have = r.makes === 'campfire' ? 0 : inventory.counts[r.makes];
-      const btn = r.makes === 'campfire' ? '<span class="hint">press B in the world</span>'
-        : `<button data-r="${r.id}"${inventory.has(r.cost) ? '' : ' class="off"'}>Craft</button>`;
-      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have ? ` <span class="hint">(have ${have})</span>` : ''}</div>
-        <div class="rcost">${costs}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
+      const needs = (r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">needs ${ITEM_NAMES[k].toLowerCase()}</span>`).join(' · ');
+      const name = ITEM_NAMES[r.makes];
+      const have = inventory.counts[r.makes];
+      const done = r.unique && have > 0;
+      const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0);
+      const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>Craft</button>`;
+      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
+        <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
   const lastCounts: Partial<Record<ItemId, number>> = {};
@@ -355,7 +380,10 @@ async function main() {
       const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
       lastCounts[k] = inventory.counts[k];
       return `<div class="row${got ? ' got' : ''}"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
-    }).join('');
+    }).join('') + GEAR.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="row gear"><span>${ITEM_NAMES[k]}</span><span>${k === 'hide_wrap' ? 'worn' : k === 'chitin_spearhead' ? 'fitted' : '✓'}</span></div>`).join('');
+    survival.wrapped = inventory.counts.hide_wrap > 0;
+    if (inventory.counts.raw_meat > 0) tutorial.milestone('raw_meat');
+    if (inventory.counts.hide > 0 && !inventory.counts.hide_wrap) tutorial.milestone('hide');
     requestAnimationFrame(() => invEl.querySelectorAll('.row.got').forEach((el) => el.classList.remove('got')));
     renderHotbar();
     if (state === 'craft') renderCraft();
@@ -370,7 +398,10 @@ async function main() {
   };
   /** Crafts recipe `r` up to `times` times; reports what was made or what's missing. */
   const craft = (r: (typeof RECIPES)[number], times: number) => {
-    if (r.makes === 'campfire') { craftNote('Build campfires in the world: close this, look at flat ground, press B.'); audio.deny(); return; }
+    if (r.unique && inventory.counts[r.makes] > 0) { craftNote(`You already have a ${ITEM_NAMES[r.makes].toLowerCase()}.`); return; }
+    const missing = (r.needs ?? []).filter((k) => inventory.counts[k] <= 0);
+    if (missing.length) { audio.deny(); craftNote(`You need a ${missing.map((k) => ITEM_NAMES[k].toLowerCase()).join(' and a ')} for this.`); return; }
+    if (r.unique) times = 1;
     let made = 0;
     const first = inventory.counts[r.makes] === 0;
     while (made < times && inventory.take(r.cost)) { inventory.add(r.makes, r.amount); made++; }
@@ -395,11 +426,14 @@ async function main() {
     | { kind: 'prop'; p: NonNullable<ReturnType<Props['lookAt']>> }
     | { kind: 'fire'; f: NonNullable<ReturnType<Campfires['lookAt']>> }
     | { kind: 'stalk'; s: NonNullable<ReturnType<Flora['lookAt']>> }
+    | { kind: 'pack'; pk: NonNullable<ReturnType<Packs['near']>> }
     | null;
   let target: Target = null;
   const queryTarget = (): Target => {
     const c = fauna.lookAt(camera, ATTACK.spear.reach);
     if (c) return { kind: 'creature', c };
+    const pk = packs.near(player.position, 2.5);
+    if (pk) return { kind: 'pack', pk };
     const f = campfires.lookAt(camera, USE_REACH);
     if (f) return { kind: 'fire', f };
     const p = props.lookAt(camera, USE_REACH);
@@ -416,7 +450,12 @@ async function main() {
         return t.c.alive ? t.c.species.name
           : inventory.counts.stone_knife > 0 ? `E  harvest ${t.c.species.name}` : `${t.c.species.name}  ·  needs a stone knife to harvest`;
       case 'prop': return `E  pick up ${ITEM_NAMES[t.p.kind].toLowerCase()}`;
-      case 'fire': return t.f.lit ? `E  add stalkwood  ·  burns ${fmtTime(t.f.fuel)}` : 'E  relight with stalkwood';
+      case 'fire': {
+        const cook = t.f.cooking.length ? `  \u00b7  cooking ${Math.ceil(t.f.cooking[0])}s${t.f.cooking.length > 1 ? ` (+${t.f.cooking.length - 1})` : ''}`
+          : inventory.counts.raw_meat > 0 && t.f.lit ? '  \u00b7  Q  cook raw meat' : '';
+        return (t.f.lit ? `E  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : 'E  relight with stalkwood') + cook;
+      }
+      case 'pack': return `E  recover your pack (${Object.values(t.pk.items).reduce((a, b) => a + b, 0)} items)`;
       case 'stalk': {
         const left = flora.usesLeft(t.s);
         if (left <= 0) return 'Cut back';
@@ -461,6 +500,12 @@ async function main() {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
       else if (inventory.take({ stalkwood: 1 })) { campfires.addFuel(t.f); audio.fireLit(t.f.position); }
       else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
+    } else if (t.kind === 'pack') {
+      const got: string[] = [];
+      for (const [k, n] of Object.entries(t.pk.items)) if (k in inventory.counts && n > 0) { inventory.add(k as ItemId, n); got.push(`${n} ${ITEM_NAMES[k as ItemId].toLowerCase()}`); }
+      packs.remove(t.pk);
+      audio.pickup('fiber');
+      flash(got.length ? `Recovered ${got.join(', ')}.` : 'The pack was empty.');
     } else if (t.kind === 'stalk') {
       if (inventory.counts.stone_knife <= 0 && inventory.counts.stone_pick <= 0) { flash('Cut stalkwood with a stone knife or pick.'); return; }
       const got = flora.harvest(t.s);
@@ -471,6 +516,43 @@ async function main() {
       } else flash('This stalk has been cut back as far as it goes.');
     }
   };
+  /** Q: cook raw meat on the fire you're looking at, otherwise eat cooked meat. */
+  const food = () => {
+    const f = campfires.lookAt(camera, USE_REACH);
+    if (f && inventory.counts.raw_meat > 0) {
+      if (!f.lit) { audio.deny(); flash('Light the fire first: E with stalkwood.'); return; }
+      if (f.cooking.length >= 4) { flash('The spit is full.'); return; }
+      inventory.take({ raw_meat: 1 });
+      f.cooking.push(COOK_TIME);
+      audio.fireLit(f.position);
+      flash(`Cooking. It takes ${COOK_TIME} seconds; keep the fire lit.`);
+      return;
+    }
+    if (inventory.counts.cooked_meat > 0) {
+      inventory.take({ cooked_meat: 1 });
+      survival.fed = Math.min(TEMP.fedTime * 2, survival.fed + TEMP.fedTime);
+      audio.pickup('fiber');
+      flash(`Fed for ${fmtTime(survival.fed)}: you heal faster and hold your heat longer.`);
+      return;
+    }
+    audio.deny();
+    flash(inventory.counts.raw_meat > 0 ? 'Cook raw meat first: look at a lit fire and press Q.' : 'Nothing to eat. Hunt, then cook the meat at a fire.');
+  };
+  campfires.onCooked = (f) => {
+    inventory.add('cooked_meat');
+    tutorial.milestone('cooked');
+    if (f.position.distanceTo(player.position) < 12) { audio.pickup('fiber'); flash('Meat cooked.'); }
+  };
+
+  /** Station-core lines triggered by the world (the tutorial queues them and shows one at a time). */
+  const milestones = () => {
+    if (survival.warmth < 45 && sky.night > 0.3) tutorial.milestone('cold');
+    if (tutorial.done && sky.time > 0.6 && sky.time < 0.7) tutorial.milestone('sunset');
+    if (sky.night > 0.8) wasNight = true;
+    if (wasNight && sky.time > 0.27 && sky.time < 0.4) { tutorial.milestone('dawn'); wasNight = false; }
+    if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
+  };
+
   const buildCampfire = () => {
     const hit = aimAtTerrain(5);
     if (!hit || hit.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
@@ -485,13 +567,14 @@ async function main() {
   };
   const attack = (c: Creature) => {
     hotbar.swing();
-    const hit = c.damage(ATTACK[hotbar.slot].damage, player.position);
+    const dmg = ATTACK[hotbar.slot].damage * (hotbar.slot === 'spear' && inventory.counts.chitin_spearhead > 0 ? 1.5 : 1);
+    const hit = c.damage(dmg, player.position);
     const at = c.hitCentre();
     if (hit) {
       hitEl.className = c.alive ? 'on' : 'on kill';
       requestAnimationFrame(() => requestAnimationFrame(() => { hitEl.className = c.alive ? '' : 'kill'; }));
       audio.hit(at, !c.alive);
-      if (!c.alive) audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 });
+      if (!c.alive) { audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 }); tutorial.milestone('first_kill'); }
       particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
       player.shake(c.alive ? 0.25 : 0.45);
     } else if (c.state === 'curl') { audio.shellClack(at); particles.burst(at, 4, 0xffffff, { speed: 4, size: 0.03, life: 0.3 }); }
@@ -543,6 +626,7 @@ async function main() {
     if (state !== 'playing' || e.repeat) return;
     if (e.code === 'KeyE') use();
     else if (e.code === 'KeyB') buildCampfire();
+    else if (e.code === 'KeyQ') food();
     else if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
     else {
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
@@ -563,6 +647,7 @@ async function main() {
   const hpBar = document.querySelector('#hp > div') as HTMLElement, heatBar = document.querySelector('#heat > div') as HTMLElement;
   const fahrenheit = navigator.language === 'en-US';
   const fmtTemp = (c: number) => (fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
+  const buffsEl = $('buffs'), deathText = $('deathtext'), deathHint = $('deathhint');
   const updateVitals = () => {
     hpBar.style.width = `${survival.health}%`;
     heatBar.style.width = `${survival.warmth}%`;
@@ -571,6 +656,8 @@ async function main() {
     $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
+    const buffs = [survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
+    if (buffsEl.textContent !== buffs) buffsEl.textContent = buffs;
     if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
       $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
       $('hpv').textContent = String(Math.floor(Math.random() * 999));
@@ -615,7 +702,7 @@ async function main() {
     TICKS.push([d, d % 45 === 0 ? card : String(d), d % 45 !== 0]);
   }
   compassEl.innerHTML = TICKS.map(([, l, minor]) => `<span${minor ? ' class="minor"' : ''}>${l}</span>`).join('')
-    + '<span class="mark" style="color:#e07a2f"></span><span class="mark" style="color:#ffb35c"></span>';
+    + '<span class="mark" style="color:#e07a2f"></span><span class="mark" style="color:#ffb35c"></span><span class="mark" style="color:#f2f4f6"></span>';
   const tickEls = [...compassEl.children] as HTMLElement[];
   const wrap = (a: number) => ((a % 360) + 540) % 360 - 180;
   const place = (el: HTMLElement, bearing: number, heading: number) => {
@@ -635,6 +722,9 @@ async function main() {
     let best: THREE.Vector3 | null = null, bd = Infinity;
     for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f.position; } }
     if (best && bd > 8) { fire.textContent = `\u25B2 fire ${Math.round(bd)} m`; place(fire, bearingTo(best), heading); } else fire.style.display = 'none';
+    const packEl = tickEls[TICKS.length + 2], pk = packs.nearest(player.position);
+    if (pk && pk.position.distanceTo(player.position) > 3) { packEl.textContent = `\u25C6 pack ${Math.round(pk.position.distanceTo(player.position))} m`; place(packEl, bearingTo(pk.position), heading); }
+    else packEl.style.display = 'none';
   };
 
   // --- Frame loop ----------------------------------------------------------------------------------
@@ -672,16 +762,26 @@ async function main() {
         if (survival.dead) {
           setState('dead');
           audio.death();
+          // Materials stay where you fell, in a pack on your compass. Tools and gear come with you.
+          const items: Record<string, number> = {};
+          for (const k of MATERIALS) if (inventory.counts[k] > 0) items[k] = inventory.counts[k];
+          const dropped = Object.keys(items).length > 0;
+          if (dropped) { packs.add(player.position.clone(), items); inventory.take(items as Partial<Record<ItemId, number>>); }
+          deathText.textContent = 'You froze.';
+          deathHint.textContent = dropped ? 'Your materials are where you fell, marked on the compass. Fire and shelter keep your core temperature up.'
+            : 'Fire and shelter keep your core temperature up. Cooked meat and a hide wrap help you last the night.';
           deathEl.style.display = 'flex';
           setTimeout(() => {
             player.teleport(spawnPoint);
-            survival.reset();
+            survival.respawn();
+            if (dropped) tutorial.milestone('death');
             deathEl.style.display = 'none';
             setState(player.dragLook || document.pointerLockElement === canvas ? 'playing' : 'menu');
           }, 3000);
         }
       }
       campfires.update(dt, player.position);
+      packs.update(dt);
       flora.update(dt, camera.position, sky.night);
       fauna.update(dt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
       hotbar.update(dt, input.moving);
@@ -739,6 +839,7 @@ async function main() {
     if ((uiTimer -= dt) <= 0) {
       uiTimer = 0.1;
       if (state === 'playing') {
+        milestones();
         target = queryTarget(); promptEl.textContent = promptFor(target);
         const cls = crosshairFor(target);
         if (crossEl.className !== cls) crossEl.className = cls;
