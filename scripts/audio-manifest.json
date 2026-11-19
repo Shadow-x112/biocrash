@@ -792,74 +792,242 @@
  },
  {
   "id": "step_soil_1",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 5.8228,
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 1.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 19.21
+  "gainDb": 12.56
  },
  {
   "id": "step_soil_2",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 1.8187,
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk  2.wav",
+  "start": 0.0038,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 15.5
+  "gainDb": 15.35
  },
  {
   "id": "step_soil_3",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 9.7625,
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 3.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 27.54
+  "gainDb": 17.5
  },
  {
   "id": "step_soil_4",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 8.7112,
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 4.wav",
+  "start": 0.0921,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 17.48
+ },
+ {
+  "id": "step_soil_5",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 5.wav",
+  "start": 0.095,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 18.35
+ },
+ {
+  "id": "step_soil_6",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 6.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 17.27
+ },
+ {
+  "id": "step_soil_7",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 7.wav",
+  "start": 0.0021,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 17.85
+ },
+ {
+  "id": "step_soil_8",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Walk\\Dirt\\DIRT - Walk 8.wav",
+  "start": 0.0165,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 21.37
+ },
+ {
+  "id": "step_soil_crouch_1",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 1.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 12.97
+ },
+ {
+  "id": "step_soil_crouch_2",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 2.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 12.07
+ },
+ {
+  "id": "step_soil_crouch_3",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 3.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
   "gainDb": 15.13
  },
  {
-  "id": "step_soil_5",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 14.9828,
+  "id": "step_soil_crouch_4",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 4.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 12.95
+  "gainDb": 14.37
  },
  {
-  "id": "step_soil_6",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 17.3929,
+  "id": "step_soil_crouch_5",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 5.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 13.58
+  "gainDb": 15.31
  },
  {
-  "id": "step_soil_7",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 13.8257,
+  "id": "step_soil_crouch_6",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 6.wav",
+  "start": 0.0,
   "dur": 0.6,
   "mono": true,
   "short": true,
-  "gainDb": 13.98
+  "gainDb": 14.12
  },
  {
-  "id": "step_soil_8",
-  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
-  "start": 18.9912,
+  "id": "step_soil_crouch_7",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 7.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 12.44
+ },
+ {
+  "id": "step_soil_crouch_8",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Crouch\\Dirt\\DIRT - Crouch 8.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 12.81
+ },
+ {
+  "id": "step_soil_run_1",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 1.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 16.43
+ },
+ {
+  "id": "step_soil_run_2",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 2.wav",
+  "start": 0.0067,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 13.38
+ },
+ {
+  "id": "step_soil_run_3",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 3.wav",
+  "start": 0.0029,
   "dur": 0.6,
   "mono": true,
   "short": true,
   "gainDb": 16.49
+ },
+ {
+  "id": "step_soil_run_4",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 4.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 15.43
+ },
+ {
+  "id": "step_soil_run_5",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 5.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 20.1
+ },
+ {
+  "id": "step_soil_run_6",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 6.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 16.38
+ },
+ {
+  "id": "step_soil_run_7",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 7.wav",
+  "start": 0.0,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 17.32
+ },
+ {
+  "id": "step_soil_run_8",
+  "lib": "NebulaAudio",
+  "src": "NA_Character Footsteps (Dirt & Grass) - Pack 1\\Run\\Dirt\\DIRT - Run 8.wav",
+  "start": 0.006,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 19.77
  }
 ]

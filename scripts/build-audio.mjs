@@ -3,7 +3,7 @@
 // Usage: node scripts/build-audio.mjs [libraryRoot]
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 const root = process.argv[2] ?? process.env.OCULAR_ROOT ?? 'C:\\Users\\manri\\OneDrive\\AssetLibrary\\Audio\\_ThirdParty\\OcularSounds';
 const list = JSON.parse(readFileSync(new URL('./audio-manifest.json', import.meta.url), 'utf8'));
@@ -12,7 +12,8 @@ mkdirSync(out, { recursive: true });
 const manifest = {};
 let failed = 0;
 for (const s of list) {
-  const src = join(root, ...s.src.split('\\'));
+  // s.lib = another library folder next to OcularSounds in _ThirdParty (e.g. NebulaAudio)
+  const src = s.lib ? join(dirname(root), s.lib, ...s.src.split('\\')) : join(root, ...s.src.split('\\'));
   const dst = join(out, `${s.id}.webm`);
   const loop = s.id.startsWith('bed_') || s.id.startsWith('earth_') || s.id === 'drips';
   // Mix-check fixes (audio-mcp survey): cut inaudible sub-20 Hz rumble that eats headroom, per-category loudness,
