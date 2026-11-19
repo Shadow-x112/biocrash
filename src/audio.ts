@@ -16,6 +16,15 @@ export class Audio {
   private nightLevel = 0;
   private insectTimer = 0;
   private last = new Map<string, number>(); // per-sound cooldowns
+  private world!: GainNode;          // sfx + ambience pass through here so they can be ducked under scares
+  private reverbIn!: GainNode;       // shared reverb send
+  private reverbOpen!: GainNode;     // short, airy tail outdoors
+  private reverbCave!: GainNode;     // long, dark tail underground
+  private listenerPos = new THREE.Vector3();
+  private voices = 0;                // live sample voices (voice limit)
+  private perId = new Map<string, number>();
+  private windGust = 0.5; private windTarget = 0.5; private windTimer = 0;
+  private lastSet = { wind: -1, hum: -1, at: 0 };
   volumes = { master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8 };
   /** Recorded sounds (Ocular Sounds library), decoded once the context exists. */
   private samples = new Map<string, { buf: AudioBuffer; gain: number }>();
@@ -28,11 +37,24 @@ export class Audio {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    const comp = ctx.createDynamicsCompressor(); // keeps stacked sounds from clipping
-    comp.threshold.value = -14; comp.ratio.value = 4;
-    this.master.connect(comp).connect(ctx.destination);
+    // Master limiter: catches peaks only, so quiet-to-loud contrast survives (horror needs the dynamic range).
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.003; lim.release.value = 0.25;
+    this.master.connect(lim).connect(ctx.destination);
+    this.world = ctx.createGain(); this.world.connect(this.master);
     this.sfx = ctx.createGain(); this.amb = ctx.createGain(); this.ui = ctx.createGain();
-    this.sfx.connect(this.master); this.amb.connect(this.master); this.ui.connect(this.master);
+    this.sfx.connect(this.world); this.amb.connect(this.world); this.ui.connect(this.master);
+    // Shared reverb: two generated impulse responses (no files), crossfaded between open air and caves.
+    this.reverbIn = ctx.createGain();
+    const mkVerb = (seconds: number, damp: number, level: number) => {
+      const conv = ctx.createConvolver();
+      conv.buffer = this.impulse(seconds, damp);
+      const g = ctx.createGain(); g.gain.value = level;
+      this.reverbIn.connect(conv).connect(g).connect(this.world);
+      return g;
+    };
+    this.reverbOpen = mkVerb(1.2, 0.55, 0.5);
+    this.reverbCave = mkVerb(3.5, 0.3, 0);
     this.applyVolumes();
     // One second of white noise, reused by every noisy sound.
     this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -64,6 +86,10 @@ export class Audio {
   play(id: string, o: { pos?: V3; gain?: number; rate?: number; bus?: 'sfx' | 'ui' | 'amb'; hrtf?: boolean; offset?: number; dur?: number; fadeIn?: number; delay?: number } = {}) {
     const s = this.samples.get(id), ctx = this.ctx;
     if (!s || !ctx) return null;
+    // Voice limit: at most 3 of the same sound and 32 overall (the UI is never dropped).
+    const base = id.replace(/_\d+$/, '');
+    if (o.bus !== 'ui' && ((this.perId.get(base) ?? 0) >= 3 || this.voices >= 32)) return null;
+    this.voices++; this.perId.set(base, (this.perId.get(base) ?? 0) + 1);
     const t = ctx.currentTime + (o.delay ?? 0);
     const src = ctx.createBufferSource();
     src.buffer = s.buf;
@@ -80,6 +106,7 @@ export class Audio {
       g.gain.linearRampToValueAtTime(0, end);
       src.start(t, offset, o.dur + 0.05);
     } else src.start(t, offset);
+    src.addEventListener('ended', () => { this.voices--; this.perId.set(base, (this.perId.get(base) ?? 1) - 1); });
     return { gain: g, src };
   }
 
@@ -114,6 +141,42 @@ export class Audio {
   /** @internal */
   busNode(bus: 'amb' | 'sfx') { return bus === 'amb' ? this.amb : this.sfx; }
 
+  /** Exponentially decaying stereo noise with high frequencies dying faster: a cheap, convincing reverb tail. */
+  private impulse(seconds: number, damp: number) {
+    const ctx = this.ctx!, n = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      let lp = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / n;
+        const k = damp + (1 - damp) * t;            // the tail gets darker as it decays
+        lp += (Math.random() * 2 - 1 - lp) * (1 - k * 0.9);
+        d[i] = lp * Math.pow(1 - t, 3) * (i < ctx.sampleRate * 0.012 ? i / (ctx.sampleRate * 0.012) : 1);
+      }
+    }
+    return buf;
+  }
+
+  /** 0 = open air, 1 = cave: crossfades the reverb character. */
+  setSpace(cave: number) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.reverbOpen.gain.setTargetAtTime(0.5 * (1 - cave), t, 0.8);
+    this.reverbCave.gain.setTargetAtTime(0.9 * cave, t, 0.8);
+  }
+
+  /** Pulls the whole world (not the UI) down by `db` for a moment: silence before a scare, or under a stinger. */
+  duck(db: number, attack: number, hold: number, release: number) {
+    if (!this.ctx) return;
+    const g = this.world.gain, t = this.ctx.currentTime, low = Math.pow(10, db / 20);
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(low, t + attack);
+    g.setValueAtTime(low, t + attack + hold);
+    g.linearRampToValueAtTime(1, t + attack + hold + release);
+  }
+
   applyVolumes() {
     if (!this.ctx) return;
     this.master.gain.value = this.volumes.master;
@@ -133,6 +196,7 @@ export class Audio {
   updateListener(camera: THREE.Camera) {
     if (!this.ctx) return;
     const l = this.ctx.listener, p = camera.position;
+    this.listenerPos.copy(p);
     const f = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const u = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
     if (l.positionX) {
@@ -148,15 +212,28 @@ export class Audio {
 
   // --- Building blocks ---------------------------------------------------------------------------
 
+  /** Routes a voice to its bus. Positioned voices get panning, air absorption (darker with distance) and a reverb send
+   *  that grows with distance, so far sounds read as far, not just quiet. HRTF only when asked (it is expensive). */
   private out(bus: GainNode, pos?: V3, hrtf = false) {
+    const ctx = this.ctx!;
     if (!pos) return bus;
-    const p = this.ctx!.createPanner();
+    const d = this.listenerPos.distanceTo(pos as THREE.Vector3);
+    const p = ctx.createPanner();
     p.panningModel = hrtf ? 'HRTF' : 'equalpower';
     p.distanceModel = 'inverse';
-    p.refDistance = 2; p.maxDistance = 60; p.rolloffFactor = 1.3;
+    p.refDistance = 2.5; p.rolloffFactor = 1.1;
     p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
     p.connect(bus);
-    return p;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 18000 * Math.pow(2500 / 18000, Math.min(1, Math.max(0, (d - 5) / 55)));
+    f.connect(p);
+    if (bus !== this.ui) {
+      const send = ctx.createGain();
+      send.gain.value = Math.min(0.6, 0.08 + d / 90);
+      f.connect(send).connect(this.reverbIn);
+    }
+    return f;
   }
 
   private canPlay(key: string, gap: number) {
@@ -276,11 +353,20 @@ export class Audio {
   }
 
   tukoChirp(pos: V3) {
+    if (this.has('tuko_1')) { // a glitchy electronic chitter, pitched up: small and alien
+      const v = this.playAny('tuko', 4, { pos, gain: 0.35, rate: 1.7 + Math.random() * 0.7, dur: 0.25 + Math.random() * 0.2 });
+      if (v && Math.random() < 0.5) this.playAny('tuko', 4, { pos, gain: 0.25, rate: 2 + Math.random() * 0.5, dur: 0.18, delay: 0.16 });
+      return;
+    }
     this.tone({ dur: 0.07, freq: this.vary(1900, 0.08), freqEnd: 2700, gain: 0.07, pos, hrtf: true });
     this.tone({ dur: 0.07, freq: this.vary(2100, 0.08), freqEnd: 3000, gain: 0.06, pos, delay: 0.11, hrtf: true });
   }
 
   oomiHoot(pos: V3, sleepy: boolean) {
+    if (this.has('oomi_1')) { // a big, soft, slowed-down horn: large and gentle
+      this.playAny('oomi', 3, { pos, gain: sleepy ? 0.35 : 0.6, rate: sleepy ? 0.45 : 0.6 + Math.random() * 0.12, dur: sleepy ? 2.5 : 1.6, fadeIn: 0.15 });
+      return;
+    }
     this.tone({ dur: sleepy ? 0.9 : 0.55, freq: this.vary(sleepy ? 150 : 230, 0.06), freqEnd: sleepy ? 120 : 170, gain: sleepy ? 0.08 : 0.16, vibrato: 6, attack: 0.08, pos, hrtf: true });
   }
 
@@ -330,12 +416,18 @@ export class Audio {
   updateAmbience(dt: number, night: number, altitude: number, listener: V3) {
     if (!this.ctx || !this.wind || !this.hum) return;
     const t = this.ctx.currentTime;
-    const gust = 0.5 + 0.5 * Math.sin(t * 0.23) * Math.sin(t * 0.071 + 1.3);
-    const windLevel = (0.04 + gust * 0.08) * (1 + Math.max(0, altitude - 25) / 40) * (1 - night * 0.4);
-    this.wind.gain.gain.setTargetAtTime(windLevel, t, 0.5);
-    this.wind.filter.frequency.setTargetAtTime(300 + gust * 500, t, 0.8);
+    // Gusts wander toward random targets instead of a repeating sine pattern.
+    if ((this.windTimer -= dt) <= 0) { this.windTimer = 2 + Math.random() * 6; this.windTarget = Math.random() < 0.15 ? 0.95 : Math.random() * 0.6; }
+    this.windGust += (this.windTarget - this.windGust) * Math.min(1, dt * 0.6);
+    const gust = this.windGust;
     this.nightLevel = night;
-    this.hum.gain.setTargetAtTime(0.02 + night * 0.06, t, 1);
+    if (t - this.lastSet.at >= 0.2) { // automation every 0.2 s, not every frame
+      this.lastSet.at = t;
+      const windLevel = (0.04 + gust * 0.09) * (1 + Math.max(0, altitude - 25) / 40) * (1 - night * 0.4);
+      this.wind.gain.gain.setTargetAtTime(windLevel, t, 0.5);
+      this.wind.filter.frequency.setTargetAtTime(280 + gust * 600, t, 0.8);
+      this.hum.gain.setTargetAtTime(0.02 + night * 0.06, t, 1);
+    }
     if (night > 0.5 && (this.insectTimer -= dt) <= 0) {
       this.insectTimer = 0.4 + Math.random() * 1.6;
       const a = Math.random() * Math.PI * 2, d = 8 + Math.random() * 20;
@@ -356,6 +448,7 @@ export class Loop {
 
   /** Target level 0..1 (smoothed over `tc` seconds). */
   setLevel(level: number, tc = 1.5) {
+    if (this.out && Math.abs(level - this.level) < 0.01) return; // don't pile up automation every frame
     this.level = level;
     const ctx = this.audio.ctx;
     if (!ctx) return;

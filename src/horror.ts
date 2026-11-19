@@ -31,7 +31,10 @@ export class Horror {
   readonly fired: Record<string, number> = {};
   private awayFromFire = 0;
   private beds: Record<string, Loop> = {};
-  private timers: Record<string, number> = { creature: 20, wreck: 40, swell: 30, whisper: 60, breath: 90, memory: 150, figure: 100, sting: 3600, glitch: 50, loon: 30 };
+  private timers: Record<string, number> = { creature: 30, wreck: 60, swell: 45, whisper: 90, breath: 150, memory: 240, figure: 150, sting: 3600, glitch: 90, loon: 30, voice: 400, falseAlarm: 900, drip: 2 };
+  /** Seconds since the last big event: big events (whispers, figure, memories, voices, false alarms, scares) stay >= 25 s apart. */
+  private sinceMajor = 999;
+  private pendingSting = -1; // game-time countdown from riser to stinger (pauses with the game)
   private whisperVoice: { gain: GainNode; pos: THREE.Vector3 } | null = null;
   private memoryVoice: { gain: GainNode; end: number } | null = null;
   private figure: THREE.Group;
@@ -60,6 +63,7 @@ export class Horror {
   }
 
   private fire(k: string) { this.fired[k] = (this.fired[k] ?? 0) + 1; }
+  private major() { if (this.sinceMajor < 25) return false; this.sinceMajor = 0; return true; }
 
   private bed(id: string) { return (this.beds[id] ??= this.audio.loop(id)); }
 
@@ -94,11 +98,16 @@ export class Horror {
     const u = this.level;
 
     // --- Ambient beds ---------------------------------------------------------------------------
+    // Each bed is two recordings of different lengths, so their combination never repeats the same way.
     const cave = i.underground ? 1 : 0;
-    this.bed('bed_day').setLevel(i.daylight * (1 - cave) * 0.7 * (1 - u * 0.6));
-    this.bed('bed_night').setLevel(i.night * (1 - cave) * 0.8);
-    this.bed('bed_cave').setLevel(cave * 0.9);
-    this.bed('bed_dread').setLevel(smooth(0.4, 0.85, u) * 0.75, 3);
+    const day = i.daylight * (1 - cave) * 0.7 * (1 - u * 0.6), night = i.night * (1 - cave) * 0.8;
+    const dread = smooth(0.4, 0.85, u) * 0.75;
+    this.bed('bed_day').setLevel(day); this.bed('bed_day2').setLevel(day * 0.8);
+    this.bed('bed_night').setLevel(night); this.bed('bed_night2').setLevel(night * 0.7);
+    this.bed('bed_cave').setLevel(cave * 0.9); this.bed('bed_cave2').setLevel(cave * 0.6);
+    this.bed('bed_dread').setLevel(dread, 3); this.bed('bed_dread2').setLevel(dread * 0.6, 3);
+    this.audio.setSpace(cave);
+    this.sinceMajor += dt;
 
     // --- Screen: a darker edge and lower exposure as unease grows (read by the renderer) ------------
     this.vignette.style.opacity = String(smooth(0.2, 1, u) * 0.75);
@@ -109,11 +118,13 @@ export class Horror {
 
     // Something big, far off, that you never find.
     if (t.creature <= 0) {
-      t.creature = rand(25, 60) * (1.3 - u);
+      t.creature = rand(40, 95);
       if (i.night > 0.4 || i.underground || u > 0.3) {
-        const p = this.around(cam, rand(35, 60), i.ground);
-        if (Math.random() < 0.25) this.audio.playAny('moan', 2, { pos: p, gain: 1.2, rate: rand(0.75, 0.95) });
-        else this.audio.playAny('growl', 6, { pos: p, gain: 1.4, rate: rand(0.7, 0.95) });
+        const p = this.around(cam, rand(35, 65), i.ground);
+        const r = Math.random();
+        if (r < 0.2) this.audio.playAny('moan', 2, { pos: p, gain: 1.3, rate: rand(0.75, 0.95) });
+        else if (r < 0.45) this.audio.playAny('mutation', 4, { pos: p, gain: 1.3, rate: rand(0.7, 0.9) });
+        else this.audio.playAny('growl', 10, { pos: p, gain: 1.5, rate: rand(0.7, 0.95) });
         if (u > 0.55 && Math.random() < 0.3) this.audio.play('horn', { pos: this.around(cam, 70, i.ground), gain: 1.3, rate: 0.8 });
         this.fire('creature');
       }
@@ -128,12 +139,16 @@ export class Horror {
       t.wreck = rand(45, 100);
       if (i.night > 0.5) {
         const d = cam.distanceTo(i.crashSite);
-        if (d < 120) { this.audio.playAny('metal', 3, { pos: i.crashSite, gain: 1.6, rate: rand(0.6, 0.9) }); this.fire('wreck'); }
+        if (d < 120) {
+          if (Math.random() < 0.25) this.audio.play('scrape', { pos: i.crashSite, gain: 1.4, rate: rand(0.5, 0.7) });
+          else this.audio.playAny('metal', 3, { pos: i.crashSite, gain: 1.6, rate: rand(0.6, 0.9) });
+          this.fire('wreck');
+        }
       }
     }
     // Low string swells: the music notices before you do.
     if (t.swell <= 0) {
-      t.swell = rand(35, 80);
+      t.swell = rand(60, 120);
       if (u > 0.35) {
         if (Math.random() < 0.3) this.audio.play('friction', { gain: 0.35 * u, fadeIn: 2, bus: 'amb' });
         else this.audio.playAny('lowstring', 3, { gain: 0.4 * u, fadeIn: 2, bus: 'amb' });
@@ -142,10 +157,12 @@ export class Horror {
     }
     // A whisper right behind you. It stops if you turn around.
     if (t.whisper <= 0 && !this.whisperVoice) {
-      t.whisper = rand(60, 140) * (1.4 - u);
-      if (u > 0.45) {
+      t.whisper = rand(90, 200);
+      if (u > 0.45 && this.major()) {
         const pos = cam.clone().addScaledVector(this.fwd, -2.2).add(new THREE.Vector3(rand(-0.6, 0.6), 0.1, rand(-0.6, 0.6)));
-        const v = this.audio.play('whisper', { pos, gain: 0.55, hrtf: true, offset: rand(0, 8), dur: rand(4, 7), fadeIn: 1.2 });
+        const v = Math.random() < 0.5
+          ? this.audio.play('whisper', { pos, gain: 0.55, hrtf: true, offset: rand(0, 8), dur: rand(4, 7), fadeIn: 1.2 })
+          : this.audio.playAny('vwhisper', 2, { pos, gain: 0.5, hrtf: true, fadeIn: 0.8 });
         if (v) { this.whisperVoice = { gain: v.gain, pos }; v.src.onended = () => { this.whisperVoice = null; }; this.fire('whisper'); }
       }
     }
@@ -156,8 +173,8 @@ export class Horror {
     }
     // Breathing, close, when it's very bad.
     if (t.breath <= 0) {
-      t.breath = rand(80, 160);
-      if (u > 0.65) {
+      t.breath = rand(150, 280);
+      if (u > 0.65 && this.major()) {
         const pos = cam.clone().addScaledVector(this.fwd, -1.2);
         this.audio.play('breathing', { pos, gain: 0.5, hrtf: true, offset: rand(0, 10), dur: rand(5, 8), fadeIn: 2 });
         this.fire('breath');
@@ -165,9 +182,10 @@ export class Horror {
     }
     // Earth. A farm, birds, people. It shouldn't be here, and it cuts off.
     if (t.memory <= 0 && !this.memoryVoice) {
-      t.memory = rand(180, 320);
-      if (u > 0.5) {
-        const id = Math.random() < 0.5 ? 'earth_farm' : 'earth_woods';
+      t.memory = rand(240, 420);
+      if (u > 0.5 && this.major()) {
+        const pool = ['earth_farm', 'earth_woods', 'earth_night', 'earth_rain'];
+        const id = pool[Math.floor(Math.random() * pool.length)];
         const len = rand(6, 11);
         const v = this.audio.play(id, { gain: 0.6, fadeIn: 3, offset: rand(0, 10), bus: 'amb' });
         if (v) { this.memoryVoice = { gain: v.gain, end: this.audio.ctx!.currentTime + len }; v.src.stop(this.audio.ctx!.currentTime + len + 0.1); this.fire('memory'); }
@@ -180,8 +198,8 @@ export class Horror {
     }
     // The figure at the edge of your vision. Look at it and it's gone.
     if (t.figure <= 0 && !this.figure.visible) {
-      t.figure = rand(120, 240);
-      if (u > 0.6 && !i.underground) {
+      t.figure = rand(150, 300);
+      if (u > 0.6 && !i.underground && this.sinceMajor >= 25) {
         const side = Math.random() < 0.5 ? 1 : -1;
         const yaw = Math.atan2(this.fwd.x, this.fwd.z) + side * rand(0.9, 1.15); // ~55-65 degrees off centre
         const d = rand(16, 26);
@@ -192,6 +210,8 @@ export class Horror {
           this.figure.lookAt(cam.x, g.y, cam.z);
           this.figure.visible = true;
           this.figureLife = rand(6, 12);
+          this.sinceMajor = 0;
+          this.audio.play('rumble_1', { gain: 0.35, bus: 'amb' }); // felt more than heard
           this.fire('figure');
         }
       }
@@ -208,17 +228,42 @@ export class Horror {
       }
     }
     // A rare scare out of nowhere, with a riser first.
-    if (t.sting <= 0 && u > 0.75 && Math.random() < dt / 60) {
-      this.audio.playAny('riser', 3, { gain: 0.6, bus: 'amb' });
-      setTimeout(() => this.stinger(), 2200);
-      t.sting = rand(3600, 4800);
+    if (t.sting <= 0 && this.pendingSting < 0 && u > 0.75 && Math.random() < dt / 60 && this.major()) {
+      this.audio.duck(-14, 1.5, 0.8, 0.3);                     // the world goes quiet first
+      this.audio.playAny('riser', 3, { gain: 0.6, bus: 'ui', delay: 0.6 });
+      this.pendingSting = 2.4;
+      t.sting = rand(3600, 5400);
+    }
+    if (this.pendingSting >= 0 && (this.pendingSting -= dt) < 0) this.stinger();
+    // False alarm: the world holds its breath... and nothing happens. Keeps tension alive between the rare scares.
+    if (t.falseAlarm <= 0) {
+      t.falseAlarm = rand(900, 1500);
+      if (u > 0.55 && this.major()) {
+        this.audio.duck(-14, 1.5, rand(3, 5), 2.5);
+        this.audio.play('gasp', { gain: 0.35, bus: 'ui', delay: 1.4 });
+        this.fire('falseAlarm');
+      }
+    }
+    // A distant voice. Female, ethereal, impossible.
+    if (t.voice <= 0) {
+      t.voice = rand(300, 600);
+      if (u > 0.6 && this.major()) {
+        this.audio.playAny('voice', 3, { pos: this.around(cam, rand(25, 40), i.ground), gain: 0.9, fadeIn: 1.5 });
+        this.fire('voice');
+      }
+    }
+    // Caves drip.
+    if (t.drip <= 0) {
+      t.drip = rand(1.2, 4.5);
+      if (i.underground) this.audio.play('drips', { pos: this.around(cam, rand(3, 12), () => null), offset: rand(0, 40), dur: rand(0.8, 1.6), gain: 1.2, rate: rand(0.9, 1.15) });
     }
     // The wrist readout glitches. The AI is fine. Probably.
     if (t.glitch <= 0) {
-      t.glitch = rand(50, 120) * (1.3 - u);
+      t.glitch = rand(90, 180);
       if (u > 0.3) {
         this.glitch = rand(0.6, 1.4);
-        this.audio.playAny('disrupt', 4, { gain: 0.4, bus: 'ui', dur: 0.8 });
+        if (Math.random() < 0.3) this.audio.play('receiver', { gain: 0.35, bus: 'ui', offset: rand(0, 12), dur: this.glitch + 0.3 });
+        else this.audio.playAny('disrupt', 4, { gain: 0.4, bus: 'ui', dur: 0.8 });
         this.fire('glitch');
       }
     }
@@ -226,11 +271,16 @@ export class Horror {
   }
 
   private stinger() {
+    this.pendingSting = -1;
+    this.audio.duck(-10, 0.05, 0.4, 1.5);                     // everything else steps back under the hit
+    for (const k of ['creature', 'whisper', 'breath', 'memory', 'figure', 'voice', 'falseAlarm', 'swell'])
+      this.timers[k] = Math.max(this.timers[k], rand(60, 120)); // a calm stretch afterwards
     const ids = ['sting_shadows', 'sting_from_below', 'sting_taken', 'sting_lights_out'];
     this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'ui' });
     this.audio.play('subdrop', { gain: 0.6, bus: 'ui' });
     this.flashStatic(0.25);
-    this.timers.sting = rand(3600, 4800); // at most one scare an hour
+    this.timers.sting = rand(3600, 5400); // at most one scare an hour
+    this.sinceMajor = 0;
     this.fire('sting');
   }
 

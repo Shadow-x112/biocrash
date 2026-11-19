@@ -8,14 +8,6 @@
   "gain": 0.5
  },
  {
-  "id": "bed_night",
-  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Drones and Texture Elements\\DSGNSrce_DRONE-Drone Element 02_Ocular_Aberration.wav",
-  "start": 0,
-  "dur": 45,
-  "mono": false,
-  "gain": 0.6
- },
- {
   "id": "bed_dread",
   "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Watching You\\DSGNSrce_TEXTURE-Watching You Static_Puncture_Ocular.wav",
   "start": 0,
@@ -405,6 +397,238 @@
   "start": 0,
   "dur": 2,
   "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "bed_night",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Drones and Texture Elements\\DSGNSrce_DRONE-Drone Element 03_Ocular_Aberration_Gmin.wav",
+  "start": 0,
+  "dur": 40,
+  "mono": false,
+  "gain": 0.6
+ },
+ {
+  "id": "bed_night2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Environment Elements\\DSGNSrce_ENVIRONMENT-Ambience Element 11_Ocular_Aberration_Bmin.wav",
+  "start": 0,
+  "dur": 40,
+  "mono": false,
+  "gain": 0.5
+ },
+ {
+  "id": "bed_day2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Environment Elements\\DSGNSrce_ENVIRONMENT-Environment Element 04_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 40,
+  "mono": false,
+  "gain": 0.4
+ },
+ {
+  "id": "bed_cave2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Drones and Texture Elements\\DSGNSrce_DRONE-Drone Element 14_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 40,
+  "mono": false,
+  "gain": 0.5
+ },
+ {
+  "id": "bed_dread2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Drones and Texture Elements\\DSGNSrce_DRONE-Drone Element 10_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 40,
+  "mono": false,
+  "gain": 0.5
+ },
+ {
+  "id": "drips",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Soap and Water\\192kHz\\GORESrce_SOURCE RECORDINGS-Water Drips 192kHz_Ocular_Carnage.wav",
+  "start": 8,
+  "dur": 45,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "earth_night",
+  "src": "The-Provence\\The Provence\\The Provence - Ambience Loops\\AMBGras_FIELD-Night Ambience Field Loop 01_Ocular_The Provence.wav",
+  "start": 40,
+  "dur": 24,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "earth_rain",
+  "src": "The-Provence\\The Provence\\The Provence - Ambience Loops\\RAIN_STORM-Rain Storm Ambience Loop 03_Ocular_The Provence.wav",
+  "start": 30,
+  "dur": 24,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "tuko_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 1.5,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "tuko_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 1.5,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "tuko_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 1.5,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "tuko_4",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 04_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 1.5,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "oomi_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Horn Elements\\HORNMisc_HORN-Synthetic Horn Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 4,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "oomi_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Horn Elements\\HORNMisc_HORN-Synthetic Horn Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 4,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "oomi_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Horn Elements\\HORNMisc_HORN-Synthetic Horn Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 4,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_7",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 07_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_8",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 08_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_9",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 09_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_10",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 10_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "mutation_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Mutation Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "mutation_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Mutation Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "mutation_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Mutation Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "mutation_4",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Mutation Element 04_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "voice_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\VOXFem_VOCAL-Voice Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "voice_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\VOXFem_VOCAL-Voice Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "voice_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\VOXFem_VOCAL-Voice Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "vwhisper_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\VOXWhsp_VOCAL-Voice Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "vwhisper_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\VOXWhsp_VOCAL-Voice Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "gasp",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Vocal Elements\\HMNBrth_VOCAL-Breath Element_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 4,
+  "mono": true,
   "gain": 1.0
  }
 ]

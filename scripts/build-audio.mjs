@@ -14,7 +14,7 @@ let failed = 0;
 for (const s of list) {
   const src = join(root, ...s.src.split('\\'));
   const dst = join(out, `${s.id}.webm`);
-  const loop = s.id.startsWith('bed_') || s.id.startsWith('earth_');
+  const loop = s.id.startsWith('bed_') || s.id.startsWith('earth_') || s.id === 'drips';
   const filters = [
     loop ? null : 'silenceremove=start_periods=1:start_threshold=-55dB',
     `loudnorm=I=${loop ? -24 : -18}:TP=-2`,
