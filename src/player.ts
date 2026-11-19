@@ -15,6 +15,9 @@ export class Player {
   yaw = 0;
   pitch = 0;
   frozen = true;
+  /** Fallback when pointer lock is blocked (e.g. inside an embedded page): drag with the mouse to look. */
+  dragLook = false;
+  private dragging = false;
   private velY = 0;
   private grounded = false;
   private keys = new Set<string>();
@@ -36,8 +39,10 @@ export class Player {
     window.addEventListener('keydown', (e) => this.keys.add(e.code));
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('mousedown', (e) => { if (e.button === 0) this.dragging = true; });
+    window.addEventListener('mouseup', (e) => { if (e.button === 0) this.dragging = false; });
     window.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === null) return;
+      if (document.pointerLockElement === null && !(this.dragLook && this.dragging)) return;
       this.yaw -= e.movementX * 0.0022;
       this.pitch -= e.movementY * 0.0022;
       this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
@@ -51,7 +56,15 @@ export class Player {
     this.velY = 0;
   }
 
+  isDown(code: string) { return this.keys.has(code); }
+
   update(dt: number) {
+    // Arrow keys also look around, so the game is playable without mouse capture.
+    const turn = 2.2 * dt;
+    if (this.keys.has('ArrowLeft')) this.yaw += turn;
+    if (this.keys.has('ArrowRight')) this.yaw -= turn;
+    if (this.keys.has('ArrowUp')) this.pitch = Math.min(1.55, this.pitch + turn);
+    if (this.keys.has('ArrowDown')) this.pitch = Math.max(-1.55, this.pitch - turn);
     if (!this.frozen) {
       const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
       const right = new THREE.Vector3(-forward.z, 0, forward.x);

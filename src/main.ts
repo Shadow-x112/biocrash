@@ -77,9 +77,27 @@ async function main() {
   // --- Overlay / pointer lock ------------------------------------------------------------------
   const canvas = renderer.domElement;
   const flash = (msg: string) => { status.textContent = msg; };
-  $('play').onclick = () => canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => canvas.requestPointerLock());
+  let playing = false; // true while the game has focus (mouse captured, or drag-look fallback)
+  const startPlay = async () => {
+    try {
+      await canvas.requestPointerLock({ unadjustedMovement: true });
+    } catch {
+      try { await canvas.requestPointerLock(); } catch {
+        // Mouse capture blocked (embedded page, locked-down browser): drag to look instead.
+        player.dragLook = true;
+        playing = true;
+        overlay.style.display = 'none';
+        flash('Mouse capture is blocked here: drag to look, E dig, Q fill.');
+      }
+    }
+  };
+  $('play').onclick = () => { void startPlay(); };
   document.addEventListener('pointerlockchange', () => {
-    overlay.style.display = document.pointerLockElement === canvas ? 'none' : 'flex';
+    playing = document.pointerLockElement === canvas;
+    overlay.style.display = playing ? 'none' : 'flex';
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && player.dragLook && playing) { playing = false; overlay.style.display = 'flex'; }
   });
   $('export').onclick = async () => {
     await saveNow();
@@ -122,7 +140,7 @@ async function main() {
   ray.far = REACH;
   const held = { dig: false, fill: false, cooldown: 0 };
   canvas.addEventListener('mousedown', (e) => {
-    if (document.pointerLockElement !== canvas) return;
+    if (document.pointerLockElement !== canvas) return; // drag-look mode digs with E/Q instead
     if (e.button === 0) held.dig = true;
     if (e.button === 2) held.fill = true;
     held.cooldown = 0;
@@ -162,7 +180,16 @@ async function main() {
     player.update(dt);
     physics.step();
 
-    if ((held.dig || held.fill) && (held.cooldown -= dt) <= 0) { tryBrush(); held.cooldown = 0.12; }
+    const keyDig = playing && player.isDown('KeyE'), keyFill = playing && player.isDown('KeyQ');
+    if (keyDig || keyFill || held.dig || held.fill) {
+      if ((held.cooldown -= dt) <= 0) {
+        const prev = { dig: held.dig, fill: held.fill };
+        if (keyDig) held.dig = true; else if (keyFill) held.fill = true;
+        tryBrush();
+        held.dig = prev.dig; held.fill = prev.fill;
+        held.cooldown = 0.12;
+      }
+    } else held.cooldown = 0;
 
     renderer.render(scene, camera);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;

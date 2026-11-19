@@ -16,7 +16,7 @@
       #overlay .panel { max-width: 420px; padding: 24px 28px; background: #161b22; border-radius: 10px; }
       #overlay h1 { margin: 0 0 4px; font-size: 22px; }
       #overlay p { margin: 6px 0; font-size: 14px; color: #b9c2cc; }
-      #overlay .keys { font: 13px/1.7 ui-monospace, monospace; color: #e8edf2; margin: 12px 0; }
+      #overlay .keys { font: 13px/1.7 ui-monospace, monospace; color: #e8edf2; margin: 12px 0; white-space: pre-line; }
       #overlay button { margin: 6px 8px 0 0; padding: 8px 14px; border: 0; border-radius: 6px; cursor: pointer;
                         background: #2b3440; color: #e8edf2; font-size: 13px; }
       #overlay button.primary { background: #e07a2f; color: #111; font-weight: 600; }
@@ -31,7 +31,8 @@
         <h1>Biocrash</h1>
         <p>M0 tech test: smooth terrain, digging, collision and saving.</p>
         <div class="keys">WASD move · Space jump · Shift run
-Left click dig · Right click fill
+Left click dig · Right click fill (or E / Q)
+Arrow keys also look around
 F5 save now · Esc pause</div>
         <button id="play" class="primary">Click to play</button>
         <button id="export">Export save</button>
