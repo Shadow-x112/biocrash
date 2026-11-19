@@ -27,6 +27,9 @@ export interface SaveMeta {
   packs?: PackSave[];
   /** A night has passed since the last dawn line (for the dawn milestone). */
   wasNight?: boolean;
+  /** Nights survived: the horror layer unlocks events over the first few. */
+  nights?: number;
+  horror?: { figureSeen: boolean; figureNight: number };
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -103,6 +106,10 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     out.packs = out.packs.slice(0, 50);
   }
   if (typeof m.wasNight === 'boolean') out.wasNight = m.wasNight;
+  const nights = num(m.nights, 0, 1e5);
+  if (nights !== undefined) out.nights = Math.floor(nights);
+  const h = m.horror as Record<string, unknown> | undefined;
+  if (h && typeof h === 'object') out.horror = { figureSeen: h.figureSeen === true, figureNight: Math.floor(num(h.figureNight, -1, 1e5) ?? -1) };
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);
   return out;

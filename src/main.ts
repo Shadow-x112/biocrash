@@ -78,6 +78,7 @@ async function main() {
   const audio = new Audio();
   const particles = new Particles(scene);
   const horror = new Horror(audio, scene);
+  horror.load(meta?.horror);
   // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
   // What's underfoot: caves and dug-out ground are soil, steep rock is gravel, the forest floor is moss.
   const surfaceUnderfoot = (): 'moss' | 'gravel' | 'soil' => {
@@ -116,6 +117,7 @@ async function main() {
   scene.add(packs.group);
   packs.load(meta?.packs);
   let wasNight = meta?.wasNight ?? false;
+  let nights = meta?.nights ?? 0;
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
   scene.add(fauna.group);
 
@@ -180,7 +182,7 @@ async function main() {
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
-    milestones: [...tutorial.seen], packs: packs.save(), wasNight,
+    milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(),
     inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
@@ -549,7 +551,7 @@ async function main() {
     if (survival.warmth < 45 && sky.night > 0.3) tutorial.milestone('cold');
     if (tutorial.done && sky.time > 0.6 && sky.time < 0.7) tutorial.milestone('sunset');
     if (sky.night > 0.8) wasNight = true;
-    if (wasNight && sky.time > 0.27 && sky.time < 0.4) { tutorial.milestone('dawn'); wasNight = false; }
+    if (wasNight && sky.time > 0.27 && sky.time < 0.4) { nights++; tutorial.milestone('dawn'); wasNight = false; }
     if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
   };
 
@@ -640,7 +642,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, getState: () => state } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, getState: () => state, setNights: (n: number) => { nights = n; } } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
@@ -792,7 +794,10 @@ async function main() {
         for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
         const g = world.groundAt(camera.position.x, camera.position.z);
         horror.update({ dt, camera, night: sky.night, daylight: sky.daylight, fireNear, warmth: survival.warmth, health: survival.health,
-          underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint });
+          underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint,
+          nights, running: input.moving && input.down('run') && !player.crouching, moving: input.moving,
+          litFiresNear: campfires.list.filter((f) => f.lit && f.position.distanceToSquared(player.position) < 40 * 40).length,
+          fogNear: (scene.fog as THREE.Fog).near });
       }
 
       // Held dig/fill (mouse or R/F): attacks a creature in reach, otherwise shapes the terrain.
