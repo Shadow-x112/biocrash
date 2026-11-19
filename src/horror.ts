@@ -31,7 +31,7 @@ export class Horror {
   readonly fired: Record<string, number> = {};
   private awayFromFire = 0;
   private beds: Record<string, Loop> = {};
-  private timers: Record<string, number> = { creature: 20, wreck: 40, swell: 30, whisper: 60, breath: 90, memory: 150, figure: 100, sting: 300, glitch: 50, loon: 30 };
+  private timers: Record<string, number> = { creature: 20, wreck: 40, swell: 30, whisper: 60, breath: 90, memory: 150, figure: 100, sting: 3600, glitch: 50, loon: 30 };
   private whisperVoice: { gain: GainNode; pos: THREE.Vector3 } | null = null;
   private memoryVoice: { gain: GainNode; end: number } | null = null;
   private figure: THREE.Group;
@@ -211,7 +211,7 @@ export class Horror {
     if (t.sting <= 0 && u > 0.75 && Math.random() < dt / 60) {
       this.audio.playAny('riser', 3, { gain: 0.6, bus: 'amb' });
       setTimeout(() => this.stinger(), 2200);
-      t.sting = rand(360, 600);
+      t.sting = rand(3600, 4800);
     }
     // The wrist readout glitches. The AI is fine. Probably.
     if (t.glitch <= 0) {
@@ -230,7 +230,7 @@ export class Horror {
     this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'ui' });
     this.audio.play('subdrop', { gain: 0.6, bus: 'ui' });
     this.flashStatic(0.25);
-    this.timers.sting = rand(360, 600);
+    this.timers.sting = rand(3600, 4800); // at most one scare an hour
     this.fire('sting');
   }
 
