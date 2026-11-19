@@ -645,5 +645,221 @@
   "mono": true,
   "gain": 1.0,
   "lufs": -20
+ },
+ {
+  "id": "step_gravel_1",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 9.0336,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 6.75
+ },
+ {
+  "id": "step_gravel_2",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 8.2243,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 17.1
+ },
+ {
+  "id": "step_gravel_3",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 2.0095,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 13.72
+ },
+ {
+  "id": "step_gravel_4",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 52.1292,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 13.81
+ },
+ {
+  "id": "step_gravel_5",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 0.2527,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 8.28
+ },
+ {
+  "id": "step_gravel_6",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 66.0161,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 11.45
+ },
+ {
+  "id": "step_gravel_7",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 64.987,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 11.77
+ },
+ {
+  "id": "step_gravel_8",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Other\\96kHz\\GORESrce_SOURCE RECORDINGS-Cookies Crushed_Ocular_Carnage.wav.wav",
+  "start": 63.6637,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 9.97
+ },
+ {
+  "id": "step_moss_1",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 22.349,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 22.82
+ },
+ {
+  "id": "step_moss_2",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 32.4569,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 25.79
+ },
+ {
+  "id": "step_moss_3",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 8.3495,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 27.93
+ },
+ {
+  "id": "step_moss_4",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 17.1333,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 27.75
+ },
+ {
+  "id": "step_moss_5",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 36.5502,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 15.42
+ },
+ {
+  "id": "step_moss_6",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 25.4785,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 32.75
+ },
+ {
+  "id": "step_moss_7",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 31.6851,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 23.92
+ },
+ {
+  "id": "step_moss_8",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Cured Ham Peeled 02_Ocular_Carnage.wav",
+  "start": 28.2021,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 30.92
+ },
+ {
+  "id": "step_soil_1",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 5.8228,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 19.21
+ },
+ {
+  "id": "step_soil_2",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 1.8187,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 15.5
+ },
+ {
+  "id": "step_soil_3",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 9.7625,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 27.54
+ },
+ {
+  "id": "step_soil_4",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 8.7112,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 15.13
+ },
+ {
+  "id": "step_soil_5",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 14.9828,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 12.95
+ },
+ {
+  "id": "step_soil_6",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 17.3929,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 13.58
+ },
+ {
+  "id": "step_soil_7",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 13.8257,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 13.98
+ },
+ {
+  "id": "step_soil_8",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Watermelon\\96kHz\\GORESrce_SOURCE RECORDINGS-Watermelon Crushed Snapped and Ripped 01_Ocular_Carnage.wav",
+  "start": 18.9912,
+  "dur": 0.6,
+  "mono": true,
+  "short": true,
+  "gainDb": 16.49
  }
 ]

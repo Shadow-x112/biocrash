@@ -76,8 +76,13 @@ async function main() {
   const particles = new Particles(scene);
   const horror = new Horror(audio, scene);
   // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
-  const rockyUnderfoot = () => { const g = world.groundAt(player.position.x, player.position.z); return !g || g.ny < 0.8 || player.position.y < g.y - 2; };
-  player.onStep = (run, sneak) => audio.footstep(run, sneak, rockyUnderfoot());
+  // What's underfoot: caves and dug-out ground are soil, steep rock is gravel, the forest floor is moss.
+  const surfaceUnderfoot = (): 'moss' | 'gravel' | 'soil' => {
+    const g = world.groundAt(player.position.x, player.position.z);
+    if (!g || player.position.y < g.y - 2) return 'soil';
+    return g.ny < 0.8 ? 'gravel' : 'moss';
+  };
+  player.onStep = (run, sneak) => audio.footstep(run, sneak, surfaceUnderfoot());
   player.onJump = () => audio.jump();
   player.onLand = (impact) => audio.land(impact);
   const hotbar = new Hotbar(camera);

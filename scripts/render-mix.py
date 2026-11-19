@@ -22,7 +22,7 @@ async () => {
     [0.1, () => { beds.night.setLevel(0.8, 0.5); beds.night2.setLevel(0.56, 0.5); }],
     [6, () => a.playAny('growl', 10, { pos: at(30, -40), gain: 1.5, rate: 0.85 })],
     [12, () => a.tukoChirp(at(-4, -5))],
-    [14, () => a.footstep(false, false, false)], [14.5, () => a.footstep(false, false, false)], [15, () => a.footstep(false, false, true)],
+    [14, () => a.footstep(false, false, 'moss')], [14.5, () => a.footstep(false, false, 'moss')], [15, () => a.footstep(false, false, 'gravel')],
     [17, () => a.oomiHoot(at(10, -15), false)],
     [22, () => { beds.dread.setLevel(0.6, 2); beds.dread2.setLevel(0.36, 2); }],
     [26, () => a.play('whisper', { pos: at(0.4, 2.2), gain: 0.3, hrtf: true, offset: 3, dur: 5, fadeIn: 1.2 })],

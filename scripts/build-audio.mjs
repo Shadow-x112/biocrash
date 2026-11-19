@@ -17,7 +17,11 @@ for (const s of list) {
   const loop = s.id.startsWith('bed_') || s.id.startsWith('earth_') || s.id === 'drips';
   // Mix-check fixes (audio-mcp survey): cut inaudible sub-20 Hz rumble that eats headroom, per-category loudness,
   // and a true-peak limiter after loudnorm so nothing clips once encoded.
-  const filters = [
+  // Short foley slices (footsteps): exact cut from the source, gain measured when the slice was picked.
+  const filters = s.short ? [
+    'aformat=channel_layouts=mono', 'highpass=f=30', `volume=${s.gainDb ?? 0}dB`, 'afade=t=in:d=0.003',
+    'areverse,afade=t=in:d=0.15,areverse', 'aresample=48000', 'alimiter=limit=0.89:level=false',
+  ].join(',') : [
     `aformat=channel_layouts=${s.mono ? 'mono' : 'stereo'}`, // downmix first so the limiter sees the final signal
     'highpass=f=25',
     loop ? null : 'silenceremove=start_periods=1:start_threshold=-55dB',

@@ -299,8 +299,20 @@ export class Audio {
 
   private vary(x: number, amount = 0.12) { return x * (1 + (Math.random() * 2 - 1) * amount); }
 
-  footstep(run: boolean, sneak: boolean, rocky: boolean) {
+  private lastStep = '';
+  /** Recorded foley footsteps (Ocular Carnage, picked by ear): moss = fungal forest floor, gravel = rocky slopes,
+   *  soil = dug earth and caves. 8 variants each, never the same one twice in a row, small pitch/level variation. */
+  footstep(run: boolean, sneak: boolean, surface: 'moss' | 'gravel' | 'soil') {
     if (!this.ctx) return;
+    if (this.has(`step_${surface}_1`)) {
+      let id = this.lastStep;
+      while (id === this.lastStep) id = `step_${surface}_${1 + Math.floor(Math.random() * 8)}`;
+      this.lastStep = id;
+      const level = sneak ? 0.3 : run ? 0.85 : 0.6;
+      this.play(id, { gain: level * Math.pow(10, (Math.random() * 2 - 1) * 1.5 / 20), rate: (run ? 1.04 : 1) * (1 + (Math.random() * 2 - 1) * 0.04) });
+      return;
+    }
+    const rocky = surface === 'gravel';
     const g = sneak ? 0.07 : run ? 0.26 : 0.18;
     this.noiseHit({ dur: 0.09, type: 'lowpass', freq: this.vary(rocky ? 1500 : 700), q: 0.8, gain: g });
     if (rocky) this.noiseHit({ dur: 0.03, type: 'bandpass', freq: 2200, q: 1.5, gain: g * 0.15, delay: 0.005 });

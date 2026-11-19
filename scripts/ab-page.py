@@ -27,16 +27,23 @@ textarea{width:100%;box-sizing:border-box;background:#0e1013;color:#e6e8eb;borde
 .bar{position:sticky;bottom:0;background:#0e1013;padding:12px 0;display:flex;gap:8px;align-items:center}#copy{flex:1;background:#c9a46a;color:#14110c;border:0;font-weight:700;padding:13px}
 #msg{color:#9aa3ad;font-size:13px}label.vol{display:flex;align-items:center;gap:8px;color:#9aa3ad;font-size:13px;margin:0 0 14px}
 </style></head><body><main><h1>__TITLE__</h1>
-<p class="sub">Blind test: labels are shuffled and every take is at the same loudness. <b>Play</b> hears it once, <b>Walk</b> hears it as repeated steps with small random variation, like in game. Pick your favorite in each group (or "none are good"), add a note if you like, then copy your picks and paste them back to Claude.</p>
+<p class="sub">Blind test: labels are shuffled and every take is at the same loudness. <b>Play</b> hears it once, <b>Walk</b> hears it as repeated steps with small random variation, like in game. Pick your favorite in each group (or "none are good"). <b>A few words on what's wrong helps a lot</b> (too clicky, too soft, sounds like walking on cereal, etc.), then copy your picks and paste them back to Claude.</p>
 <label class="vol">Volume <input id="vol" type="range" min="0" max="1.5" step="0.05" value="1"></label>
 <div id="groups"></div><div class="bar"><button id="copy">Copy my picks</button><span id="msg"></span></div></main>
 <script>
 const DATA=__DATA__;let ctx,master;const bufs={};const picks={};const notes={};
-function ac(){if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();master=ctx.createGain();master.connect(ctx.destination)}master.gain.value=+document.getElementById('vol').value;if(ctx.state!=='running')ctx.resume();return ctx}
-async function buf(t){if(bufs[t.id])return bufs[t.id];const b=await (await fetch(t.src)).arrayBuffer();return bufs[t.id]=await ac().decodeAudioData(b)}
+function ac(){
+ // Create and resume inside the tap itself (iOS/Safari only allow audio started by a gesture).
+ if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();master=ctx.createGain();master.connect(ctx.destination);
+  try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){} // play even with the iPhone silent switch on
+  const s=ctx.createBufferSource();s.buffer=ctx.createBuffer(1,1,22050);s.connect(ctx.destination);s.start(0);}
+ master.gain.value=+document.getElementById('vol').value;if(ctx.state!=='running')ctx.resume();return ctx}
+function b64(src){const bin=atob(src.split(',')[1]);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u.buffer}
+function decode(c,ab){return new Promise((res,rej)=>{const p=c.decodeAudioData(ab,res,rej);if(p&&p.then)p.then(res,rej)})}
+async function buf(t){if(bufs[t.id])return bufs[t.id];const c=ac();return bufs[t.id]=await decode(c,b64(t.src))}
 function fire(b,when,rate,gain){const s=ctx.createBufferSource(),g=ctx.createGain();s.buffer=b;s.playbackRate.value=rate;g.gain.value=gain;s.connect(g).connect(master);s.start(when)}
-async function play(t){const b=await buf(t);fire(b,ac().currentTime+0.02,1,1)}
-async function walk(t){const b=await buf(t);const c=ac();let w=c.currentTime+0.05;for(let i=0;i<8;i++){fire(b,w,1+(Math.random()*2-1)*0.04,Math.pow(10,((Math.random()*2-1)*1.5)/20));w+=0.46+(Math.random()*2-1)*0.03}}
+async function play(t){const c=ac();const b=await buf(t);fire(b,c.currentTime+0.02,1,1)}
+async function walk(t){const c=ac();const b=await buf(t);let w=c.currentTime+0.05;for(let i=0;i<8;i++){fire(b,w,1+(Math.random()*2-1)*0.04,Math.pow(10,((Math.random()*2-1)*1.5)/20));w+=0.46+(Math.random()*2-1)*0.03}}
 const root=document.getElementById('groups');
 DATA.forEach(g=>{const s=document.createElement('section');s.innerHTML='<h2>'+g.name+'</h2>';
 g.takes.forEach((t,i)=>{const r=document.createElement('div');r.className='row';const L=String.fromCharCode(65+i);

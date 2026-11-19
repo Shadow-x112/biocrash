@@ -35,8 +35,13 @@ async def main(jobs_path, out_dir):
                     "variations": j.get("variations", 4), "sound_source": j.get("source", ""),
                     "sound_action": j.get("action", ""), "sound_material": j.get("material", ""),
                     "sound_space": j.get("space", ""), "title": j["name"], "original_idea": j.get("idea", ""),
-                    "cfg": j.get("cfg", 1.0), "steps": j.get("steps", 8)})
+                    "cfg": j.get("cfg", 1.0), "steps": j.get("steps", 8), "negative_prompt": j.get("negative")})
                 for i, c in enumerate(g["candidates"], 1):
+                    if j.get("raw"):  # keep the model's output untouched (peak ceiling only)
+                        dst = out / f"{j['name']}_{i}.wav"; shutil.copy(c["path"], dst); made.append(str(dst))
+                        side = Path(c["path"]).with_suffix(".json")
+                        if side.exists(): shutil.copy(side, out / f"{j['name']}_{i}.json")
+                        continue
                     p = await call(s, "process_audio", {
                         "input_audio": c["path"], "trim_silence": not j.get("loop", False), "mono": j.get("mono", True),
                         "normalize": "peak", "peak_ceiling_db": -1.0, "loop": j.get("loop", False),
