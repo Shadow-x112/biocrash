@@ -122,6 +122,8 @@ export class Creature {
   health: number;
   state: State = 'idle';
   heading = Math.random() * Math.PI * 2;
+  /** Knockback velocity from hits (m/s), decays quickly. */
+  private knock = new THREE.Vector2();
   private timer = Math.random() * 3;
   private gait = Math.random() * 10;
   private hurtFlash = 0;
@@ -150,6 +152,9 @@ export class Creature {
     if (this.state === 'curl') return false; // armored ball shrugs off hits
     this.health -= amount;
     this.hurtFlash = 0.25;
+    const kx = this.position.x - from.x, kz = this.position.z - from.z, kl = Math.hypot(kx, kz) || 1;
+    const kick = Math.min(6, 1.5 + amount * 0.12) * (this.species.id === 'oomi' ? 0.5 : 1);
+    this.knock.set((kx / kl) * kick, (kz / kl) * kick);
     this.flee(from, 5);
     if (this.species.id === 'tuko' && this.health > 0) { this.state = 'curl'; this.timer = 4; }
     if (this.health <= 0) this.die();
@@ -213,6 +218,13 @@ export class Creature {
     } else {
       const g = ctx.ground(this.position.x, this.position.z, this.position.y);
       if (g) this.position.y += (g.y - this.position.y) * Math.min(1, dt * 8);
+    }
+
+    if (this.knock.lengthSq() > 0.01) {
+      const nx = this.position.x + this.knock.x * dt, nz = this.position.z + this.knock.y * dt;
+      const g = ctx.ground(nx, nz, this.position.y);
+      if (g && Math.abs(g.y - this.position.y) < 1.2) this.position.set(nx, g.y, nz);
+      this.knock.multiplyScalar(Math.max(0, 1 - dt * 6));
     }
 
     if (sp.id === 'oomi' && this.state === 'wander' && (this.trailTimer -= dt) <= 0) {

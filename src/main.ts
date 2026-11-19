@@ -14,6 +14,8 @@ import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, type Creature } from './creatures';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
+import { Audio } from './audio';
+import { Particles } from './particles';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION, MIN_CY } from './config';
 
@@ -69,6 +71,13 @@ async function main() {
 
   const input = new Input(canvas);
   const player = new Player(RAPIER, physics, camera, input);
+  const audio = new Audio();
+  const particles = new Particles(scene);
+  // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
+  const rockyUnderfoot = () => { const g = world.groundAt(player.position.x, player.position.z); return !g || g.ny < 0.8 || player.position.y < g.y - 2; };
+  player.onStep = (run, sneak) => audio.footstep(run, sneak, rockyUnderfoot());
+  player.onJump = () => audio.jump();
+  player.onLand = (impact) => audio.land(impact);
   const hotbar = new Hotbar(camera);
   // The crash site: where a new world starts and where you recover after freezing.
   const spawnPoint = new THREE.Vector3(0.5, createGenerator(seed).surfaceHeight(0.5, 0.5) + 6, 0.5);
@@ -152,9 +161,11 @@ async function main() {
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
     if (s === 'craft') renderCraft();
     if (s !== 'playing') $('prompt').textContent = '';
+    audio.setWorldPaused(s !== 'playing' && s !== 'dead');
   };
   const requestLock = () => canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => canvas.requestPointerLock());
   const resume = async () => {
+    audio.unlock();
     if (player.dragLook) { setState('playing'); return; }
     try {
       await requestLock();
@@ -176,6 +187,7 @@ async function main() {
   });
   // A click on the game takes back a lost mouse capture.
   canvas.addEventListener('mousedown', () => {
+    audio.unlock();
     if (state === 'playing' && !player.dragLook && document.pointerLockElement !== canvas) void requestLock().catch(() => {});
   });
 
@@ -240,9 +252,14 @@ async function main() {
         <div class="rcost">${costs}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
+  const lastCounts: Partial<Record<ItemId, number>> = {};
   inventory.onChange = () => {
-    invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0)
-      .map((k) => `<div class="row"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`).join('');
+    invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
+      const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
+      lastCounts[k] = inventory.counts[k];
+      return `<div class="row${got ? ' got' : ''}"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
+    }).join('');
+    requestAnimationFrame(() => invEl.querySelectorAll('.row.got').forEach((el) => el.classList.remove('got')));
     renderHotbar();
     if (state === 'craft') renderCraft();
   };
@@ -250,7 +267,9 @@ async function main() {
   inventory.load(meta?.inventory);
   recipesEl.addEventListener('click', (e) => {
     const r = RECIPES.find((x) => x.id === (e.target as HTMLElement).dataset.r);
-    if (!r || r.makes === 'campfire' || !inventory.take(r.cost)) return;
+    if (!r || r.makes === 'campfire') return;
+    if (!inventory.take(r.cost)) { audio.deny(); return; }
+    audio.craft();
     const first = inventory.counts[r.makes] === 0;
     inventory.add(r.makes, r.amount);
     if (r.tool && first) hotbar.select(r.makes as Slot, () => true); // equip your first one
@@ -306,19 +325,26 @@ async function main() {
       const got: string[] = [];
       for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { inventory.add(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
+      audio.chop(t.c.position);
+      particles.burst(t.c.hitCentre(), 10, 0x7a3a3a, { speed: 2 });
       flash(`Harvested ${got.join(', ')}.`);
     } else if (t.kind === 'prop') {
       props.pick(t.p);
+      audio.pickup(t.p.kind);
       inventory.add(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
       hotbar.swing();
     } else if (t.kind === 'fire') {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
-      else if (inventory.take({ stalkwood: 1 })) campfires.addFuel(t.f);
-      else flash('You need stalkwood to feed the fire.');
+      else if (inventory.take({ stalkwood: 1 })) { campfires.addFuel(t.f); audio.fireLit(t.f.position); }
+      else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
     } else if (t.kind === 'stalk') {
       if (inventory.counts.stone_knife <= 0 && inventory.counts.stone_pick <= 0) { flash('Cut stalkwood with a stone knife or pick.'); return; }
       const got = flora.harvest(t.s);
-      if (got) { inventory.add('stalkwood', got); hotbar.swing(); } else flash('This stalk has been cut back as far as it goes.');
+      if (got) {
+        inventory.add('stalkwood', got); hotbar.swing();
+        audio.chop(t.s.base);
+        particles.burst(t.s.base.clone().setY(t.s.base.y + 1.2), 8, 0xd9cfb8, { speed: 2.5 });
+      } else flash('This stalk has been cut back as far as it goes.');
     }
   };
   const buildCampfire = () => {
@@ -327,15 +353,23 @@ async function main() {
     const hit = buildRay.intersectObjects(world.meshes(), false)[0];
     if (!hit?.face || hit.face.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
     if (!inventory.take(CAMPFIRE_COST)) {
+      audio.deny();
       flash(`A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`);
       return;
     }
     campfires.add(hit.point.clone());
+    audio.fireLit(hit.point);
     flash('Campfire built. Add stalkwood (E) to keep it burning.');
   };
   const attack = (c: Creature) => {
     hotbar.swing();
     const hit = c.damage(ATTACK[hotbar.slot].damage, player.position);
+    const at = c.hitCentre();
+    if (hit) {
+      audio.hit(at, !c.alive);
+      particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
+      player.shake(c.alive ? 0.25 : 0.45);
+    } else if (c.state === 'curl') { audio.shellClack(at); particles.burst(at, 4, 0xffffff, { speed: 4, size: 0.03, life: 0.3 }); }
     if (!hit && c.state === 'curl') flash(`The ${c.species.name} curled into its shell.`);
     else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (E).`);
   };
@@ -345,11 +379,17 @@ async function main() {
     const hit = digRay.intersectObjects(world.meshes(), false)[0];
     if (!hit?.face) return;
     const power = DIG_POWER[hotbar.slot];
-    if (!fill) world.brush(hit.point, power.radius, power.strength, -1);
-    else {
+    const col = hit.face.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
+    if (!fill) {
+      world.brush(hit.point, power.radius, power.strength, -1);
+      audio.dig(hit.point, hotbar.slot === 'stone_pick');
+      particles.burst(hit.point, hotbar.slot === 'stone_pick' ? 12 : 8, col, { up: hit.face.normal, speed: 3 });
+    } else {
       const p = hit.point.clone().addScaledVector(hit.face.normal, 0.6);
       if (p.distanceTo(player.position) < power.radius + 0.9) return; // don't bury yourself
       world.brush(p, power.radius, power.strength, +1);
+      audio.fill(p);
+      particles.burst(p, 5, col, { speed: 1.5, life: 0.5 });
     }
   };
 
@@ -384,7 +424,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, getState: () => state } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, getState: () => state } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
@@ -399,6 +439,35 @@ async function main() {
     $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
+  };
+
+  // --- Sounds the world makes on its own: fires, creatures, your body when it's in trouble ---------
+  let fireTimer = 0, callTimer = 1, bodyTimer = 0;
+  const hurtEl = $('hurt');
+  const worldSounds = (dt: number) => {
+    if ((fireTimer -= dt) <= 0) {
+      fireTimer = 0.05 + Math.random() * 0.12;
+      for (const f of campfires.list) {
+        if (!f.lit || f.position.distanceToSquared(player.position) > 15 * 15 || Math.random() > 0.55) continue;
+        audio.fireCrackle(f.position, Math.min(1, f.fuel / 180));
+      }
+    }
+    if ((callTimer -= dt) <= 0) {
+      callTimer = 1.5 + Math.random() * 3;
+      const near = fauna.list.filter((c) => c.alive && c.position.distanceToSquared(player.position) < 30 * 30);
+      const c = near[Math.floor(Math.random() * near.length)];
+      if (c) {
+        if (c.species.id === 'tuko' && c.state !== 'curl') audio.tukoChirp(c.position);
+        else if (c.species.id === 'oomi') audio.oomiHoot(c.position, c.state === 'sleep');
+      }
+    }
+    if (state === 'playing' && (bodyTimer -= dt) <= 0) {
+      if (survival.health < 30) { audio.heartbeat(); bodyTimer = 0.6 + survival.health / 40; }
+      else if (survival.cold) { audio.shiverBreath(); bodyTimer = 3 + Math.random() * 2; }
+      else bodyTimer = 0.5;
+    }
+    const low = survival.health < 35 ? (35 - survival.health) / 35 : 0;
+    hurtEl.style.opacity = low ? String(low * (0.7 + 0.3 * Math.sin(performance.now() / 180))) : '0';
   };
 
   // --- Frame loop ----------------------------------------------------------------------------------
@@ -434,6 +503,7 @@ async function main() {
         player.speedMul = survival.moveFactor();
         if (survival.dead) {
           setState('dead');
+          audio.death();
           deathEl.style.display = 'flex';
           setTimeout(() => {
             player.teleport(spawnPoint);
@@ -447,13 +517,15 @@ async function main() {
       flora.update(dt, camera.position, sky.night);
       fauna.update(dt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
       hotbar.update(dt, input.moving);
+      particles.update(dt);
+      worldSounds(dt);
 
       // Held dig/fill (mouse or R/F): attacks a creature in reach, otherwise shapes the terrain.
       const dig = input.down('dig'), fill = input.down('fill');
       if ((dig || fill) && (actionCooldown -= dt) <= 0) {
         const prey = dig ? fauna.lookAt(camera, ATTACK[hotbar.slot].reach) : null;
         if (prey?.alive) { attack(prey); actionCooldown = 0.55; }
-        else if (dig && hotbar.slot === 'spear') { hotbar.swing(); actionCooldown = 0.55; } // a jab at nothing
+        else if (dig && hotbar.slot === 'spear') { hotbar.swing(); audio.swing(); actionCooldown = 0.55; } // a jab at nothing
         else { brush(fill && !dig); hotbar.swing(); actionCooldown = DIG_POWER[hotbar.slot].interval; }
       } else if (!dig && !fill) actionCooldown = 0;
       smooth('sim', performance.now() - tm);
@@ -461,6 +533,8 @@ async function main() {
       player.update(0); // keep the camera placed while paused
     }
 
+    audio.updateListener(camera);
+    audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.render(scene, camera);
     smooth('render', performance.now() - tm);
