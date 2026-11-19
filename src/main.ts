@@ -4,6 +4,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
 import { Player } from './player';
+import { Sky } from './sky';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, DIG_RADIUS, DIG_STRENGTH, REACH, GEN_VERSION, SAVE_VERSION } from './config';
 
@@ -22,13 +23,8 @@ async function main() {
   document.body.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const sky = new THREE.Color(0x9fb6c9);
-  scene.background = sky;
-  scene.fog = new THREE.Fog(sky, CHUNK * (VIEW_RADIUS - 1.5), CHUNK * VIEW_RADIUS);
-  scene.add(new THREE.HemisphereLight(0xcfe3f2, 0x2a241e, 0.7));
-  const sun = new THREE.DirectionalLight(0xfff1dc, 3.2);
-  sun.position.set(0.5, 1, 0.3);
-  scene.add(sun);
+  scene.fog = new THREE.Fog(0x9fb6c9, CHUNK * (VIEW_RADIUS - 1.8), CHUNK * VIEW_RADIUS);
+  const sky = new Sky(scene);
 
   const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, CHUNK * (VIEW_RADIUS + 1));
   window.addEventListener('resize', () => {
@@ -57,8 +53,9 @@ async function main() {
     player.teleport(new THREE.Vector3(0.5, gen.surfaceHeight(0.5, 0.5) + 6, 0.5));
   }
 
+  if (meta?.timeOfDay !== undefined) sky.time = meta.timeOfDay;
   const currentMeta = (): SaveMeta => ({
-    saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(),
+    saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0;
@@ -72,6 +69,9 @@ async function main() {
   };
   setInterval(() => { void saveNow(); }, 10_000);
   window.addEventListener('pagehide', () => { void saveNow(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
+  });
   window.addEventListener('keydown', (e) => { if (e.code === 'F5') { e.preventDefault(); void saveNow().then(() => flash('Saved')); } });
 
   // --- Overlay / pointer lock ------------------------------------------------------------------
@@ -164,7 +164,7 @@ async function main() {
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky } });
 
   // --- Loop ---------------------------------------------------------------------------------------
   const timer = new THREE.Timer();
@@ -179,6 +179,7 @@ async function main() {
     player.frozen = !world.isReadyAt(player.position);
     player.update(dt);
     physics.step();
+    sky.update(dt, camera);
 
     const keyDig = playing && player.isDown('KeyE'), keyFill = playing && player.isDown('KeyQ');
     if (keyDig || keyFill || held.dig || held.fill) {
@@ -201,7 +202,7 @@ async function main() {
       `chunks ${world.stats.loaded}  queued ${world.stats.queued}  mesh ${world.stats.meshMs.toFixed(1)} ms\n` +
       `tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  draws ${renderer.info.render.calls}\n` +
       `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}${player.frozen ? '  (loading ground…)' : ''}\n` +
-      `edited chunks ${world.edits.size}  last save ${lastSaveMs.toFixed(1)} ms\nseed ${seed}`;
+      `time ${sky.clock()}${sky.speed > 1 ? ' (fast)' : ''}  edited chunks ${world.edits.size}  last save ${lastSaveMs.toFixed(1)} ms\nseed ${seed}`;
   });
 }
 

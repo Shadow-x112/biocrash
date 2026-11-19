@@ -8,6 +8,8 @@ export interface SaveMeta {
   seed: string;
   player: { x: number; y: number; z: number; yaw: number; pitch: number } | null;
   savedAt: number;
+  /** 0..1 time of day; optional so older saves still load. */
+  timeOfDay?: number;
 }
 
 interface ExportFile extends SaveMeta {
