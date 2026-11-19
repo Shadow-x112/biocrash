@@ -76,6 +76,9 @@ export class Sky {
     scene.add(this.dome, this.sun, this.sun.target, this.moon, this.moon.target, this.hemi);
   }
 
+  /** Keep the dome inside the camera's far plane (which follows the fog). */
+  setRadius(r: number) { this.dome.scale.setScalar(r / 140); }
+
   /** Hours and minutes for the HUD. */
   clock() {
     const mins = Math.floor(this.time * 24 * 60);

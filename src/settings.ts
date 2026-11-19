@@ -5,6 +5,8 @@ export interface Settings {
   sensitivity: number; // multiplier on the base mouse speed
   invertY: boolean;
   fov: number;         // degrees
+  resolution: number;  // render scale 0.5..1 (of the screen's pixel density, capped at 1.5)
+  autoRes: boolean;    // lower the render scale automatically when the frame rate drops
   headBob: boolean;
   shake: boolean;      // camera shake on hits and hard landings
   compass: boolean;
@@ -12,7 +14,7 @@ export interface Settings {
 }
 
 export const DEFAULTS: Settings = {
-  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, headBob: true, shake: true, compass: true, tutorial: true,
+  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, resolution: 1, autoRes: true, headBob: true, shake: true, compass: true, tutorial: true,
 };
 
 const KEY = 'biocrash-settings';
@@ -50,6 +52,8 @@ const ROWS: { group: string; rows: Row[] }[] = [
   ] },
   { group: 'View', rows: [
     { key: 'fov', label: 'Field of view', kind: 'range', min: 60, max: 100, step: 1, fmt: (v) => `${v}°` },
+    { key: 'resolution', label: 'Resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
+    { key: 'autoRes', label: 'Lower resolution when slow', kind: 'check' },
     { key: 'headBob', label: 'Head bob', kind: 'check' },
     { key: 'shake', label: 'Camera shake', kind: 'check' },
     { key: 'compass', label: 'Compass', kind: 'check' },

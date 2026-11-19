@@ -31,10 +31,35 @@ let genSeed = '';
 const density = new Float32Array(PAD * PAD * PAD);
 const baseCopy = new Float32Array(PAD * PAD * PAD);
 
+/** Highest ground in a chunk column's padded footprint, cached (all vertical chunks in a column share it). */
+const topCache = new Map<string, number>();
+function columnTop(g: Generator, cx: number, cz: number) {
+  const key = `${cx},${cz}`;
+  let top = topCache.get(key);
+  if (top === undefined) {
+    top = -Infinity;
+    const ox = cx * CHUNK - 1, oz = cz * CHUNK - 1;
+    for (let k = 0; k < PAD; k++) for (let i = 0; i < PAD; i++) top = Math.max(top, g.surfaceHeight(ox + i, oz + k));
+    if (topCache.size > 256) topCache.delete(topCache.keys().next().value!);
+    topCache.set(key, top);
+  }
+  return top;
+}
+
 self.onmessage = (e: MessageEvent<MeshRequest>) => {
   const t0 = performance.now();
   const { id, seed, cx, cy, cz, edits } = e.data;
-  if (!gen || genSeed !== seed) { gen = createGenerator(seed); genSeed = seed; }
+  if (!gen || genSeed !== seed) { gen = createGenerator(seed); genSeed = seed; topCache.clear(); }
+  // Unedited chunks entirely above the ground are pure air (the surface wobble adds at most 3.2 m): skip the
+  // density fill and meshing. This is about a third of all chunks and most of the top layer.
+  if (!edits && cy * CHUNK - 1 > columnTop(gen, cx, cz) + 4) {
+    const heights = new Float32Array((CHUNK + 1) * (CHUNK + 1)).fill(Number.NaN);
+    const deco = Object.fromEntries(DECO_KINDS.map((k) => [k, new Float32Array(0)])) as DecoData;
+    const res: MeshResponse = { id, cx, cy, cz, positions: new Float32Array(0), normals: new Float32Array(0), colors: new Float32Array(0),
+      indices: new Uint32Array(0), deco, heights, ms: performance.now() - t0 };
+    (self as unknown as DedicatedWorkerGlobalScope).postMessage(res, [heights.buffer]);
+    return;
+  }
   gen.fillChunk(cx, cy, cz, density);
   let base = density;
   if (edits) {

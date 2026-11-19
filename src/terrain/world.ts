@@ -18,7 +18,12 @@ interface Chunk {
   pendingId: number;
   pendingVersion: number;
   wantsCollider: boolean;
+  /** The mesh changed since the collider was built (the old collider stays until the new one is ready). */
+  colliderStale: boolean;
 }
+
+/** Main-thread time per frame for building physics colliders (each takes ~1.5 ms, up to ~7.5 ms). */
+const COLLIDER_BUDGET_MS = 2;
 
 const EDIT_CELLS = CHUNK * CHUNK * CHUNK;
 /** Edits beyond the generator's own density range (±16) do nothing visible, so keep them close to it. */
@@ -47,7 +52,9 @@ export class World {
   private idle: Worker[] = [];
   private nextId = 1;
   private center = new THREE.Vector3();
-  private centerChunk = { x: Number.NaN, z: Number.NaN };
+  private centerChunk = { x: Number.NaN, y: Number.NaN, z: Number.NaN };
+  /** Chunks waiting for a collider build, processed nearest-first within COLLIDER_BUDGET_MS each frame. */
+  private colliderQueue = new Set<Chunk>();
   private rapier: typeof RAPIER;
   private physics: RAPIER.World;
   /** Colliders replaced this frame; removed after the next physics step so the ground never vanishes for a frame. */
@@ -79,12 +86,50 @@ export class World {
   /** Call every frame with the player's position. */
   update(playerPos: THREE.Vector3) {
     this.center.copy(playerPos);
-    const pcx = floorDiv(playerPos.x, CHUNK), pcz = floorDiv(playerPos.z, CHUNK);
+    const pcx = floorDiv(playerPos.x, CHUNK), pcy = floorDiv(playerPos.y, CHUNK), pcz = floorDiv(playerPos.z, CHUNK);
     if (pcx !== this.centerChunk.x || pcz !== this.centerChunk.z) {
-      this.centerChunk = { x: pcx, z: pcz };
+      this.centerChunk = { x: pcx, y: pcy, z: pcz };
       this.refreshSet(pcx, pcz);
+    } else if (pcy !== this.centerChunk.y) {
+      this.centerChunk.y = pcy;
+      for (const c of this.chunks.values()) this.updateWant(c);
     }
+    this.buildColliders();
     this.dispatch();
+  }
+
+  /** Colliders: within COLLIDER_RADIUS horizontally and one layer vertically of the player; kept until two further
+   *  away (hysteresis) so walking back and forth over a border doesn't rebuild them. */
+  private updateWant(c: Chunk) {
+    const d = Math.max(Math.abs(c.cx - this.centerChunk.x), Math.abs(c.cz - this.centerChunk.z));
+    const dy = Math.abs(c.cy - this.centerChunk.y);
+    if (d <= COLLIDER_RADIUS && dy <= 1) c.wantsCollider = true;
+    else if (d > COLLIDER_RADIUS + 1 || dy > 2) c.wantsCollider = false;
+    this.syncCollider(c);
+  }
+
+  /** The chunk the player stands in (and the ones touching it) can't wait: their colliders build immediately. */
+  private urgent(c: Chunk) {
+    return Math.abs(c.cx - this.centerChunk.x) <= 0 && Math.abs(c.cz - this.centerChunk.z) <= 0 && Math.abs(c.cy - this.centerChunk.y) <= 1
+      || this.nearPlayer(c);
+  }
+
+  private nearPlayer(c: Chunk) {
+    // Within 4 m of the player's capsule, in chunk-local terms.
+    const p = this.center, m = 4;
+    const lx = p.x - c.cx * CHUNK, ly = p.y - c.cy * CHUNK, lz = p.z - c.cz * CHUNK;
+    return lx > -m && lx < CHUNK + m && ly > -m && ly < CHUNK + m && lz > -m && lz < CHUNK + m;
+  }
+
+  private buildColliders() {
+    if (this.colliderQueue.size === 0) return;
+    const t0 = performance.now();
+    const list = [...this.colliderQueue].sort((a, b) => this.priority(a) - this.priority(b));
+    for (const c of list) {
+      if (performance.now() - t0 > COLLIDER_BUDGET_MS) break;
+      this.colliderQueue.delete(c);
+      this.buildCollider(c);
+    }
   }
 
   /** Call right after physics.step(). */
@@ -103,11 +148,10 @@ export class World {
           keep.add(key);
           let c = this.chunks.get(key);
           if (!c) {
-            c = { key, cx, cy, cz, mesh: null, collider: null, heights: null, version: 1, meshedVersion: 0, pendingId: 0, pendingVersion: 0, wantsCollider: false };
+            c = { key, cx, cy, cz, mesh: null, collider: null, heights: null, version: 1, meshedVersion: 0, pendingId: 0, pendingVersion: 0, wantsCollider: false, colliderStale: false };
             this.chunks.set(key, c);
           }
-          c.wantsCollider = Math.abs(dx) <= COLLIDER_RADIUS && Math.abs(dz) <= COLLIDER_RADIUS;
-          this.syncCollider(c);
+          this.updateWant(c);
         }
       }
     for (const c of [...this.chunks.values()]) {
@@ -171,8 +215,9 @@ export class World {
       this.group.add(m);
       c.mesh = m;
     }
-    // Build the new collider first; the old one is retired after the next physics step.
-    if (c.collider) { this.retired.push(c.collider); c.collider = null; }
+    // The old collider stays until the new one is built; then it's retired after the next physics step.
+    if (c.collider) c.colliderStale = true;
+    if (!c.mesh) this.removeCollider(c); // dug out to air: nothing to stand on
     this.syncCollider(c);
     this.onChunkMesh(c.key, c.mesh, r.deco);
     this.dispatch();
@@ -180,17 +225,28 @@ export class World {
 
   private syncCollider(c: Chunk) {
     if (!c.wantsCollider) { this.removeCollider(c); return; }
-    if (c.collider || !c.mesh) return;
+    if ((c.collider && !c.colliderStale) || !c.mesh) return;
+    if (this.urgent(c)) { this.colliderQueue.delete(c); this.buildCollider(c); }
+    else this.colliderQueue.add(c);
+  }
+
+  private buildCollider(c: Chunk) {
+    if (!c.wantsCollider || !c.mesh || (c.collider && !c.colliderStale)) return;
+    if (c.collider) { this.terrainHandles.delete(c.collider.handle); this.retired.push(c.collider); c.collider = null; }
+    c.colliderStale = false;
     const g = c.mesh.geometry;
     const pos = g.getAttribute('position').array as Float32Array;
     const ind = g.getIndex()!.array as Uint32Array;
     const desc = this.rapier.ColliderDesc.trimesh(pos, ind)
       .setTranslation(c.cx * CHUNK, c.cy * CHUNK, c.cz * CHUNK);
     c.collider = this.physics.createCollider(desc);
+    this.terrainHandles.add(c.collider.handle);
   }
 
   private removeCollider(c: Chunk) {
-    if (c.collider) { this.retired.push(c.collider); c.collider = null; }
+    this.colliderQueue.delete(c);
+    c.colliderStale = false;
+    if (c.collider) { this.terrainHandles.delete(c.collider.handle); this.retired.push(c.collider); c.collider = null; }
   }
 
   private unload(c: Chunk) {
@@ -228,6 +284,22 @@ export class World {
 
   meshes() {
     return this.group.children as THREE.Mesh[];
+  }
+
+  private terrainHandles = new Set<number>();
+  private rayHit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0 };
+  /** Ray against the terrain's physics colliders (~60x faster than raycasting the render meshes). Only chunks near the
+   *  player have colliders, which covers every reach in the game. Returns a reused object, or null. */
+  raycast(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number) {
+    const ray = new this.rapier.Ray(origin, dir);
+    const hit = this.physics.castRayAndGetNormal(ray, maxDist, true, undefined, undefined, undefined, undefined,
+      (col) => this.terrainHandles.has(col.handle));
+    if (!hit) return null;
+    const r = this.rayHit;
+    r.distance = hit.timeOfImpact;
+    r.point.copy(origin).addScaledVector(dir, hit.timeOfImpact);
+    r.normal.set(hit.normal.x, hit.normal.y, hit.normal.z);
+    return r;
   }
 
   /** Change density in a sphere. sign -1 digs, +1 fills. */

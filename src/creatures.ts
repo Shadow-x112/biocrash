@@ -1,6 +1,7 @@
 // First fauna (M1 step 5): Tuko and Oomi, two harmless species that test the creature setup.
 // Each creature runs a small state machine; the ground is found by probing the chunk meshes below it.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Cost } from './inventory';
 
 type State = 'idle' | 'wander' | 'flee' | 'curl' | 'sleep' | 'dead';
@@ -20,6 +21,26 @@ export interface Species {
 
 // Shared look rules: walkers have 3 or 6 legs, eyes are mineral lenses, a cool glow means harmless.
 const COOL_GLOW = 0x5fe0d0;
+
+/** Bakes a group's static meshes into one mesh per material (draw calls: Tuko 13 -> 10, Oomi 12 -> 5). */
+function mergeStatic(group: THREE.Group) {
+  const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  for (const o of [...group.children]) {
+    if (!(o instanceof THREE.Mesh)) continue;
+    o.updateMatrix();
+    const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(o.matrix);
+    const list = byMat.get(o.material as THREE.Material) ?? [];
+    list.push(g);
+    byMat.set(o.material as THREE.Material, list);
+    group.remove(o);
+    o.geometry.dispose();
+  }
+  for (const [m, list] of byMat) {
+    const merged = mergeGeometries(list);
+    for (const g of list) g.dispose();
+    if (merged) group.add(new THREE.Mesh(merged, m));
+  }
+}
 
 function mat(color: number, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true, ...extra });
@@ -47,6 +68,7 @@ function buildTuko() {
     eye.position.set(x, 0.07, 0.24);
     body.add(eye);
   }
+  mergeStatic(body);
   body.position.y = 0.12;
   root.add(body);
   const legs: THREE.Object3D[] = [];
@@ -91,6 +113,7 @@ function buildOomi() {
   const lens = new THREE.Mesh(new THREE.IcosahedronGeometry(0.05, 0), glow);
   lens.position.set(0, 0.33, 0.86);
   body.add(neck, head, lens);
+  mergeStatic(body);
   body.position.y = 1.0;
   root.add(body);
   // Tripod: one leg in front, two behind.

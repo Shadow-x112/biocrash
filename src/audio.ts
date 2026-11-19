@@ -33,6 +33,10 @@ export class Audio {
   private samples = new Map<string, { buf: AudioBuffer; gain: number }>();
   private sampleList: Record<string, { file: string; gain: number; loop: boolean }> | null = null;
   private loops: Loop[] = [];
+  private packed = new Map<string, { data: ArrayBuffer; gain: number }>();
+  private decoding = new Map<string, Promise<void>>();
+  private lastUsed = new Map<string, number>();
+  private sweep = 0;
 
   /** Call from a click handler. Safe to call repeatedly. */
   unlock() {
@@ -79,22 +83,53 @@ export class Audio {
       const res = await fetch('audio/manifest.json');
       if (!res.ok) return;
       this.sampleList = await res.json();
+      // Everything is fetched (6.7 MB compressed) but decoded audio is ~220 MB, two thirds of it in the long beds and
+      // memories. Those stay compressed until needed and are dropped again after a minute unused.
       await Promise.all(Object.entries(this.sampleList!).map(async ([id, s]) => {
         try {
           const data = await (await fetch(s.file)).arrayBuffer();
+          if (LAZY.test(id)) { this.packed.set(id, { data, gain: s.gain }); return; }
           this.samples.set(id, { buf: await this.ctx!.decodeAudioData(data), gain: s.gain });
         } catch { /* a missing sound just stays silent */ }
       }));
     } catch { /* no recorded sounds in this build */ }
   }
 
-  has(id: string) { return this.samples.has(id); }
+  has(id: string) { return this.samples.has(id) || this.packed.has(id); }
+
+  /** Decoded buffer for `id`, or null while a lazy sound is still decoding (the decode starts on the first ask). */
+  private buffer(id: string) {
+    const s = this.samples.get(id);
+    if (s) { if (this.packed.has(id)) this.lastUsed.set(id, performance.now()); return s; }
+    const p = this.packed.get(id);
+    if (p && this.ctx && !this.decoding.has(id)) {
+      const job = this.ctx.decodeAudioData(p.data.slice(0)) // decoding detaches its input: keep the packed copy
+        .then((buf) => { this.samples.set(id, { buf, gain: p.gain }); this.lastUsed.set(id, performance.now()); })
+        .catch(() => { this.packed.delete(id); })
+        .finally(() => this.decoding.delete(id));
+      this.decoding.set(id, job);
+    }
+    return null;
+  }
+
+  /** Drops decoded lazy sounds unused for a minute (they decode again in ~50 ms when next needed). */
+  private evict() {
+    const now = performance.now();
+    for (const [id, t] of this.lastUsed) if (now - t > 60_000) { this.samples.delete(id); this.lastUsed.delete(id); }
+  }
   get sampleCount() { return this.samples.size; }
 
   /** Plays a recorded sound once. offset/dur play a slice of a longer file. Returns the gain node (for fades) or null. */
   play(id: string, o: { pos?: V3; gain?: number; rate?: number; bus?: 'sfx' | 'ui' | 'amb'; hrtf?: boolean; offset?: number; dur?: number; fadeIn?: number; delay?: number } = {}) {
-    const s = this.samples.get(id), ctx = this.ctx;
-    if (!s || !ctx) return null;
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    const s = this.buffer(id);
+    if (!s) {
+      // A lazy sound still decoding: play it as soon as it's ready (a short delay is fine for beds and memories).
+      const job = this.decoding.get(id);
+      if (job) { const asked = performance.now(); void job.then(() => { if (performance.now() - asked < 1500 && this.samples.has(id)) this.play(id, o); }); }
+      return null;
+    }
     // Voice limit: at most 3 of the same sound and 32 overall (the UI is never dropped).
     const base = id.replace(/_\d+$/, '');
     if (o.bus !== 'ui' && ((this.perId.get(base) ?? 0) >= 3 || this.voices >= 32)) return null;
@@ -133,7 +168,7 @@ export class Audio {
 
   /** @internal used by Loop */
   startLoopVoice(id: string, out: GainNode, fade: number) {
-    const s = this.samples.get(id), ctx = this.ctx;
+    const s = this.buffer(id), ctx = this.ctx;
     if (!s || !ctx) return null;
     const src = ctx.createBufferSource();
     src.buffer = s.buf;
@@ -405,6 +440,7 @@ export class Audio {
   }
 
   fireCrackle(pos: V3, strength: number) {
+    if (this.voices > 24) return; // several fires crackling must not crowd out the recorded sounds
     this.noiseHit({ dur: 0.02 + Math.random() * 0.03, type: 'highpass', freq: this.vary(2500, 0.4), gain: 0.06 + strength * 0.12, pos });
   }
 
@@ -444,7 +480,10 @@ export class Audio {
   }
 
   /** Called each frame by the game to keep loops crossfading. */
-  updateLoops() { for (const l of this.loops) l.tick(); }
+  updateLoops() {
+    for (const l of this.loops) l.tick();
+    if (++this.sweep % 600 === 0) this.evict();
+  }
 
   /** Called each frame: wind follows the time of day and altitude; insects chirp at night. */
   updateAmbience(dt: number, night: number, altitude: number, listener: V3) {
@@ -474,6 +513,9 @@ export class Audio {
 }
 
 /** A looping bed that crossfades into a fresh copy of itself before the file ends, so short recordings never click or gap. */
+/** Long, occasional sounds kept compressed until used: ambience beds, Earth memories, cave drips. */
+const LAZY = /^(bed_|earth_|drips$)/;
+
 export class Loop {
   private out: GainNode | null = null;
   private voices: { src: AudioBufferSourceNode; g: GainNode; startedAt: number; dur: number }[] = [];

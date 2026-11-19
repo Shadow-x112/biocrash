@@ -114,6 +114,11 @@ async function main() {
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
   scene.add(fauna.group);
 
+  // Render scale: the Resolution setting, lowered automatically (down to 50%) while the frame rate is poor.
+  const basePR = Math.min(devicePixelRatio, 1.5);
+  let resScale = 1;
+  const applyRes = () => renderer.setPixelRatio(basePR * resScale);
+
   // --- Settings (per browser) and the station core's first-night objectives ------------------------
   const settings = loadSettings();
   const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0);
@@ -133,6 +138,7 @@ async function main() {
     player.headBob = settings.headBob;
     player.shakeScale = settings.shake ? 1 : 0;
     compassEl.style.display = settings.compass ? '' : 'none';
+    if (k === 'resolution' || k === 'autoRes' || k === 'master') { resScale = settings.resolution; applyRes(); }
     tutorial.enabled = settings.tutorial;
   };
 
@@ -420,7 +426,9 @@ async function main() {
   };
 
   // --- Actions -----------------------------------------------------------------------------------
-  const digRay = new THREE.Raycaster();
+  const aimDir = new THREE.Vector3();
+  /** What terrain the crosshair is on, within `reach` (through the physics colliders, not the render meshes). */
+  const aimAtTerrain = (reach: number) => world.raycast(camera.position, camera.getWorldDirection(aimDir), reach);
   const hitEl = $('hitmark'), crossEl = $('crosshair');
   /** Crosshair state: enemy in reach, something to use, a creature out of reach, terrain to dig, or nothing. */
   const crosshairFor = (t: Target): string => {
@@ -428,12 +436,8 @@ async function main() {
     if (prey?.alive) return 'enemy';
     if (t && t.kind !== 'creature') return 'use';
     if (t?.kind === 'creature') return !t.c.alive && t.c.position.distanceTo(player.position) <= USE_REACH + 1 ? 'use' : 'far';
-    digRay.setFromCamera(centre, camera);
-    digRay.far = REACH;
-    return digRay.intersectObjects(world.meshes(), false).length ? 'dig' : 'none';
+    return aimAtTerrain(REACH) ? 'dig' : 'none';
   };
-  const buildRay = new THREE.Raycaster();
-  const centre = new THREE.Vector2(0, 0);
   const use = () => {
     const t = queryTarget();
     if (!t) return;
@@ -468,10 +472,8 @@ async function main() {
     }
   };
   const buildCampfire = () => {
-    buildRay.setFromCamera(centre, camera);
-    buildRay.far = 5;
-    const hit = buildRay.intersectObjects(world.meshes(), false)[0];
-    if (!hit?.face || hit.face.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
+    const hit = aimAtTerrain(5);
+    if (!hit || hit.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
     if (!inventory.take(CAMPFIRE_COST)) {
       audio.deny();
       flash(`A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`);
@@ -497,18 +499,17 @@ async function main() {
     else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (E).`);
   };
   const brush = (fill: boolean) => {
-    digRay.setFromCamera(centre, camera);
-    digRay.far = REACH;
-    const hit = digRay.intersectObjects(world.meshes(), false)[0];
-    if (!hit?.face) return;
+    const aim = aimAtTerrain(REACH);
+    if (!aim) return;
+    const hit = { point: aim.point.clone(), normal: aim.normal.clone() }; // the ray result object is reused
     const power = DIG_POWER[hotbar.slot];
-    const col = hit.face.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
+    const col = hit.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
     if (!fill) {
       world.brush(hit.point, power.radius, power.strength, -1);
       audio.dig(hit.point, hotbar.slot === 'stone_pick');
-      particles.burst(hit.point, hotbar.slot === 'stone_pick' ? 12 : 8, col, { up: hit.face.normal, speed: 3 });
+      particles.burst(hit.point, hotbar.slot === 'stone_pick' ? 12 : 8, col, { up: hit.normal.clone(), speed: 3 });
     } else {
-      const p = hit.point.clone().addScaledVector(hit.face.normal, 0.6);
+      const p = hit.point.clone().addScaledVector(hit.normal, 0.6);
       if (p.distanceTo(player.position) < power.radius + 0.9) return; // don't bury yourself
       world.brush(p, power.radius, power.strength, +1);
       audio.fill(p);
@@ -639,7 +640,7 @@ async function main() {
   // --- Frame loop ----------------------------------------------------------------------------------
   const timer = new THREE.Timer();
   timer.connect(document);
-  let fps = 0, frameMs = 0, uiTimer = 0, actionCooldown = 0;
+  let fps = 0, frameMs = 0, uiTimer = 0, actionCooldown = 0, resTimer = 4;
   // Per-section timings (ms, smoothed) for the F3 profiler.
   const prof = { world: 0, physics: 0, sim: 0, render: 0 };
   const smooth = (k: keyof typeof prof, v: number) => { prof[k] = prof[k] * 0.9 + v * 0.1; };
@@ -657,6 +658,7 @@ async function main() {
     if (simulating) {
       tm = performance.now();
       player.update(dt);
+      physics.timestep = Math.max(1 / 240, dt); // dynamic bodies (M2) move at real speed on 60 or 144 Hz screens
       physics.step();
       world.afterPhysics();
       smooth('physics', performance.now() - tm);
@@ -704,6 +706,7 @@ async function main() {
       smooth('sim', performance.now() - tm);
     } else {
       player.update(0); // keep the camera placed while paused
+      world.afterPhysics(); // nothing steps while paused, so retired colliders can go right away
     }
 
     tutorial.update(state === 'playing' ? dt : 0, inventory, campfires.list.length, horror.glitch);
@@ -714,12 +717,23 @@ async function main() {
     const fog = scene.fog as THREE.Fog;
     fog.far = CHUNK * VIEW_RADIUS * (1 - sky.night * 0.4 - horror.level * 0.15);
     fog.near = fog.far * (0.55 - sky.night * 0.25);
+    // Don't draw what the fog hides: the far plane follows the fog (at night ~70% of the loaded area is fogged out).
+    const far = Math.min(CHUNK * (VIEW_RADIUS + 1), fog.far + CHUNK * 0.5);
+    if (Math.abs(camera.far - far) > 2) { camera.far = far; camera.updateProjectionMatrix(); sky.setRadius(far * 0.9); }
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.render(scene, camera);
     smooth('render', performance.now() - tm);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;
     fps = fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
+
+    if (settings.autoRes && state === 'playing' && (resTimer -= dt) <= 0) {
+      resTimer = 2;
+      const prev = resScale;
+      if (fps < 48) resScale = Math.max(0.5, resScale - 0.1);
+      else if (fps > 57) resScale = Math.min(settings.resolution, resScale + 0.05);
+      if (resScale !== prev) applyRes();
+    }
 
     // UI at 10 Hz: the look-at prompt, vitals and debug text.
     if ((uiTimer -= dt) <= 0) {
@@ -733,7 +747,7 @@ async function main() {
       if (hud.style.display !== 'none') {
         const p = player.position;
         hud.textContent =
-          `FPS ${fps.toFixed(0)}   frame ${frameMs.toFixed(1)} ms\n` +
+          `FPS ${fps.toFixed(0)}   frame ${frameMs.toFixed(1)} ms   res ${Math.round(resScale * 100)}%\n` +
           `chunks ${world.stats.loaded}  queued ${world.stats.queued}  mesh ${world.stats.meshMs.toFixed(1)} ms\n` +
           `tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  draws ${renderer.info.render.calls}  geos ${renderer.info.memory.geometries}\n` +
           `ms  world ${prof.world.toFixed(2)}  physics ${prof.physics.toFixed(2)}  sim ${prof.sim.toFixed(2)}  render ${prof.render.toFixed(2)}\n` +
