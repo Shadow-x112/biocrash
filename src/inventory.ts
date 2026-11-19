@@ -1,5 +1,6 @@
 // Carried resources and tools. M1 keeps it to stack counts; slots, weight and storage come later.
-export type ItemId = 'stone' | 'stalkwood' | 'fiber' | 'cordage' | 'stone_pick' | 'stone_knife' | 'spear';
+export type ItemId = 'stone' | 'stalkwood' | 'fiber' | 'cordage' | 'chitin' | 'hide' | 'bone' | 'raw_meat'
+  | 'stone_pick' | 'stone_knife' | 'spear';
 export type Cost = Partial<Record<ItemId, number>>;
 
 export const ITEM_NAMES: Record<ItemId, string> = {
@@ -7,18 +8,23 @@ export const ITEM_NAMES: Record<ItemId, string> = {
   stalkwood: 'Stalkwood',
   fiber: 'Fiber',
   cordage: 'Cordage',
+  chitin: 'Chitin',
+  hide: 'Hide',
+  bone: 'Bone',
+  raw_meat: 'Raw meat',
   stone_pick: 'Stone pick',
   stone_knife: 'Stone knife',
   spear: 'Spear',
 };
 
 /** Materials show in the inventory panel; tools live on the hotbar. */
-export const MATERIALS: ItemId[] = ['stone', 'stalkwood', 'fiber', 'cordage'];
+export const MATERIALS: ItemId[] = ['stone', 'stalkwood', 'fiber', 'cordage', 'chitin', 'hide', 'bone', 'raw_meat'];
 export const TOOLS: ItemId[] = ['stone_pick', 'stone_knife', 'spear'];
 
 export class Inventory {
   readonly counts: Record<ItemId, number> = {
-    stone: 0, stalkwood: 0, fiber: 0, cordage: 0, stone_pick: 0, stone_knife: 0, spear: 0,
+    stone: 0, stalkwood: 0, fiber: 0, cordage: 0, chitin: 0, hide: 0, bone: 0, raw_meat: 0,
+    stone_pick: 0, stone_knife: 0, spear: 0,
   };
   onChange: () => void = () => {};
 

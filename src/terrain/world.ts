@@ -184,6 +184,17 @@ export class World {
     return ok(c) && (floorDiv(p.y, CHUNK) <= MIN_CY || ok(below));
   }
 
+  /** Meshes of the chunk column at this x/z (the few a ground probe needs). */
+  columnMeshes(x: number, z: number) {
+    const cx = floorDiv(x, CHUNK), cz = floorDiv(z, CHUNK);
+    const out: THREE.Mesh[] = [];
+    for (let cy = MAX_CY; cy >= MIN_CY; cy--) {
+      const m = this.chunks.get(chunkKey(cx, cy, cz))?.mesh;
+      if (m) out.push(m);
+    }
+    return out;
+  }
+
   meshes() {
     return this.group.children as THREE.Mesh[];
   }

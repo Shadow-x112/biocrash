@@ -9,7 +9,8 @@ import { Survival } from './survival';
 import { Props } from './props';
 import { Inventory, ITEM_NAMES, MATERIALS, type ItemId } from './inventory';
 import { RECIPES } from './crafting';
-import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER } from './tools';
+import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
+import { Fauna, type Creature } from './creatures';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION } from './config';
@@ -75,6 +76,8 @@ async function main() {
   const campfires = new Campfires(survival.heatSources);
   scene.add(campfires.group);
   campfires.load(meta?.campfires);
+  const fauna = new Fauna((x, z) => world.columnMeshes(x, z));
+  scene.add(fauna.group);
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth },
@@ -200,7 +203,7 @@ async function main() {
     }
   };
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna } });
 
   // --- Vitals HUD -------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost');
@@ -218,10 +221,30 @@ async function main() {
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
   };
 
+  // --- Hunting -------------------------------------------------------------------------------------
+  const ATTACK: Record<Slot, { reach: number; damage: number }> = {
+    hands: { reach: 2.2, damage: 4 }, stone_knife: { reach: 2.3, damage: 12 },
+    stone_pick: { reach: 2.5, damage: 10 }, spear: { reach: 3.6, damage: 30 },
+  };
+  const attack = (c: Creature) => {
+    hotbar.swing();
+    const hit = c.damage(ATTACK[hotbar.slot].damage, player.position);
+    if (!hit && c.state === 'curl') flash(`The ${c.species.name} curled into its shell.`);
+    else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (E).`);
+  };
+  const harvest = (c: Creature) => {
+    if (inventory.counts.stone_knife <= 0) { flash('You need a stone knife to harvest.'); return; }
+    c.harvested = true;
+    const got: string[] = [];
+    for (const [k, n] of Object.entries(c.species.drops) as [ItemId, number][]) { inventory.add(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
+    hotbar.swing();
+    flash(`Harvested ${got.join(', ')}.`);
+  };
+
   // --- Gathering, campfires and the inventory panel ---------------------------------------------
   const promptEl = $('prompt'), invEl = $('inv');
   const renderInv = () => {
-    invEl.innerHTML = MATERIALS
+    invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0)
       .map((k) => `<div class="row"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`).join('');
     renderHotbar();
     if (craftOpen) renderCraft();
@@ -249,6 +272,8 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     if (!playing || e.repeat) return;
     if (e.code === 'KeyE') {
+      const beast = fauna.lookAt(camera, 3);
+      if (beast && !beast.alive) { harvest(beast); return; }
       const { fire, prop } = look();
       if (prop) {
         props.pick(prop);
@@ -338,6 +363,12 @@ async function main() {
   });
   const updatePrompt = () => {
     if (!playing) { promptEl.textContent = ''; return; }
+    const beast = fauna.lookAt(camera, 3.6);
+    if (beast) {
+      promptEl.textContent = beast.alive ? beast.species.name
+        : inventory.counts.stone_knife > 0 ? `E  harvest ${beast.species.name}` : `${beast.species.name}  ·  needs a stone knife to harvest`;
+      return;
+    }
     const { fire, prop } = look();
     if (prop) promptEl.textContent = `E  pick up ${ITEM_NAMES[prop.kind].toLowerCase()}`;
     else if (fire) promptEl.textContent = fire.lit ? `E  add stalkwood  ·  burns ${fmtTime(fire.fuel)}` : 'E  relight with stalkwood';
@@ -376,6 +407,8 @@ async function main() {
     }
     updateVitals();
     campfires.update(dt, player.position);
+    const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k));
+    fauna.update(dt, player.position, moving && player.isDown('ShiftLeft'), sky.night);
     hotbar.update(dt, playing && ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k)));
     if ((promptTimer -= dt) <= 0) { promptTimer = 0.1; updatePrompt(); }
 
@@ -384,7 +417,9 @@ async function main() {
       if ((held.cooldown -= dt) <= 0) {
         const prev = { dig: held.dig, fill: held.fill };
         if (keyDig) held.dig = true; else if (keyFill) held.fill = true;
-        if (hotbar.slot === 'spear' && held.dig && !held.fill) { hotbar.swing(); held.cooldown = 0.55; } // jab; hits creatures in step 5
+        const target = held.dig && !held.fill ? fauna.lookAt(camera, ATTACK[hotbar.slot].reach) : null;
+        if (target?.alive) { attack(target); held.cooldown = 0.55; }
+        else if (hotbar.slot === 'spear' && held.dig && !held.fill) { hotbar.swing(); held.cooldown = 0.55; } // a jab at nothing
         else { tryBrush(); hotbar.swing(); held.cooldown = DIG_POWER[hotbar.slot].interval; }
         held.dig = prev.dig; held.fill = prev.fill;
       }
