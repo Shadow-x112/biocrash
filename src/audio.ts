@@ -16,6 +16,7 @@ export class Audio {
   private nightLevel = 0;
   private insectTimer = 0;
   private last = new Map<string, number>(); // per-sound cooldowns
+  ambShelf!: BiquadFilterNode;
   private world!: GainNode;          // sfx + ambience pass through here so they can be ducked under scares
   private reverbIn!: GainNode;       // shared reverb send
   private reverbOpen!: GainNode;     // short, airy tail outdoors
@@ -43,8 +44,9 @@ export class Audio {
     this.master.connect(lim).connect(ctx.destination);
     this.world = ctx.createGain(); this.world.connect(this.master);
     this.sfx = ctx.createGain(); this.amb = ctx.createGain(); this.ui = ctx.createGain();
-    // Ambience low-shelf: the drone beds piled up 30-200 Hz and muddied everything else (spectrogram check).
-    const ambShelf = ctx.createBiquadFilter(); ambShelf.type = 'lowshelf'; ambShelf.frequency.value = 160; ambShelf.gain.value = -5;
+    // Ambience low-shelf, flat by default: cutting the drones' low end measured cleaner but sounded thinner and less
+    // ominous to Jorge (A/B at matched loudness, 2026-11-19). Keep the weight; adjust here only by ear.
+    const ambShelf = this.ambShelf = ctx.createBiquadFilter(); ambShelf.type = 'lowshelf'; ambShelf.frequency.value = 160; ambShelf.gain.value = 0;
     this.sfx.connect(this.world); this.amb.connect(ambShelf).connect(this.world); this.ui.connect(this.master);
     // Shared reverb: two generated impulse responses (no files), crossfaded between open air and caves.
     this.reverbIn = ctx.createGain();
