@@ -275,7 +275,8 @@ async function main() {
   function renderHotbar() {
     $('hotbar').innerHTML = SLOTS.map((s, i) => {
       const owned = s === 'hands' || inventory.counts[s] > 0;
-      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}"><b>${i + 1}</b>${SLOT_NAMES[s]}</div>`;
+      const n = s === 'hands' ? 0 : inventory.counts[s];
+      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}"><b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}</div>`;
     }).join('');
   }
   hotbar.onChange = renderHotbar;
@@ -285,13 +286,12 @@ async function main() {
         const ok = inventory.counts[k] >= (r.cost[k] ?? 0);
         return `<span class="${ok ? 'ok' : 'no'}">${r.cost[k]} ${ITEM_NAMES[k].toLowerCase()}</span>`;
       }).join(' · ');
-      const owned = r.unique && r.makes !== 'campfire' && inventory.counts[r.makes] > 0;
-      const can = inventory.has(r.cost) && !owned;
+      const can = inventory.has(r.cost);
       const name = r.makes === 'campfire' ? 'Campfire' : ITEM_NAMES[r.makes];
+      const have = r.makes === 'campfire' ? 0 : inventory.counts[r.makes];
       const btn = r.makes === 'campfire' ? '<span class="hint">press C in the world</span>'
-        : owned ? '<span class="hint">owned</span>'
         : `<button data-r="${r.id}" ${can ? '' : 'disabled'}>Craft</button>`;
-      return `<div class="recipe"><div><div class="rname">${name}${r.amount > 1 ? ' ×' + r.amount : ''}</div>
+      return `<div class="recipe"><div><div class="rname">${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
@@ -299,8 +299,10 @@ async function main() {
     const id = (e.target as HTMLElement).dataset.r;
     const r = RECIPES.find((x) => x.id === id);
     if (!r || r.makes === 'campfire' || !inventory.take(r.cost)) return;
+    const first = inventory.counts[r.makes] === 0;
     inventory.add(r.makes, r.amount);
-    if (r.unique) hotbar.select(r.makes as typeof SLOTS[number], () => true);
+    if (r.tool && first) hotbar.select(r.makes as typeof SLOTS[number], () => true); // equip your first one
+
   });
   const openCraft = () => {
     craftOpen = true;
