@@ -408,7 +408,7 @@ async function main() {
     updateVitals();
     campfires.update(dt, player.position);
     const moving = ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k));
-    fauna.update(dt, player.position, moving && player.isDown('ShiftLeft'), sky.night);
+    fauna.update(dt, player.position, moving && player.isDown('ShiftLeft') && !player.crouching, player.crouching, sky.night);
     hotbar.update(dt, playing && ['KeyW', 'KeyA', 'KeyS', 'KeyD'].some((k) => player.isDown(k)));
     if ((promptTimer -= dt) <= 0) { promptTimer = 0.1; updatePrompt(); }
 

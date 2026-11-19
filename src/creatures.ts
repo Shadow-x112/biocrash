@@ -130,6 +130,8 @@ export class Creature {
   deadTime = 0;
   /** Oomi leave glowing trail spots as they walk. */
   private trailTimer = 0;
+  /** Seconds a Tuko holds still after uncurling. */
+  private peek = 0;
 
   constructor(readonly species: Species, readonly position: THREE.Vector3) {
     const b = species.build();
@@ -168,7 +170,7 @@ export class Creature {
     this.timer = seconds;
   }
 
-  update(dt: number, ctx: { player: THREE.Vector3; playerRunning: boolean; night: number; ground: (x: number, z: number, y: number) => { y: number; ny: number } | null; trail: (p: THREE.Vector3) => void }) {
+  update(dt: number, ctx: { player: THREE.Vector3; playerRunning: boolean; playerSneaking: boolean; night: number; ground: (x: number, z: number, y: number) => { y: number; ny: number } | null; trail: (p: THREE.Vector3) => void }) {
     this.gait += dt;
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
     if (!this.alive) { this.deadTime += dt; return; }
@@ -179,8 +181,12 @@ export class Creature {
 
     // Decide.
     if (this.state === 'curl') {
-      if (this.timer <= 0) this.flee(ctx.player, 3);
-    } else if (sp.scareDist > 0 && toPlayer < (ctx.playerRunning ? sp.scareDist * 1.6 : sp.scareDist) && this.state !== 'flee') {
+      // Uncurl and freeze for a moment before bolting: the window to strike.
+      if (this.timer <= 0) { this.state = 'idle'; this.timer = 0; this.peek = 0.8; }
+    } else if (this.peek > 0) {
+      this.peek -= dt;
+      if (this.peek <= 0) this.flee(ctx.player, 3);
+    } else if (sp.scareDist > 0 && toPlayer < sp.scareDist * (ctx.playerRunning ? 1.6 : ctx.playerSneaking ? 0.45 : 1) && this.state !== 'flee') {
       // Skittish: bolt, and curl up if you get right on top of it.
       if (toPlayer < 2 && sp.id === 'tuko') { this.state = 'curl'; this.timer = 3; } else this.flee(ctx.player, 3);
     } else if (this.state === 'flee') {
@@ -288,7 +294,7 @@ export class Fauna {
     this.list.splice(this.list.indexOf(c), 1);
   }
 
-  update(dt: number, player: THREE.Vector3, playerRunning: boolean, night: number) {
+  update(dt: number, player: THREE.Vector3, playerRunning: boolean, playerSneaking: boolean, night: number) {
     // Keep a modest population around the player: ~8 Tuko, ~3 Oomi.
     if ((this.spawnTimer -= dt) <= 0) {
       this.spawnTimer = 1.5;
@@ -305,7 +311,7 @@ export class Fauna {
       }
     }
     for (const c of [...this.list]) {
-      c.update(dt, { player, playerRunning, night, ground: this.ground, trail: (p) => this.addTrail(p) });
+      c.update(dt, { player, playerRunning, playerSneaking, night, ground: this.ground, trail: (p) => this.addTrail(p) });
       const far = c.position.distanceTo(player) > 110;
       if (far || (!c.alive && (c.harvested || c.deadTime > 300))) this.remove(c);
     }

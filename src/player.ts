@@ -19,6 +19,9 @@ export class Player {
   dragLook = false;
   /** Multiplier on walk/run speed (cold slows you down). */
   speedMul = 1;
+  /** Holding Ctrl: lower, slower and quieter (creatures notice you later). */
+  crouching = false;
+  private eyeOffset = EYE;
   private dragging = false;
   private velY = 0;
   private grounded = false;
@@ -75,7 +78,9 @@ export class Player {
       if (this.keys.has('KeyS')) move.sub(forward);
       if (this.keys.has('KeyD')) move.add(right);
       if (this.keys.has('KeyA')) move.sub(right);
-      if (move.lengthSq() > 0) move.normalize().multiplyScalar((this.keys.has('ShiftLeft') ? RUN : WALK) * this.speedMul);
+      this.crouching = this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+      const pace = this.crouching ? WALK * 0.45 : this.keys.has('ShiftLeft') ? RUN : WALK;
+      if (move.lengthSq() > 0) move.normalize().multiplyScalar(pace * this.speedMul);
 
       if (this.grounded && this.keys.has('Space')) this.velY = JUMP;
       this.velY -= GRAVITY * dt;
@@ -91,7 +96,8 @@ export class Player {
       this.position.set(this.position.x + out.x, this.position.y + out.y, this.position.z + out.z);
       this.body.setNextKinematicTranslation(this.position);
     }
-    this.camera.position.set(this.position.x, this.position.y + EYE, this.position.z);
+    this.eyeOffset += ((this.crouching ? EYE - 0.55 : EYE) - this.eyeOffset) * Math.min(1, dt * 10);
+    this.camera.position.set(this.position.x, this.position.y + this.eyeOffset, this.position.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
   }
 }
