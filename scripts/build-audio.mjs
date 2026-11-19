@@ -15,11 +15,17 @@ for (const s of list) {
   const src = join(root, ...s.src.split('\\'));
   const dst = join(out, `${s.id}.webm`);
   const loop = s.id.startsWith('bed_') || s.id.startsWith('earth_') || s.id === 'drips';
+  // Mix-check fixes (audio-mcp survey): cut inaudible sub-20 Hz rumble that eats headroom, per-category loudness,
+  // and a true-peak limiter after loudnorm so nothing clips once encoded.
   const filters = [
+    `aformat=channel_layouts=${s.mono ? 'mono' : 'stereo'}`, // downmix first so the limiter sees the final signal
+    'highpass=f=25',
     loop ? null : 'silenceremove=start_periods=1:start_threshold=-55dB',
-    `loudnorm=I=${loop ? -24 : -18}:TP=-2`,
+    `loudnorm=I=${s.lufs ?? (loop ? -24 : -18)}:TP=-2`,
     'afade=t=in:d=0.03',
     `areverse,afade=t=in:d=${loop ? 0.05 : 0.35},areverse`,
+    'aresample=48000',
+    'alimiter=limit=0.79:attack=1:release=60:level=false', // last: ~-2 dBFS leaves room for Opus overshoot
   ].filter(Boolean).join(',');
   try {
     if (!existsSync(src)) throw new Error('missing ' + src);

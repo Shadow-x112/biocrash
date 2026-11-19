@@ -43,7 +43,9 @@ export class Audio {
     this.master.connect(lim).connect(ctx.destination);
     this.world = ctx.createGain(); this.world.connect(this.master);
     this.sfx = ctx.createGain(); this.amb = ctx.createGain(); this.ui = ctx.createGain();
-    this.sfx.connect(this.world); this.amb.connect(this.world); this.ui.connect(this.master);
+    // Ambience low-shelf: the drone beds piled up 30-200 Hz and muddied everything else (spectrogram check).
+    const ambShelf = ctx.createBiquadFilter(); ambShelf.type = 'lowshelf'; ambShelf.frequency.value = 160; ambShelf.gain.value = -5;
+    this.sfx.connect(this.world); this.amb.connect(ambShelf).connect(this.world); this.ui.connect(this.master);
     // Shared reverb: two generated impulse responses (no files), crossfaded between open air and caves.
     this.reverbIn = ctx.createGain();
     const mkVerb = (seconds: number, damp: number, level: number) => {
@@ -179,7 +181,7 @@ export class Audio {
 
   applyVolumes() {
     if (!this.ctx) return;
-    this.master.gain.value = this.volumes.master;
+    this.master.gain.value = this.volumes.master * 1.75; // +5 dB makeup: measured night mix sat at -28.6 LUFS, target ~-23
     this.sfx.gain.value = this.volumes.sfx;
     this.amb.gain.value = this.volumes.ambience;
     this.ui.gain.value = this.volumes.ui;
@@ -299,7 +301,7 @@ export class Audio {
     if (!this.ctx) return;
     const g = sneak ? 0.07 : run ? 0.26 : 0.18;
     this.noiseHit({ dur: 0.09, type: 'lowpass', freq: this.vary(rocky ? 1500 : 700), q: 0.8, gain: g });
-    if (rocky) this.noiseHit({ dur: 0.03, type: 'highpass', freq: 3500, gain: g * 0.35, delay: 0.005 });
+    if (rocky) this.noiseHit({ dur: 0.03, type: 'bandpass', freq: 2200, q: 1.5, gain: g * 0.15, delay: 0.005 });
   }
 
   land(strength: number) {
@@ -354,8 +356,8 @@ export class Audio {
 
   tukoChirp(pos: V3) {
     if (this.has('tuko_1')) { // a glitchy electronic chitter, pitched up: small and alien
-      const v = this.playAny('tuko', 4, { pos, gain: 0.35, rate: 1.7 + Math.random() * 0.7, dur: 0.25 + Math.random() * 0.2 });
-      if (v && Math.random() < 0.5) this.playAny('tuko', 4, { pos, gain: 0.25, rate: 2 + Math.random() * 0.5, dur: 0.18, delay: 0.16 });
+      const v = this.playAny('tuko', 4, { pos, gain: 0.7, rate: 1.7 + Math.random() * 0.7, dur: 0.25 + Math.random() * 0.2 });
+      if (v && Math.random() < 0.5) this.playAny('tuko', 4, { pos, gain: 0.5, rate: 2 + Math.random() * 0.5, dur: 0.18, delay: 0.16 });
       return;
     }
     this.tone({ dur: 0.07, freq: this.vary(1900, 0.08), freqEnd: 2700, gain: 0.07, pos, hrtf: true });
@@ -364,7 +366,7 @@ export class Audio {
 
   oomiHoot(pos: V3, sleepy: boolean) {
     if (this.has('oomi_1')) { // a big, soft, slowed-down horn: large and gentle
-      this.playAny('oomi', 3, { pos, gain: sleepy ? 0.35 : 0.6, rate: sleepy ? 0.45 : 0.6 + Math.random() * 0.12, dur: sleepy ? 2.5 : 1.6, fadeIn: 0.15 });
+      this.playAny('oomi', 3, { pos, gain: sleepy ? 0.6 : 1.1, rate: sleepy ? 0.45 : 0.6 + Math.random() * 0.12, dur: sleepy ? 2.5 : 1.6, fadeIn: 0.15 });
       return;
     }
     this.tone({ dur: sleepy ? 0.9 : 0.55, freq: this.vary(sleepy ? 150 : 230, 0.06), freqEnd: sleepy ? 120 : 170, gain: sleepy ? 0.08 : 0.16, vibrato: 6, attack: 0.08, pos, hrtf: true });

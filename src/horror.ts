@@ -161,8 +161,8 @@ export class Horror {
       if (u > 0.45 && this.major()) {
         const pos = cam.clone().addScaledVector(this.fwd, -2.2).add(new THREE.Vector3(rand(-0.6, 0.6), 0.1, rand(-0.6, 0.6)));
         const v = Math.random() < 0.5
-          ? this.audio.play('whisper', { pos, gain: 0.55, hrtf: true, offset: rand(0, 8), dur: rand(4, 7), fadeIn: 1.2 })
-          : this.audio.playAny('vwhisper', 2, { pos, gain: 0.5, hrtf: true, fadeIn: 0.8 });
+          ? this.audio.play('whisper', { pos, gain: 0.3, hrtf: true, offset: rand(0, 8), dur: rand(4, 7), fadeIn: 1.2 })
+          : this.audio.playAny('vwhisper', 2, { pos, gain: 0.3, hrtf: true, fadeIn: 0.8 });
         if (v) { this.whisperVoice = { gain: v.gain, pos }; v.src.onended = () => { this.whisperVoice = null; }; this.fire('whisper'); }
       }
     }
@@ -230,7 +230,7 @@ export class Horror {
     // A rare scare out of nowhere, with a riser first.
     if (t.sting <= 0 && this.pendingSting < 0 && u > 0.75 && Math.random() < dt / 60 && this.major()) {
       this.audio.duck(-14, 1.5, 0.8, 0.3);                     // the world goes quiet first
-      this.audio.playAny('riser', 3, { gain: 0.6, bus: 'ui', delay: 0.6 });
+      this.audio.playAny('riser', 3, { gain: 0.35, bus: 'ui', delay: 0.6 });
       this.pendingSting = 2.4;
       t.sting = rand(3600, 5400);
     }
@@ -248,7 +248,7 @@ export class Horror {
     if (t.voice <= 0) {
       t.voice = rand(300, 600);
       if (u > 0.6 && this.major()) {
-        this.audio.playAny('voice', 3, { pos: this.around(cam, rand(25, 40), i.ground), gain: 0.9, fadeIn: 1.5 });
+        this.audio.playAny('voice', 3, { pos: this.around(cam, rand(25, 40), i.ground), gain: 0.45, fadeIn: 1.5 });
         this.fire('voice');
       }
     }
@@ -277,7 +277,7 @@ export class Horror {
       this.timers[k] = Math.max(this.timers[k], rand(60, 120)); // a calm stretch afterwards
     const ids = ['sting_shadows', 'sting_from_below', 'sting_taken', 'sting_lights_out'];
     this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'ui' });
-    this.audio.play('subdrop', { gain: 0.6, bus: 'ui' });
+    this.audio.play('subdrop', { gain: 0.4, bus: 'ui' });
     this.flashStatic(0.25);
     this.timers.sting = rand(3600, 5400); // at most one scare an hour
     this.sinceMajor = 0;

@@ -45,7 +45,8 @@
   "start": 0,
   "dur": 20,
   "mono": true,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -20
  },
  {
   "id": "whisper",
@@ -53,14 +54,15 @@
   "start": 0,
   "dur": 16,
   "mono": true,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -20
  },
  {
   "id": "receiver",
   "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Back Track\\DSGNSrce_TEXTURE-Back Track Receiver_Puncture_Ocular.wav",
   "start": 0,
   "dur": 16,
-  "mono": false,
+  "mono": true,
   "gain": 1.0
  },
  {
@@ -213,7 +215,8 @@
   "start": 0,
   "dur": 6,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -16
  },
  {
   "id": "sting_from_below",
@@ -221,7 +224,8 @@
   "start": 0,
   "dur": 6,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -16
  },
  {
   "id": "sting_taken",
@@ -229,7 +233,8 @@
   "start": 0,
   "dur": 6,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -16
  },
  {
   "id": "sting_lights_out",
@@ -237,7 +242,8 @@
   "start": 0,
   "dur": 6,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -16
  },
  {
   "id": "riser_1",
@@ -357,7 +363,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "ui_2",
@@ -365,7 +372,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "ui_3",
@@ -373,7 +381,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "ui_4",
@@ -381,7 +390,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "ui_5",
@@ -389,7 +399,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "ui_6",
@@ -397,7 +408,8 @@
   "start": 0,
   "dur": 2,
   "mono": false,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -22
  },
  {
   "id": "bed_night",
@@ -481,7 +493,7 @@
  },
  {
   "id": "tuko_3",
-  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 03_Ocular_Aberration.wav",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Glitch Element 05_Ocular_Aberration.wav",
   "start": 0,
   "dur": 1.5,
   "mono": true,
@@ -613,7 +625,8 @@
   "start": 0,
   "dur": 6,
   "mono": true,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -20
  },
  {
   "id": "vwhisper_2",
@@ -621,7 +634,8 @@
   "start": 0,
   "dur": 6,
   "mono": true,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -20
  },
  {
   "id": "gasp",
@@ -629,6 +643,7 @@
   "start": 0,
   "dur": 4,
   "mono": true,
-  "gain": 1.0
+  "gain": 1.0,
+  "lufs": -20
  }
 ]
