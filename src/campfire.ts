@@ -94,11 +94,13 @@ export class Campfires {
   }
 
   /** The campfire the camera points at within reach, if any. */
+  private ray = new THREE.Raycaster();
+  private centre = new THREE.Vector2(0, 0);
   lookAt(camera: THREE.Camera, reach: number) {
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-    ray.far = reach;
-    const hits = ray.intersectObjects(this.list.map((f) => f.group), true);
+    if (!this.list.length) return null;
+    this.ray.setFromCamera(this.centre, camera);
+    this.ray.far = reach;
+    const hits = this.ray.intersectObjects(this.list.map((f) => f.group), true);
     if (!hits.length) return null;
     return this.list.find((f) => hits[0].object.parent === f.group) ?? null;
   }

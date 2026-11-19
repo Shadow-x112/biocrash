@@ -3,22 +3,37 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { CHUNK, PAD, MIN_CY, MAX_CY, VIEW_RADIUS, COLLIDER_RADIUS, chunkKey } from '../config';
 import type { MeshRequest, MeshResponse } from './mesher.worker';
+import type { DecoData } from './deco';
 
 interface Chunk {
   key: string;
   cx: number; cy: number; cz: number;
   mesh: THREE.Mesh | null;
   collider: RAPIER.Collider | null;
+  heights: Float32Array | null;
   /** Bumped on every edit; a mesh is current when meshedVersion === version. */
   version: number;
   meshedVersion: number;
-  inFlight: boolean;
+  /** Id of the request in flight for this chunk (0 = none). Replies with another id are stale. */
+  pendingId: number;
+  pendingVersion: number;
   wantsCollider: boolean;
 }
 
 const EDIT_CELLS = CHUNK * CHUNK * CHUNK;
-const EDIT_LIMIT = 40;
+/** Edits beyond the generator's own density range (±16) do nothing visible, so keep them close to it. */
+const EDIT_LIMIT = 20;
+/** Bedrock: you can't dig within this many metres of the bottom of the world. */
+export const BEDROCK_Y = MIN_CY * CHUNK + 6;
 const floorDiv = (a: number, b: number) => Math.floor(a / b);
+const HN = CHUNK + 1;
+
+// For each padded sample index: which neighbour chunk owns it (-1, 0, +1) and its local index there.
+const OWNER = new Int8Array(PAD), LOCAL = new Int16Array(PAD);
+for (let s = 0; s < PAD; s++) {
+  const l = s - 1, o = l < 0 ? -1 : l >= CHUNK ? 1 : 0;
+  OWNER[s] = o; LOCAL[s] = l - o * CHUNK;
+}
 
 export class World {
   readonly group = new THREE.Group();
@@ -35,10 +50,12 @@ export class World {
   private centerChunk = { x: Number.NaN, z: Number.NaN };
   private rapier: typeof RAPIER;
   private physics: RAPIER.World;
+  /** Colliders replaced this frame; removed after the next physics step so the ground never vanishes for a frame. */
+  private retired: RAPIER.Collider[] = [];
 
   stats = { meshMs: 0, meshed: 0, loaded: 0, queued: 0 };
-  /** Called when a chunk gets (or loses) its mesh, and when it unloads. */
-  onChunkMesh: (key: string, mesh: THREE.Mesh | null, cx: number, cy: number, cz: number) => void = () => {};
+  /** Called when a chunk gets new mesh data (mesh may be null for empty chunks), and when it unloads. */
+  onChunkMesh: (key: string, mesh: THREE.Mesh | null, deco: DecoData) => void = () => {};
   onChunkUnload: (key: string) => void = () => {};
 
   constructor(readonly seed: string, rapier: typeof RAPIER, physics: RAPIER.World) {
@@ -70,6 +87,12 @@ export class World {
     this.dispatch();
   }
 
+  /** Call right after physics.step(). */
+  afterPhysics() {
+    for (const c of this.retired) this.physics.removeCollider(c, false);
+    this.retired.length = 0;
+  }
+
   private refreshSet(pcx: number, pcz: number) {
     const keep = new Set<string>();
     for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++)
@@ -80,7 +103,7 @@ export class World {
           keep.add(key);
           let c = this.chunks.get(key);
           if (!c) {
-            c = { key, cx, cy, cz, mesh: null, collider: null, version: 1, meshedVersion: 0, inFlight: false, wantsCollider: false };
+            c = { key, cx, cy, cz, mesh: null, collider: null, heights: null, version: 1, meshedVersion: 0, pendingId: 0, pendingVersion: 0, wantsCollider: false };
             this.chunks.set(key, c);
           }
           c.wantsCollider = Math.abs(dx) <= COLLIDER_RADIUS && Math.abs(dz) <= COLLIDER_RADIUS;
@@ -105,32 +128,30 @@ export class World {
   private dispatch() {
     if (this.idle.length === 0) return;
     const todo: Chunk[] = [];
-    for (const c of this.chunks.values()) if (!c.inFlight && c.meshedVersion !== c.version) todo.push(c);
+    for (const c of this.chunks.values()) if (!c.pendingId && c.meshedVersion !== c.version) todo.push(c);
     this.stats.queued = todo.length;
     if (todo.length === 0) return;
     todo.sort((a, b) => this.priority(a) - this.priority(b));
     for (const c of todo) {
       const w = this.idle.pop();
       if (!w) break;
-      c.inFlight = true;
+      c.pendingId = this.nextId++;
+      c.pendingVersion = c.version;
       const edits = this.paddedEdits(c.cx, c.cy, c.cz);
-      const req: MeshRequest & { version: number } = {
-        id: this.nextId++, seed: this.seed, cx: c.cx, cy: c.cy, cz: c.cz, edits, version: c.version,
-      };
-      (w as Worker & { pendingVersion?: number }).pendingVersion = c.version;
+      const req: MeshRequest = { id: c.pendingId, seed: this.seed, cx: c.cx, cy: c.cy, cz: c.cz, edits };
       w.postMessage(req, edits ? [edits.buffer] : []);
     }
   }
 
   private onMeshed(w: Worker, r: MeshResponse) {
-    const version = (w as Worker & { pendingVersion?: number }).pendingVersion ?? 0;
     this.idle.push(w);
     this.stats.meshMs = this.stats.meshMs * 0.9 + r.ms * 0.1;
     this.stats.meshed++;
     const c = this.chunks.get(chunkKey(r.cx, r.cy, r.cz));
-    if (!c) return; // unloaded while meshing
-    c.inFlight = false;
-    c.meshedVersion = version;
+    if (!c || c.pendingId !== r.id) { this.dispatch(); return; } // unloaded, or a stale reply
+    c.pendingId = 0;
+    c.meshedVersion = c.pendingVersion;
+    c.heights = r.heights;
 
     if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh = null; }
     if (r.indices.length > 0) {
@@ -145,13 +166,15 @@ export class World {
       m.position.set(c.cx * CHUNK, c.cy * CHUNK, c.cz * CHUNK);
       m.matrixAutoUpdate = false;
       m.updateMatrix();
+      m.updateMatrixWorld();
       m.userData.chunk = c.key;
       this.group.add(m);
       c.mesh = m;
     }
-    this.removeCollider(c);
+    // Build the new collider first; the old one is retired after the next physics step.
+    if (c.collider) { this.retired.push(c.collider); c.collider = null; }
     this.syncCollider(c);
-    this.onChunkMesh(c.key, c.mesh, c.cx, c.cy, c.cz);
+    this.onChunkMesh(c.key, c.mesh, r.deco);
     this.dispatch();
   }
 
@@ -167,7 +190,7 @@ export class World {
   }
 
   private removeCollider(c: Chunk) {
-    if (c.collider) { this.physics.removeCollider(c.collider, false); c.collider = null; }
+    if (c.collider) { this.retired.push(c.collider); c.collider = null; }
   }
 
   private unload(c: Chunk) {
@@ -178,21 +201,29 @@ export class World {
 
   /** True once the chunk under this point is meshed and has physics (or is empty air). */
   isReadyAt(p: THREE.Vector3) {
-    const c = this.chunks.get(chunkKey(floorDiv(p.x, CHUNK), floorDiv(p.y, CHUNK), floorDiv(p.z, CHUNK)));
-    const below = this.chunks.get(chunkKey(floorDiv(p.x, CHUNK), floorDiv(p.y, CHUNK) - 1, floorDiv(p.z, CHUNK)));
+    const cx = floorDiv(p.x, CHUNK), cy = floorDiv(p.y, CHUNK), cz = floorDiv(p.z, CHUNK);
     const ok = (ch?: Chunk) => !!ch && ch.meshedVersion > 0 && (!ch.mesh || !!ch.collider);
-    return ok(c) && (floorDiv(p.y, CHUNK) <= MIN_CY || ok(below));
+    return ok(this.chunks.get(chunkKey(cx, cy, cz))) && (cy <= MIN_CY || ok(this.chunks.get(chunkKey(cx, cy - 1, cz))));
   }
 
-  /** Meshes of the chunk column at this x/z (the few a ground probe needs). */
-  columnMeshes(x: number, z: number) {
+  /** Height and slope of the top surface at (x, z), from the worker's height grids (no raycasts). */
+  groundAt(x: number, z: number): { y: number; ny: number } | null {
     const cx = floorDiv(x, CHUNK), cz = floorDiv(z, CHUNK);
-    const out: THREE.Mesh[] = [];
+    const lx = x - cx * CHUNK, lz = z - cz * CHUNK;
+    const i = Math.min(CHUNK - 1, Math.floor(lx)), k = Math.min(CHUNK - 1, Math.floor(lz)), fx = lx - i, fz = lz - k;
     for (let cy = MAX_CY; cy >= MIN_CY; cy--) {
-      const m = this.chunks.get(chunkKey(cx, cy, cz))?.mesh;
-      if (m) out.push(m);
+      const h = this.chunks.get(chunkKey(cx, cy, cz))?.heights;
+      if (!h) continue;
+      const a = h[i + k * HN], b = h[i + 1 + k * HN], c = h[i + (k + 1) * HN], d = h[i + 1 + (k + 1) * HN];
+      if (Number.isNaN(a) || Number.isNaN(b) || Number.isNaN(c) || Number.isNaN(d)) {
+        if (Number.isNaN(a) && Number.isNaN(b) && Number.isNaN(c) && Number.isNaN(d)) continue;
+        return null; // a cliff edge or overhang lip: treat as not walkable
+      }
+      const y = (a * (1 - fx) + b * fx) * (1 - fz) + (c * (1 - fx) + d * fx) * fz;
+      const dx = (b - a) * (1 - fz) + (d - c) * fz, dz = (c - a) * (1 - fx) + (d - b) * fx;
+      return { y: cy * CHUNK + y, ny: 1 / Math.hypot(dx, 1, dz) };
     }
-    return out;
+    return null;
   }
 
   meshes() {
@@ -207,6 +238,7 @@ export class World {
     for (let z = z0; z <= z0 + 2 * r + 1; z++)
       for (let y = y0; y <= y0 + 2 * r + 1; y++)
         for (let x = x0; x <= x0 + 2 * r + 1; x++) {
+          if (sign < 0 && y < BEDROCK_Y) continue; // bedrock
           const dist = Math.hypot(x - center.x, y - center.y, z - center.z);
           if (dist > radius) continue;
           const fall = 1 - dist / radius;
@@ -240,22 +272,25 @@ export class World {
 
   /** Gather edits from the up-to-27 owner chunks overlapping this chunk's padded grid. */
   private paddedEdits(cx: number, cy: number, cz: number): Float32Array | null {
+    const table: (Float32Array | undefined)[] = new Array(27);
     let any = false;
-    for (let dz = -1; dz <= 1 && !any; dz++)
-      for (let dy = -1; dy <= 1 && !any; dy++)
-        for (let dx = -1; dx <= 1 && !any; dx++)
-          if (this.edits.has(chunkKey(cx + dx, cy + dy, cz + dz))) any = true;
+    for (let dz = -1; dz <= 1; dz++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const e = this.edits.get(chunkKey(cx + dx, cy + dy, cz + dz));
+          table[(dx + 1) + (dy + 1) * 3 + (dz + 1) * 9] = e;
+          if (e) any = true;
+        }
     if (!any) return null;
     const out = new Float32Array(PAD * PAD * PAD);
     let idx = 0;
     for (let k = 0; k < PAD; k++) {
-      const z = cz * CHUNK + k - 1, ocz = floorDiv(z, CHUNK), lz = z - ocz * CHUNK;
+      const oz = (OWNER[k] + 1) * 9, lz = LOCAL[k] * CHUNK * CHUNK;
       for (let j = 0; j < PAD; j++) {
-        const y = cy * CHUNK + j - 1, ocy = floorDiv(y, CHUNK), ly = y - ocy * CHUNK;
+        const oy = (OWNER[j] + 1) * 3 + oz, ly = LOCAL[j] * CHUNK + lz;
         for (let i = 0; i < PAD; i++, idx++) {
-          const x = cx * CHUNK + i - 1, ocx = floorDiv(x, CHUNK), lx = x - ocx * CHUNK;
-          const e = this.edits.get(chunkKey(ocx, ocy, ocz));
-          if (e) out[idx] = e[lx + ly * CHUNK + lz * CHUNK * CHUNK];
+          const e = table[OWNER[i] + 1 + oy];
+          if (e) out[idx] = e[LOCAL[i] + ly];
         }
       }
     }

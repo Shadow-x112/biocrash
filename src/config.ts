@@ -15,7 +15,7 @@ export const COLLIDER_RADIUS = 1;
 /** Bump when the world generator changes so old saves are not misread. */
 export const GEN_VERSION = 1;
 /** Bump when the save format changes. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export const DIG_RADIUS = 2.2;
 export const DIG_STRENGTH = 3;

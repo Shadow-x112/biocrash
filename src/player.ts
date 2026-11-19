@@ -1,6 +1,7 @@
-// First-person survivor: pointer-lock mouse look, WASD, jump, Rapier character controller.
+// First-person survivor: mouse look, WASD, jump, sneak, Rapier character controller.
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
+import type { Input } from './input';
 
 const RADIUS = 0.35;
 const HALF_HEIGHT = 0.55;
@@ -14,23 +15,27 @@ export class Player {
   readonly position = new THREE.Vector3();
   yaw = 0;
   pitch = 0;
+  /** True while the ground under the player is still loading. */
   frozen = true;
-  /** Fallback when pointer lock is blocked (e.g. inside an embedded page): drag with the mouse to look. */
+  /** Fallback when pointer lock is blocked: drag with the mouse to look. */
   dragLook = false;
   /** Multiplier on walk/run speed (cold slows you down). */
   speedMul = 1;
-  /** Holding Ctrl: lower, slower and quieter (creatures notice you later). */
+  /** Holding C: lower, slower and quieter (creatures notice you later). */
   crouching = false;
+  sensitivity = 0.0022;
   private eyeOffset = EYE;
-  private dragging = false;
   private velY = 0;
   private grounded = false;
-  private keys = new Set<string>();
+  private dragging = false;
   private body: RAPIER.RigidBody;
   private collider: RAPIER.Collider;
   private controller: RAPIER.KinematicCharacterController;
+  private forward = new THREE.Vector3();
+  private right = new THREE.Vector3();
+  private move = new THREE.Vector3();
 
-  constructor(rapier: typeof RAPIER, physics: RAPIER.World, private camera: THREE.PerspectiveCamera) {
+  constructor(rapier: typeof RAPIER, physics: RAPIER.World, private camera: THREE.PerspectiveCamera, private input: Input) {
     this.body = physics.createRigidBody(rapier.RigidBodyDesc.kinematicPositionBased());
     this.collider = physics.createCollider(rapier.ColliderDesc.capsule(HALF_HEIGHT, RADIUS), this.body);
     this.controller = physics.createCharacterController(0.02);
@@ -41,15 +46,13 @@ export class Player {
     this.controller.enableAutostep(0.45, 0.2, false);
     this.controller.enableSnapToGround(0.4);
 
-    window.addEventListener('keydown', (e) => this.keys.add(e.code));
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
     window.addEventListener('mousedown', (e) => { if (e.button === 0) this.dragging = true; });
     window.addEventListener('mouseup', (e) => { if (e.button === 0) this.dragging = false; });
     window.addEventListener('mousemove', (e) => {
+      if (!this.input.enabled) return;
       if (document.pointerLockElement === null && !(this.dragLook && this.dragging)) return;
-      this.yaw -= e.movementX * 0.0022;
-      this.pitch -= e.movementY * 0.0022;
+      this.yaw -= e.movementX * this.sensitivity;
+      this.pitch -= e.movementY * this.sensitivity;
       this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
     });
   }
@@ -61,32 +64,32 @@ export class Player {
     this.velY = 0;
   }
 
-  isDown(code: string) { return this.keys.has(code); }
-
   update(dt: number) {
+    const inp = this.input;
     // Arrow keys also look around, so the game is playable without mouse capture.
     const turn = 2.2 * dt;
-    if (this.keys.has('ArrowLeft')) this.yaw += turn;
-    if (this.keys.has('ArrowRight')) this.yaw -= turn;
-    if (this.keys.has('ArrowUp')) this.pitch = Math.min(1.55, this.pitch + turn);
-    if (this.keys.has('ArrowDown')) this.pitch = Math.max(-1.55, this.pitch - turn);
-    if (!this.frozen) {
-      const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-      const right = new THREE.Vector3(-forward.z, 0, forward.x);
-      const move = new THREE.Vector3();
-      if (this.keys.has('KeyW')) move.add(forward);
-      if (this.keys.has('KeyS')) move.sub(forward);
-      if (this.keys.has('KeyD')) move.add(right);
-      if (this.keys.has('KeyA')) move.sub(right);
-      this.crouching = this.keys.has('ControlLeft') || this.keys.has('ControlRight');
-      const pace = this.crouching ? WALK * 0.45 : this.keys.has('ShiftLeft') ? RUN : WALK;
-      if (move.lengthSq() > 0) move.normalize().multiplyScalar(pace * this.speedMul);
+    if (inp.down('lookLeft')) this.yaw += turn;
+    if (inp.down('lookRight')) this.yaw -= turn;
+    if (inp.down('lookUp')) this.pitch = Math.min(1.55, this.pitch + turn);
+    if (inp.down('lookDown')) this.pitch = Math.max(-1.55, this.pitch - turn);
 
-      if (this.grounded && this.keys.has('Space')) this.velY = JUMP;
+    if (!this.frozen) {
+      this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+      this.right.set(-this.forward.z, 0, this.forward.x);
+      this.move.set(0, 0, 0);
+      if (inp.down('forward')) this.move.add(this.forward);
+      if (inp.down('back')) this.move.sub(this.forward);
+      if (inp.down('right')) this.move.add(this.right);
+      if (inp.down('left')) this.move.sub(this.right);
+      this.crouching = inp.down('sneak');
+      const pace = this.crouching ? WALK * 0.45 : inp.down('run') ? RUN : WALK;
+      if (this.move.lengthSq() > 0) this.move.normalize().multiplyScalar(pace * this.speedMul);
+
+      if (this.grounded && inp.down('jump')) this.velY = JUMP;
       this.velY -= GRAVITY * dt;
       if (this.grounded && this.velY < 0) this.velY = -2; // keep pressed to the ground on slopes
 
-      const desired = { x: move.x * dt, y: this.velY * dt, z: move.z * dt };
+      const desired = { x: this.move.x * dt, y: this.velY * dt, z: this.move.z * dt };
       this.controller.computeColliderMovement(this.collider, desired);
       const out = this.controller.computedMovement();
       this.grounded = this.controller.computedGrounded();

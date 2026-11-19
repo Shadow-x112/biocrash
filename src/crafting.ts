@@ -20,5 +20,5 @@ export const RECIPES: Recipe[] = [
   { id: 'spear', makes: 'spear', amount: 1, tool: true, cost: { stalkwood: 2, stone: 1, cordage: 1 },
     blurb: 'A reach weapon for hunting and defense.' },
   { id: 'campfire', makes: 'campfire', amount: 1, cost: { stalkwood: 4, stone: 5 },
-    blurb: 'Heat and light for the night. Build it with C while looking at the ground.' },
+    blurb: 'Heat and light for the night. Build it with B while looking at the ground.' },
 ];

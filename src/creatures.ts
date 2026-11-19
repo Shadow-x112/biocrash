@@ -251,11 +251,13 @@ export class Fauna {
   private trailAge: number[] = [];
   private trailNext = 0;
   private spawnTimer = 0;
-  private ray = new THREE.Raycaster();
   private m4 = new THREE.Matrix4();
-  private down = new THREE.Vector3(0, -1, 0);
 
-  constructor(private columnMeshes: (x: number, z: number) => THREE.Mesh[]) {
+  /** Ground height and slope under a point, from the terrain's height grids (no raycasts). */
+  readonly ground: (x: number, z: number, nearY: number) => { y: number; ny: number } | null;
+
+  constructor(groundAt: (x: number, z: number) => { y: number; ny: number } | null) {
+    this.ground = (x, z) => groundAt(x, z);
     const g = new THREE.CircleGeometry(0.22, 8).rotateX(-Math.PI / 2);
     const m = new THREE.MeshBasicMaterial({ color: COOL_GLOW, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending });
     this.trail = new THREE.InstancedMesh(g, m, 60);
@@ -264,15 +266,6 @@ export class Fauna {
     this.trail.frustumCulled = false;
     this.group.add(this.trail);
   }
-
-  /** Ground height and slope under a point (probes the chunk column). */
-  ground = (x: number, z: number, nearY: number) => {
-    this.ray.set(new THREE.Vector3(x, nearY + 2.5, z), this.down);
-    this.ray.far = 8;
-    const hit = this.ray.intersectObjects(this.columnMeshes(x, z), false)[0];
-    if (!hit || !hit.face) return null;
-    return { y: hit.point.y, ny: hit.face.normal.y };
-  };
 
   private addTrail(p: THREE.Vector3) {
     const i = this.trailNext++ % 60;
@@ -291,6 +284,13 @@ export class Fauna {
 
   private remove(c: Creature) {
     this.group.remove(c.root);
+    // Each creature owns its geometries and materials: free them so long sessions don't leak GPU memory.
+    c.root.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.dispose();
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+      }
+    });
     this.list.splice(this.list.indexOf(c), 1);
   }
 
@@ -303,7 +303,7 @@ export class Fauna {
       if (want) {
         const a = Math.random() * Math.PI * 2, d = 25 + Math.random() * 40;
         const x = player.x + Math.cos(a) * d, z = player.z + Math.sin(a) * d;
-        const g = this.ground(x, z, player.y + 20) ?? this.ground(x, z, player.y);
+        const g = this.ground(x, z, player.y);
         if (g && g.ny > 0.7) {
           const n = want === 'oomi' ? 1 + Math.floor(Math.random() * 2) : 1; // Oomi wander in pairs
           for (let i = 0; i < n; i++) this.spawn(want, new THREE.Vector3(x + i * 1.5, g.y, z + i));
