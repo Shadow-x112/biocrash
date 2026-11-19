@@ -16,6 +16,7 @@ import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX } from './campfire';
 import { Audio } from './audio';
 import { Particles } from './particles';
+import { Horror } from './horror';
 import { SaveStore, type SaveMeta } from './save';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION, MIN_CY } from './config';
 
@@ -73,6 +74,7 @@ async function main() {
   const player = new Player(RAPIER, physics, camera, input);
   const audio = new Audio();
   const particles = new Particles(scene);
+  const horror = new Horror(audio, scene);
   // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
   const rockyUnderfoot = () => { const g = world.groundAt(player.position.x, player.position.z); return !g || g.ny < 0.8 || player.position.y < g.y - 2; };
   player.onStep = (run, sneak) => audio.footstep(run, sneak, rockyUnderfoot());
@@ -159,7 +161,7 @@ async function main() {
     if (s !== 'playing') input.release();
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
-    if (s === 'craft') renderCraft();
+    if (s === 'craft') { renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
     if (s !== 'playing') $('prompt').textContent = '';
     audio.setWorldPaused(s !== 'playing' && s !== 'dead');
   };
@@ -269,7 +271,7 @@ async function main() {
     const r = RECIPES.find((x) => x.id === (e.target as HTMLElement).dataset.r);
     if (!r || r.makes === 'campfire') return;
     if (!inventory.take(r.cost)) { audio.deny(); return; }
-    audio.craft();
+    if (audio.has('ui_3')) audio.playAny('ui', 6, { bus: 'ui', gain: 0.8 }); else audio.craft();
     const first = inventory.counts[r.makes] === 0;
     inventory.add(r.makes, r.amount);
     if (r.tool && first) hotbar.select(r.makes as Slot, () => true); // equip your first one
@@ -325,7 +327,8 @@ async function main() {
       const got: string[] = [];
       for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { inventory.add(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
-      audio.chop(t.c.position);
+      if (audio.has('tear')) { audio.play('tear', { pos: t.c.position, offset: Math.random() * 9, dur: 1.4, gain: 0.9 }); audio.play('crunch', { pos: t.c.position, gain: 0.6, delay: 0.25 }); }
+      else audio.chop(t.c.position);
       particles.burst(t.c.hitCentre(), 10, 0x7a3a3a, { speed: 2 });
       flash(`Harvested ${got.join(', ')}.`);
     } else if (t.kind === 'prop') {
@@ -367,6 +370,7 @@ async function main() {
     const at = c.hitCentre();
     if (hit) {
       audio.hit(at, !c.alive);
+      if (!c.alive) audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 });
       particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
       player.shake(c.alive ? 0.25 : 0.45);
     } else if (c.state === 'curl') { audio.shellClack(at); particles.burst(at, 4, 0xffffff, { speed: 4, size: 0.03, life: 0.3 }); }
@@ -424,7 +428,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, getState: () => state } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, getState: () => state } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
@@ -439,6 +443,11 @@ async function main() {
     $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
+    if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
+      $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
+      $('hpv').textContent = String(Math.floor(Math.random() * 999));
+      $('heatlabel').textContent = Math.random() < 0.5 ? 'Body heat' : 'B\u0336ody h\u0336eat';
+    }
   };
 
   // --- Sounds the world makes on its own: fires, creatures, your body when it's in trouble ---------
@@ -519,6 +528,13 @@ async function main() {
       hotbar.update(dt, input.moving);
       particles.update(dt);
       worldSounds(dt);
+      if (state === 'playing') {
+        let fireNear = 0;
+        for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
+        const g = world.groundAt(camera.position.x, camera.position.z);
+        horror.update({ dt, camera, night: sky.night, daylight: sky.daylight, fireNear, warmth: survival.warmth, health: survival.health,
+          underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint });
+      }
 
       // Held dig/fill (mouse or R/F): attacks a creature in reach, otherwise shapes the terrain.
       const dig = input.down('dig'), fill = input.down('fill');
@@ -534,6 +550,11 @@ async function main() {
     }
 
     audio.updateListener(camera);
+    audio.updateLoops();
+    renderer.toneMappingExposure = horror.exposure;
+    const fog = scene.fog as THREE.Fog;
+    fog.far = CHUNK * VIEW_RADIUS * (1 - sky.night * 0.4 - horror.level * 0.15);
+    fog.near = fog.far * (0.55 - sky.night * 0.25);
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.render(scene, camera);
@@ -553,7 +574,7 @@ async function main() {
           `chunks ${world.stats.loaded}  queued ${world.stats.queued}  mesh ${world.stats.meshMs.toFixed(1)} ms\n` +
           `tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  draws ${renderer.info.render.calls}  geos ${renderer.info.memory.geometries}\n` +
           `ms  world ${prof.world.toFixed(2)}  physics ${prof.physics.toFixed(2)}  sim ${prof.sim.toFixed(2)}  render ${prof.render.toFixed(2)}\n` +
-          `props ${props.count}  creatures ${fauna.list.length}\n` +
+          `props ${props.count}  creatures ${fauna.list.length}  sounds ${audio.sampleCount}  unease ${horror.level.toFixed(2)}\n` +
           `pos ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}${player.frozen ? '  (loading ground…)' : ''}\n` +
           `time ${sky.clock()}${sky.speed > 1 ? ' (fast)' : ''}  edited chunks ${world.edits.size}  last save ${lastSaveMs.toFixed(1)} ms\n` +
           `seed ${seed}  ${state}${store.owner ? '' : '  (read-only tab)'}`;

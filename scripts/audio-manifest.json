@@ -1,0 +1,410 @@
+[
+ {
+  "id": "bed_day",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Environment Elements\\DSGNSrce_ENVIRONMENT-Ambience Element 01_Ocular_Aberration_Ebmin.wav",
+  "start": 0,
+  "dur": 45,
+  "mono": false,
+  "gain": 0.5
+ },
+ {
+  "id": "bed_night",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Drones and Texture Elements\\DSGNSrce_DRONE-Drone Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 45,
+  "mono": false,
+  "gain": 0.6
+ },
+ {
+  "id": "bed_dread",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Watching You\\DSGNSrce_TEXTURE-Watching You Static_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 45,
+  "mono": false,
+  "gain": 0.6
+ },
+ {
+  "id": "bed_cave",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Environment Elements\\DSGNSrce_ENVIRONMENT-Ambience Element 05_Ocular_Aberration_Emin.wav",
+  "start": 0,
+  "dur": 45,
+  "mono": false,
+  "gain": 0.6
+ },
+ {
+  "id": "earth_farm",
+  "src": "The-Provence\\The Provence\\The Provence - Ambience Loops\\AMBFarm_FARM-Day Ambience Farm Loop 01_Ocular_The Provence.wav",
+  "start": 20,
+  "dur": 24,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "earth_woods",
+  "src": "The-Provence\\The Provence\\The Provence - Ambience Loops\\AMBForst_WOODS-Day Ambience Woodland Loop 07_Ocular_The Provence.wav",
+  "start": 20,
+  "dur": 24,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "breathing",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Watching You\\DSGNSrce_TEXTURE-Watching You Breathing_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 20,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "whisper",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Back Track\\DSGNSrce_TEXTURE-Back Track Whisper_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 16,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "receiver",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Texture Stems\\Back Track\\DSGNSrce_TEXTURE-Back Track Receiver_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 16,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_4",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 04_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_5",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 05_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "growl_6",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Growl Element 06_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "moan_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Moan Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 7,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "moan_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Mutant Elements\\MOVECrea_MUTANT-Moan Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 7,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "loon",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Misc Elements\\WHSTMech_MISC-Artificial Loon Bird Call_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "metal_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Transition Elements\\DSGNSrce_TRANSITION-Bowed Metal Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "metal_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Transition Elements\\DSGNSrce_TRANSITION-Bowed Metal Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "metal_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Transition Elements\\DSGNSrce_TRANSITION-Bowed Metal Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "scrape",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Misc Elements\\METLMvmt_MISC-Metallic Scrape_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "static",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Distorted Static Signal Element_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 4,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "disrupt_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Electronic Disruptor Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "disrupt_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Electronic Disruptor Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "disrupt_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Electronic Disruptor Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "disrupt_4",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Disruptor Elements\\DSGNSrce_DISRUPTOR-Electronic Disruptor Element 04_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "sting_shadows",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Jump Scare Stems\\Stingers\\Shadows\\DSGNSrce_JUMP SCARE-Shadows Force Stem_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "sting_from_below",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Jump Scare Stems\\Stingers\\From Below\\DSGNSrce_JUMP SCARE-From Below Force Stem_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "sting_taken",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Jump Scare Stems\\Stingers\\Taken\\DSGNSrce_JUMP SCARE-Taken Force Stem_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "sting_lights_out",
+  "src": "Puncture-Construction-Kit\\Puncture\\Puncture - Construction Kits\\Jump Scare Stems\\Stingers\\Lights Out\\DSGNSrce_JUMP SCARE-Lights Out Force Stem_Puncture_Ocular.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "riser_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Riser Elements\\DSGNSrce_RISER-Reverse Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "riser_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Riser Elements\\DSGNSrce_RISER-Reverse Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "riser_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Riser Elements\\DSGNSrce_RISER-Reverse Element 03_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 6,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "subdrop",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Low End Elements\\DSGNSrce_LOW END-Sub Drop Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 5,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "rumble_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Low End Elements\\DSGNSrce_LOW END-Rumble Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "rumble_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Low End Elements\\DSGNSrce_LOW END-Rumble Element 02_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "lowstring_1",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Dark Elements\\MUSCInst_DARK-Low String Element 01_Ocular_Aberration_Dbmaj.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "lowstring_2",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Dark Elements\\MUSCInst_DARK-Low String Element 02_Ocular_Aberration_Bb.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "lowstring_3",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Dark Elements\\MUSCInst_DARK-Low String Element 03_Ocular_Aberration_Bb.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "friction",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Dark Elements\\MUSCInst_DARK-Friction Moan Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 10,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "horn",
+  "src": "Aberration-Construction-Kit\\Aberration\\Aberration - Construction Kits\\Horn Elements\\HORNMisc_HORN-Horn Element 01_Ocular_Aberration.wav",
+  "start": 0,
+  "dur": 8,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "tear",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Processed Extras\\GORESrce_PROCESSED-Extended Wet Tear Textures_Ocular_Carnage.wav",
+  "start": 5,
+  "dur": 12,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "meat_drop",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Meat Drop Impacts 01_Ocular_Carnage.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "crunch",
+  "src": "Carnage-Construction-Kit\\Carnage\\Carnage - Construction Kits\\Source Recordings\\Meat\\96kHz\\GORESrce_SOURCE RECORDINGS-Chicken Crushed and Snapped_Ocular_Carnage.wav",
+  "start": 0,
+  "dur": 3,
+  "mono": true,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_1",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 01_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_2",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 02_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_3",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 03_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_4",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 04_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_5",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 05_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ },
+ {
+  "id": "ui_6",
+  "src": "Next-Gen-UI-Construction-Kit\\Next-Gen UI\\Next-Gen UI - Construction Kits\\UI Elements B\\UIMvmt_UI ELEMENTS-UI Elements B 06_Ocular_NEXT-GEN UI.wav",
+  "start": 0,
+  "dur": 2,
+  "mono": false,
+  "gain": 1.0
+ }
+]

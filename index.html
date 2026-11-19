@@ -33,6 +33,13 @@
               background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(150,10,10,0.6) 100%); }
       #inv .row.got { color: #ffd27a; transition: none; }
       #inv .row { transition: color 0.8s; }
+      #unease { position: fixed; inset: 0; pointer-events: none; opacity: 0;
+                background: radial-gradient(ellipse at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%); }
+      #static { position: fixed; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: screen;
+                background: repeating-linear-gradient(0deg, rgba(255,255,255,0.12) 0 1px, rgba(0,0,0,0) 1px 3px),
+                            repeating-linear-gradient(90deg, rgba(180,200,220,0.08) 0 2px, rgba(0,0,0,0) 2px 5px);
+                animation: jitter 0.08s steps(2) infinite; }
+      @keyframes jitter { 0% { transform: translate(0,0); } 50% { transform: translate(-3px,2px); } 100% { transform: translate(2px,-1px); } }
       #death { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none;
                background: rgba(10,16,24,0.6); color: #dbe7f2; font: 600 28px system-ui, sans-serif; letter-spacing: 0.04em; }
       #prompt { position: fixed; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); color: #fff;
@@ -64,7 +71,7 @@
   </head>
   <body>
     <div id="hud"></div>
-    <div id="frost"></div><div id="hurt"></div>
+    <div id="frost"></div><div id="hurt"></div><div id="unease"></div><div id="static"></div>
     <div id="vitals">
       <div class="row"><span>Health</span><span id="hpv"></span></div>
       <div class="bar" id="hp"><div></div></div>

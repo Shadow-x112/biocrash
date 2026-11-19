@@ -8,7 +8,7 @@ interface Palette { zenith: THREE.Color; horizon: THREE.Color; hemiSky: THREE.Co
 const pal = (z: number, h: number, hs: number, hg: number, hemi: number): Palette => ({
   zenith: new THREE.Color(z), horizon: new THREE.Color(h), hemiSky: new THREE.Color(hs), hemiGround: new THREE.Color(hg), hemi,
 });
-const NIGHT = pal(0x04070f, 0x0e1626, 0x2a3a5c, 0x0a0a10, 0.22);
+const NIGHT = pal(0x020409, 0x070b14, 0x1c2840, 0x050508, 0.1); // dark nights: firelight matters
 const DUSK = pal(0x27305a, 0xd9825a, 0xb49aa8, 0x3a2c22, 0.75);
 const DAY = pal(0x4f86c2, 0xb8d2e5, 0xcfe3f2, 0x2a241e, 0.7);
 
@@ -112,7 +112,7 @@ export class Sky {
     this.sun.color.copy(this.tmp.setRGB(1, 0.62, 0.38)).lerp(new THREE.Color(1, 0.95, 0.86), dayW);
     const moonDir = this.uniforms.moonDir.value.copy(this.sunDir).multiplyScalar(-1).add(new THREE.Vector3(0.3, 0.25, -0.2)).normalize();
     this.uniforms.moon2Dir.value.copy(moonDir).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.9).add(new THREE.Vector3(0, -0.15, 0)).normalize();
-    this.moon.intensity = 0.55 * nightW * THREE.MathUtils.smoothstep(moonDir.y, -0.05, 0.15);
+    this.moon.intensity = 0.32 * nightW * THREE.MathUtils.smoothstep(moonDir.y, -0.05, 0.15);
 
     this.uniforms.sunDir.value.copy(this.sunDir);
     this.uniforms.night.value = nightW;

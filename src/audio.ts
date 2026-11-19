@@ -17,6 +17,10 @@ export class Audio {
   private insectTimer = 0;
   private last = new Map<string, number>(); // per-sound cooldowns
   volumes = { master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8 };
+  /** Recorded sounds (Ocular Sounds library), decoded once the context exists. */
+  private samples = new Map<string, { buf: AudioBuffer; gain: number }>();
+  private sampleList: Record<string, { file: string; gain: number; loop: boolean }> | null = null;
+  private loops: Loop[] = [];
 
   /** Call from a click handler. Safe to call repeatedly. */
   unlock() {
@@ -35,7 +39,80 @@ export class Audio {
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     this.startAmbience();
+    void this.loadSamples();
   }
+
+  /** Fetches and decodes the recorded sounds in the background; the game plays without them until they arrive. */
+  private async loadSamples() {
+    try {
+      const res = await fetch('audio/manifest.json');
+      if (!res.ok) return;
+      this.sampleList = await res.json();
+      await Promise.all(Object.entries(this.sampleList!).map(async ([id, s]) => {
+        try {
+          const data = await (await fetch(s.file)).arrayBuffer();
+          this.samples.set(id, { buf: await this.ctx!.decodeAudioData(data), gain: s.gain });
+        } catch { /* a missing sound just stays silent */ }
+      }));
+    } catch { /* no recorded sounds in this build */ }
+  }
+
+  has(id: string) { return this.samples.has(id); }
+  get sampleCount() { return this.samples.size; }
+
+  /** Plays a recorded sound once. offset/dur play a slice of a longer file. Returns the gain node (for fades) or null. */
+  play(id: string, o: { pos?: V3; gain?: number; rate?: number; bus?: 'sfx' | 'ui' | 'amb'; hrtf?: boolean; offset?: number; dur?: number; fadeIn?: number; delay?: number } = {}) {
+    const s = this.samples.get(id), ctx = this.ctx;
+    if (!s || !ctx) return null;
+    const t = ctx.currentTime + (o.delay ?? 0);
+    const src = ctx.createBufferSource();
+    src.buffer = s.buf;
+    src.playbackRate.value = o.rate ?? 1;
+    const g = ctx.createGain();
+    const level = s.gain * (o.gain ?? 1);
+    if (o.fadeIn) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, level), t + o.fadeIn); }
+    else g.gain.value = level;
+    src.connect(g).connect(this.out(o.bus === 'ui' ? this.ui : o.bus === 'amb' ? this.amb : this.sfx, o.pos, o.hrtf));
+    const offset = o.offset ?? 0;
+    if (o.dur) {
+      const end = t + o.dur / (o.rate ?? 1);
+      g.gain.setValueAtTime(level, Math.max(t, end - 0.15));
+      g.gain.linearRampToValueAtTime(0, end);
+      src.start(t, offset, o.dur + 0.05);
+    } else src.start(t, offset);
+    return { gain: g, src };
+  }
+
+  /** Picks one of several numbered variants (growl_1..growl_6). */
+  playAny(prefix: string, n: number, o: Parameters<Audio['play']>[1] = {}) {
+    return this.play(`${prefix}_${1 + Math.floor(Math.random() * n)}`, o);
+  }
+
+  /** A seamlessly crossfading loop whose level follows setLevel(). */
+  loop(id: string, bus: 'amb' | 'sfx' = 'amb') {
+    const l = new Loop(this, id, bus);
+    this.loops.push(l);
+    return l;
+  }
+
+  /** @internal used by Loop */
+  startLoopVoice(id: string, out: GainNode, fade: number) {
+    const s = this.samples.get(id), ctx = this.ctx;
+    if (!s || !ctx) return null;
+    const src = ctx.createBufferSource();
+    src.buffer = s.buf;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(s.gain, t + fade);
+    src.connect(g).connect(out);
+    const offset = fade > 0.5 ? Math.random() * Math.max(0, s.buf.duration * 0.5) : 0;
+    src.start(t, offset);
+    return { src, g, startedAt: t, dur: s.buf.duration - offset };
+  }
+
+  /** @internal */
+  busNode(bus: 'amb' | 'sfx') { return bus === 'amb' ? this.amb : this.sfx; }
 
   applyVolumes() {
     if (!this.ctx) return;
@@ -246,6 +323,9 @@ export class Audio {
     hsrc.start();
   }
 
+  /** Called each frame by the game to keep loops crossfading. */
+  updateLoops() { for (const l of this.loops) l.tick(); }
+
   /** Called each frame: wind follows the time of day and altitude; insects chirp at night. */
   updateAmbience(dt: number, night: number, altitude: number, listener: V3) {
     if (!this.ctx || !this.wind || !this.hum) return;
@@ -263,6 +343,53 @@ export class Audio {
       const f = 3200 + Math.random() * 1400;
       for (let i = 0; i < 3 + Math.floor(Math.random() * 4); i++)
         this.tone({ dur: 0.035, freq: f, gain: 0.025 * this.nightLevel, bus: 'amb', pos, delay: i * 0.06 });
+    }
+  }
+}
+
+/** A looping bed that crossfades into a fresh copy of itself before the file ends, so short recordings never click or gap. */
+export class Loop {
+  private out: GainNode | null = null;
+  private voices: { src: AudioBufferSourceNode; g: GainNode; startedAt: number; dur: number }[] = [];
+  private level = 0;
+  constructor(private audio: Audio, private id: string, private bus: 'amb' | 'sfx') {}
+
+  /** Target level 0..1 (smoothed over `tc` seconds). */
+  setLevel(level: number, tc = 1.5) {
+    this.level = level;
+    const ctx = this.audio.ctx;
+    if (!ctx) return;
+    if (!this.out) { this.out = ctx.createGain(); this.out.gain.value = 0; this.out.connect(this.audio.busNode(this.bus)); }
+    this.out.gain.setTargetAtTime(level, ctx.currentTime, tc);
+  }
+
+  tick() {
+    const ctx = this.audio.ctx;
+    if (!ctx || !this.out) return;
+    const now = ctx.currentTime;
+    // Silent for a while: stop the voices to save work; they restart when the level comes back.
+    if (this.level < 0.002 && this.out.gain.value < 0.002) {
+      for (const v of this.voices) v.src.stop();
+      this.voices = [];
+      return;
+    }
+    const cur = this.voices[this.voices.length - 1];
+    const fade = 2.5;
+    if (!cur) {
+      const v = this.audio.startLoopVoice(this.id, this.out, 0.1);
+      if (v) this.voices.push(v);
+      return;
+    }
+    const remaining = cur.dur - (now - cur.startedAt);
+    if (remaining < Math.min(fade, cur.dur / 3)) {
+      const f = Math.min(fade, cur.dur / 3);
+      cur.g.gain.cancelScheduledValues(now);
+      cur.g.gain.setValueAtTime(cur.g.gain.value, now);
+      cur.g.gain.linearRampToValueAtTime(0, now + f);
+      cur.src.stop(now + f + 0.05);
+      const v = this.audio.startLoopVoice(this.id, this.out, f);
+      if (v) this.voices.push(v);
+      setTimeout(() => { this.voices = this.voices.filter((x) => x !== cur); }, (f + 0.2) * 1000);
     }
   }
 }
