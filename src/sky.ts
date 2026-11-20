@@ -42,6 +42,7 @@ const frag = /* glsl */ `
     float st = step(0.9965, hash(cell)) * hash(cell + 7.0);
     col += vec3(st) * night * smoothstep(0.02, 0.25, d.y) * (1.0 - m1);
     gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }`;
 
@@ -50,6 +51,7 @@ export class Sky {
   time = 0.3;
   speed = 1;
   readonly sun = new THREE.DirectionalLight(0xfff1dc, 3);
+  private snap = new THREE.Vector3();
   /** Sun and moon are never both meaningful, so one directional light plays whichever is up (one light fewer on every
    *  pixel, and no shader recompiles: the light count never changes). */
   private moonCol = new THREE.Color(0x9fb4e0);
@@ -128,7 +130,9 @@ export class Sky {
     // Lights and dome follow the camera.
     const c = camera.position;
     this.dome.position.copy(c);
-    this.sun.position.copy(c).addScaledVector(moonUp ? moonDir : this.sunDir, 50);
-    this.sun.target.position.copy(c);
+    // Shadow centre snapped to a 0.25 m grid so the shadow map doesn't crawl as the player walks.
+    const s = this.snap.set(Math.round(c.x * 4) / 4, Math.round(c.y * 4) / 4, Math.round(c.z * 4) / 4);
+    this.sun.position.copy(s).addScaledVector(moonUp ? moonDir : this.sunDir, 50);
+    this.sun.target.position.copy(s);
   }
 }

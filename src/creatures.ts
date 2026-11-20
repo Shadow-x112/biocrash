@@ -1,6 +1,7 @@
 // First fauna (M1 step 5): Tuko and Oomi, two harmless species that test the creature setup.
 // Each creature runs a small state machine; the ground is found by probing the chunk meshes below it.
 import * as THREE from 'three';
+import { addRim } from './fx';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Cost } from './inventory';
 
@@ -138,6 +139,7 @@ export const SPECIES: Record<Species['id'], Species> = {
 
 type Built = { root: THREE.Group; legs: THREE.Object3D[]; body: THREE.Object3D; glow: THREE.MeshStandardMaterial; ball?: THREE.Object3D };
 const TEMPLATES = new Map<string, Built>();
+const CARCASS = new THREE.MeshStandardMaterial({ color: 0x3a2a2c, roughness: 1, flatShading: true });
 
 export class Creature {
   readonly root: THREE.Group;
@@ -155,6 +157,16 @@ export class Creature {
   private hurtFlash = 0;
   private speed = 0;
   harvested = false;
+  /** Seconds since it was stripped (-1: not yet). */
+  strippedT = -1;
+
+  /** Harvested: what's left is darker and flatter, and slowly sinks (removed after ~90 s). */
+  strip() {
+    this.harvested = true;
+    this.strippedT = 0;
+    this.root.traverse((o) => { if (o instanceof THREE.Mesh) o.material = CARCASS; });
+    this.root.scale.set(0.55, 1, 1); // it lies on its side (rotated about z), so local x is now height
+  }
   deadTime = 0;
   /** Oomi leave glowing trail spots as they walk. */
   private trailTimer = 0;
@@ -170,10 +182,12 @@ export class Creature {
       t.body.name = 'body';
       if (t.ball) t.ball.name = 'ball';
       t.legs.forEach((l, i) => { l.userData.leg = i; });
+      t.root.traverse((o) => { if (o instanceof THREE.Mesh && o.material !== t!.glow) addRim(o.material as THREE.Material); });
       TEMPLATES.set(species.id, t);
     }
     const tpl = t;
     this.root = tpl.root.clone(true);
+    this.root.traverse((o) => { o.castShadow = true; });
     this.glow = tpl.glow.clone();
     this.root.traverse((o) => { if (o instanceof THREE.Mesh && o.material === tpl.glow) o.material = this.glow; });
     this.body = this.root.getObjectByName('body')!;
@@ -219,7 +233,14 @@ export class Creature {
   update(dt: number, ctx: { player: THREE.Vector3; playerRunning: boolean; playerSneaking: boolean; night: number; ground: (x: number, z: number, y: number) => { y: number; ny: number } | null; trail: (p: THREE.Vector3) => void }) {
     this.gait += dt;
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
-    if (!this.alive) { this.deadTime += dt; return; }
+    if (!this.alive) {
+      this.deadTime += dt;
+      if (this.strippedT >= 0) { // a stripped carcass sinks into the moss over a minute and a half
+        this.strippedT += dt;
+        this.root.position.y = this.position.y - Math.min(1, this.strippedT / 90) * 0.35;
+      }
+      return;
+    }
 
     const sp = this.species;
     const toPlayer = this.position.distanceTo(ctx.player);
@@ -361,7 +382,7 @@ export class Fauna {
     for (const c of [...this.list]) {
       c.update(dt, { player, playerRunning, playerSneaking, night, ground: this.ground, trail: (p) => this.addTrail(p) });
       const far = c.position.distanceTo(player) > 110;
-      if (far || (!c.alive && (c.harvested || c.deadTime > 300))) this.remove(c);
+      if (far || (!c.alive && (c.strippedT > 90 || (c.harvested && c.strippedT < 0) || c.deadTime > 300))) this.remove(c);
     }
     // Trail spots fade over a minute.
     for (let i = 0; i < 60; i++) {

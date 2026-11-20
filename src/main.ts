@@ -58,10 +58,34 @@ async function main() {
   const sky = new Sky(scene);
   const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, CHUNK * (VIEW_RADIUS + 1));
   scene.add(camera); // the held tool is a child of the camera
-  const post = new Post(renderer, scene, camera);
+  // The held tool lives in its own little scene with its own camera (fixed 60° view, no fog), drawn over the world with
+  // the depth cleared: it never clips into terrain and doesn't stretch with the FOV setting. Its lights mirror the world's.
+  const hands = { scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 10) };
+  const handHemi = new THREE.HemisphereLight(), handSun = new THREE.DirectionalLight(), handFire = new THREE.PointLight(0xff9a4a, 0, 6, 1.6);
+  const handLamp = new THREE.PointLight(0xdff4ff, 0, 2, 1);
+  handLamp.position.set(0.2, -0.1, -0.2);
+  hands.scene.add(hands.camera, handHemi, handSun, handSun.target, handFire, handLamp);
+  const post = new Post(renderer, scene, camera, hands);
+  // Graphics quality. Low: no shadows, no MSAA. Medium: one 1024 sun/moon shadow (stalks, caps and creatures only cast).
+  // High: a 2048 shadow. The shadow follows the player over +-25 m and is redrawn every third frame.
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;
+  let shadowTick = 0;
+  const applyQuality = () => {
+    const q = settings.quality;
+    renderer.shadowMap.enabled = q >= 1;
+    sky.sun.castShadow = q >= 1;
+    const size = q >= 2 ? 2048 : 1024;
+    if (sky.sun.shadow.mapSize.x !== size) { sky.sun.shadow.mapSize.set(size, size); sky.sun.shadow.map?.dispose(); sky.sun.shadow.map = null; }
+    const cam = sky.sun.shadow.camera;
+    cam.left = cam.bottom = -25; cam.right = cam.top = 25; cam.near = 1; cam.far = 120; cam.updateProjectionMatrix();
+    sky.sun.shadow.bias = -0.0004; sky.sun.shadow.normalBias = 0.04;
+    post.setSamples(q >= 1 ? 4 : 0);
+  };
   renderer.info.autoReset = false;
   window.addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
+    camera.aspect = hands.camera.aspect = innerWidth / innerHeight;
+    hands.camera.updateProjectionMatrix();
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
     post.setSize(innerWidth, innerHeight);
@@ -112,8 +136,8 @@ async function main() {
   };
   player.onStep = (run, sneak) => audio.footstep(run, sneak, surfaceUnderfoot());
   player.onJump = () => audio.jump();
-  player.onLand = (impact) => audio.land(impact);
-  const hotbar = new Hotbar(camera);
+  const hotbar = new Hotbar(hands.camera);
+  player.onLand = (impact) => { audio.land(impact); hotbar.dip(Math.min(1, impact / 18)); };
   // The crash site: where a new world starts and where you recover after freezing.
   const spawnPoint = new THREE.Vector3(0.5, createGenerator(seed).surfaceHeight(0.5, 0.5) + 6, 0.5);
   if (meta?.player) {
@@ -208,6 +232,7 @@ async function main() {
     if (!captionsOn) captionsEl.innerHTML = '';
     compassEl.style.display = settings.compass ? '' : 'none';
     post.setEnabled(settings.post);
+    applyQuality();
     // With post-processing on, its vignette and grain replace the CSS overlays.
     for (const id of ['unease', 'static']) $(id).style.display = settings.post ? 'none' : '';
     if (k === 'resolution' || k === 'autoRes' || k === 'fov') { resScale = settings.resolution; applyRes(); } // 'fov' = the startup pass
@@ -592,7 +617,7 @@ async function main() {
     if (t.kind === 'creature') {
       if (t.c.alive || t.c.position.distanceTo(player.position) > USE_REACH + 1) return;
       if (inventory.counts.stone_knife <= 0) { flash('You need a stone knife to harvest.'); return; }
-      t.c.harvested = true;
+      t.c.strip();
       const got: string[] = [];
       for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { inventory.add(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
@@ -622,6 +647,12 @@ async function main() {
         inventory.add('stalkwood', got); hotbar.swing();
         audio.chop(t.s.base);
         particles.burst(t.s.base.clone().setY(t.s.base.y + 1.2), 8, 0xd9cfb8, { speed: 2.5 });
+        if (flora.toppled(t.s)) { // the last cut: it comes down in a puff of spores
+          particles.burst(t.s.base.clone().setY(t.s.base.y + 1), 26, 0x9fffe6, { speed: 3.5, life: 1.4 });
+          audio.dig(t.s.base, true);
+          player.shake(0.3);
+          flash('The stalk comes down.');
+        }
       } else flash('This stalk has been cut back as far as it goes.');
     }
   };
@@ -698,26 +729,58 @@ async function main() {
   };
   canvas.addEventListener('mousedown', () => wake('You get up.'));
 
+  /** The hand scene's lights follow the world's: sky colours, the sun or moon turned into the camera's frame, the
+   *  nearest burning fire, and the lamp as a fill. */
+  const camInv = new THREE.Quaternion(), tv = new THREE.Vector3();
+  const syncHandLights = () => {
+    camInv.copy(camera.quaternion).invert();
+    handHemi.color.copy(sky.hemi.color); handHemi.groundColor.copy(sky.hemi.groundColor); handHemi.intensity = sky.hemi.intensity;
+    handSun.color.copy(sky.sun.color); handSun.intensity = sky.sun.intensity;
+    handSun.position.copy(tv.subVectors(sky.sun.position, sky.sun.target.position).normalize().applyQuaternion(camInv)).multiplyScalar(5);
+    let near: THREE.Vector3 | null = null, nd = 14, str = 0;
+    for (const f of campfires.list) { const d = f.position.distanceTo(camera.position); if (f.lit && d < nd) { nd = d; near = f.position; str = f.heat.heatC / 62; } }
+    handFire.intensity = near ? 7 * str * Math.max(0, 1 - nd / 14) : 0;
+    if (near) handFire.position.copy(tv.copy(near).setY(near.y + 0.9).sub(camera.position)).applyQuaternion(camInv).normalize().multiplyScalar(1.5);
+    handLamp.intensity = lamp.intensity > 1 ? 0.6 : 0;
+  };
+
   const MAX_FIRES = 40;
-  const buildCampfire = () => {
-    const hit = aimAtTerrain(5);
-    if (!hit || hit.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
+  /** Why a campfire can't go where you're aiming ('' if it can). */
+  const placeProblem = (hit: { point: THREE.Vector3; normal: THREE.Vector3 } | null): string => {
+    if (!hit || hit.normal.y < 0.6) return 'Look at flat ground nearby to build a campfire.';
     // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
-    if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) { audio.deny(); flash('Too close to another fire.'); return; }
-    if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) { audio.deny(); flash('Step back a little to build here.'); return; }
-    if (campfires.list.length >= MAX_FIRES) {
-      // At the cap, the oldest cold fire pit is cleared to make room; if every fire is burning, refuse.
-      if (!campfires.list.some((f) => !f.lit && f.cooking.length === 0)) { audio.deny(); flash(`You have ${MAX_FIRES} fires burning already.`); return; }
-    }
-    if (!inventory.take(CAMPFIRE_COST)) {
-      audio.deny();
-      flash(`A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`);
-      return;
-    }
+    if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
+    if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) return 'Step back a little to build here.';
+    // At the cap, the oldest cold fire pit is cleared to make room; if every fire is burning, refuse.
+    if (campfires.list.length >= MAX_FIRES && !campfires.list.some((f) => !f.lit && f.cooking.length === 0)) return `You have ${MAX_FIRES} fires burning already.`;
+    if (!inventory.has(CAMPFIRE_COST)) return `A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`;
+    return '';
+  };
+  // Placement: the first press shows a see-through fire ring where it would go (green when it fits, red when not); a
+  // second press, or a click, builds it. Anything else, or 8 seconds, cancels.
+  const preview = campfires.makePreview();
+  scene.add(preview.group);
+  let placing = 0, digBlock = false;
+  const cancelPlacing = () => { placing = 0; preview.group.visible = false; };
+  const buildCampfire = () => {
+    if (!placing) { placing = 8; return; }
+    cancelPlacing();
+    const hit = aimAtTerrain(5);
+    const problem = placeProblem(hit);
+    if (problem || !hit) { audio.deny(); flash(problem); return; }
+    inventory.take(CAMPFIRE_COST);
     if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
     campfires.add(hit.point.clone());
     audio.fireLit(hit.point);
     flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
+  };
+  const updatePlacing = (dt: number) => {
+    if (!placing) return;
+    if ((placing -= dt) <= 0 || state !== 'playing') { cancelPlacing(); return; }
+    const hit = aimAtTerrain(5);
+    preview.group.visible = !!hit;
+    if (hit) { preview.group.position.copy(hit.point); preview.setOk(!placeProblem(hit)); }
+    promptEl.textContent = `${K('build')} or click: build here  \u00b7  ${placeProblem(hit) || 'fits'}`;
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */
   const pendingHits: { t: number; c: Creature }[] = [];
@@ -789,6 +852,7 @@ async function main() {
     if (state !== 'playing' || e.repeat) return;
     if (resting) { wake('You get up.'); return; }
     if (input.is(e.code, 'rest')) { rest(); return; }
+    if (placing && !input.is(e.code, 'build')) cancelPlacing(); // any other action cancels placement
     if (input.is(e.code, 'use')) use();
     else if (input.is(e.code, 'build')) buildCampfire();
     else if (input.is(e.code, 'eat')) food();
@@ -993,7 +1057,7 @@ async function main() {
       hitStop = Math.max(0, hitStop - dt);
       for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }
       fauna.update(simDt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
-      hotbar.update(simDt, input.moving);
+      hotbar.update(simDt, input.moving, { yaw: player.yaw, pitch: player.pitch });
       particles.update(simDt);
       updateLamp(dt, fireNearPlayer());
       horror.lampDir = lampOn && lamp.intensity > 1 ? camera.getWorldDirection(new THREE.Vector3()) : null;
@@ -1017,7 +1081,11 @@ async function main() {
 
       // Held dig/fill (mouse or R/F): attacks a creature in reach, otherwise shapes the terrain.
       const dig = input.down('dig'), fill = input.down('fill');
-      if ((dig || fill) && (actionCooldown -= dt) <= 0) {
+      updatePlacing(dt);
+      if (!dig) digBlock = false;
+      if (placing && dig && !digBlock) { buildCampfire(); digBlock = true; } // a click while placing builds instead of digging
+      else if (digBlock) { /* that click was the build: no digging until it's released */ }
+      else if ((dig || fill) && (actionCooldown -= dt) <= 0) {
         const prey = dig ? fauna.lookAt(camera, ATTACK[hotbar.slot].reach) : null;
         if (prey?.alive) { attack(prey); actionCooldown = 0.55; }
         else if (dig && hotbar.slot === 'spear') { hotbar.swing(); audio.swing(); actionCooldown = 0.55; } // a jab at nothing
@@ -1039,7 +1107,8 @@ async function main() {
     fxUniforms.uMist.value = Math.min(0.75, sky.night * 0.55 + horror.level * 0.3);
     fxUniforms.uMistTop.value = camera.position.y - 1.5;
     fxUniforms.uBreath.value = Math.min(1, sky.night * 0.6 + horror.level * 0.5);
-    post.update(horror.level, horror.glitch, horror.staticT);
+    fxUniforms.uRim.value.setRGB(0.05 * sky.daylight, 0.04 * sky.daylight + 0.07 * sky.night, 0.03 * sky.daylight + 0.065 * sky.night);
+    post.update(horror.level, horror.glitch, horror.staticT, sky.daylight, sky.night);
     const fog = scene.fog as THREE.Fog;
     fog.far = CHUNK * VIEW_RADIUS * (1 - sky.night * 0.4 - horror.level * 0.15);
     fog.near = fog.far * (0.55 - sky.night * 0.25);
@@ -1049,7 +1118,9 @@ async function main() {
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.info.reset(); // count every pass of the frame for the F3 readout
-    post.render(scene, camera, dt);
+    syncHandLights();
+    if (renderer.shadowMap.enabled && ++shadowTick % 3 === 0) renderer.shadowMap.needsUpdate = true;
+    post.render(scene, camera, dt, hands);
     smooth('render', performance.now() - tm);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;
     fps = fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
@@ -1070,7 +1141,7 @@ async function main() {
       uiTimer = 0.1;
       if (state === 'playing') {
         milestones();
-        target = queryTarget(); promptEl.textContent = promptFor(target);
+        target = queryTarget(); if (!placing) promptEl.textContent = promptFor(target);
         const cls = crosshairFor(target);
         if (crossEl.className !== cls) crossEl.className = cls;
       }

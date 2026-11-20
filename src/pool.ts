@@ -11,7 +11,7 @@ export class InstancePool {
   private dirtyBounds = true;
   private colored: boolean;
 
-  constructor(private geometry: THREE.BufferGeometry, private material: THREE.Material, private parent: THREE.Object3D, capacity = 512, colored = false) {
+  constructor(private geometry: THREE.BufferGeometry, private material: THREE.Material, private parent: THREE.Object3D, capacity = 512, colored = false, private castShadow = false) {
     this.colored = colored;
     this.mesh = this.make(capacity);
     parent.add(this.mesh);
@@ -21,6 +21,7 @@ export class InstancePool {
     const m = new THREE.InstancedMesh(this.geometry, this.material, capacity);
     m.count = 0;
     m.frustumCulled = false; // spans the whole loaded world; culling per pool would never cull anything
+    m.castShadow = this.castShadow;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     if (this.colored) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
     return m;
@@ -52,6 +53,13 @@ export class InstancePool {
     this.mesh.instanceMatrix.needsUpdate = true;
     this.dirtyBounds = true;
     return i;
+  }
+
+  /** Move or reshape an instance in place. */
+  set(i: number, matrix: THREE.Matrix4) {
+    this.mesh.setMatrixAt(i, matrix);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.dirtyBounds = true;
   }
 
   /** Hide an instance and give its slot back. */

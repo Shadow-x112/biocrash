@@ -62,6 +62,10 @@ export class Hotbar {
   private models = new Map<Slot, THREE.Group>();
   private swingT = 1;
   private bobT = 0;
+  private raiseT = 1;      // 0 -> 1 after switching tools: the new one comes up from below
+  private dipV = 0;        // landing dip
+  private lag = new THREE.Vector2(); // trails the mouse a little
+  private prevLook: { yaw: number; pitch: number } | null = null;
   onChange: () => void = () => {};
 
   constructor(camera: THREE.Camera) {
@@ -73,12 +77,13 @@ export class Hotbar {
       this.view.add(m);
     }
     this.view.position.set(0.26, -0.2, -0.42);
-    this.view.scale.setScalar(0.8);
+    this.view.scale.setScalar(0.66); // the hand camera's 60° view shows it larger than the old 75°
   }
 
   /** Select a slot if you own its tool. */
   select(s: Slot, owned: (id: ItemId) => boolean) {
     if (s !== 'hands' && !owned(s)) return false;
+    if (s !== this.slot) this.raiseT = 0;
     this.slot = s;
     for (const [k, m] of this.models) m.visible = k === s;
     this.onChange();
@@ -87,7 +92,23 @@ export class Hotbar {
 
   swing() { this.swingT = 0; }
 
-  update(dt: number, moving: boolean) {
+  /** A heavy landing pushes the hand down for a moment (0..1). */
+  dip(amount: number) { this.dipV = Math.max(this.dipV, amount * 0.08); }
+
+  update(dt: number, moving: boolean, look?: { yaw: number; pitch: number }) {
+    // Sway: the tool lags behind quick turns, then catches up.
+    if (look) {
+      if (this.prevLook && dt > 0) {
+        const dy = look.yaw - this.prevLook.yaw, dp = look.pitch - this.prevLook.pitch;
+        this.lag.x = THREE.MathUtils.clamp(this.lag.x + dy * 0.35, -0.06, 0.06);
+        this.lag.y = THREE.MathUtils.clamp(this.lag.y - dp * 0.35, -0.05, 0.05);
+      }
+      this.prevLook = { yaw: look.yaw, pitch: look.pitch };
+    }
+    this.lag.multiplyScalar(Math.max(0, 1 - dt * 9));
+    this.raiseT = Math.min(1, this.raiseT + dt / 0.18);
+    this.dipV *= Math.max(0, 1 - dt * 8);
+    const raise = 1 - (1 - this.raiseT) * (1 - this.raiseT); // ease out
     this.swingT = Math.min(1, this.swingT + dt * 3.2);
     this.bobT += dt * (moving ? 9 : 2);
     // Wind-up, a fast strike that lands at ~0.4 of the swing (about 0.12 s, when the hit registers), then recovery.
@@ -113,5 +134,8 @@ export class Hotbar {
         this.view.position.set(bx - s * 0.04, by - s * 0.04, bz - s * 0.12);
         this.view.rotation.set(-s * 0.5, 0, s * 0.15);
     }
+    this.view.position.x += this.lag.x;
+    this.view.position.y += this.lag.y - this.dipV - (1 - raise) * 0.3;
+    this.view.rotation.z += this.lag.x * 2;
   }
 }

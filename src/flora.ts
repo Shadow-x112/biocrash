@@ -1,11 +1,12 @@
 // Fungal forest flora: giant mushrooms you can harvest for stalkwood, glowing sprouts, and drifting
 // spores at night. Placement comes from the worker's decoration pass (unedited terrain, seeded per chunk).
 import * as THREE from 'three';
-import { addSway } from './fx';
+import { addSway, addRim } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
 
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 export const STALK_HARVESTS = 4;   // uses per mushroom
 export const STALK_YIELD = 2;      // stalkwood per use
 const SPOTS_PER = 7;
@@ -16,6 +17,8 @@ interface Shroom {
   collider: RAPIER.Collider | null;
   slots: { stalk: number; gill: number; cap: number; spots: number[] };
   alive: boolean;
+  /** Placement, kept so harvesting can rebuild the instances (shorter stalk, toppled at the end). */
+  q: THREE.Quaternion; capR: number; color: number; spin: number;
 }
 interface ChunkFlora {
   shrooms: Shroom[];
@@ -29,6 +32,7 @@ const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7af
 const CAP = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, flatShading: true }); // tinted per instance
 // Caps, gills and their glowing spots sway together (same world-space motion); sprouts bend from the base.
 for (const m of [CAP, GILLS, SPOTS]) addSway(m, 0.06);
+addRim(STALK);
 addSway(SPROUT, 0.1, true);
 const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.Color(c));
 
@@ -71,9 +75,9 @@ export class Flora {
   private dir = new THREE.Vector3();
 
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, private avoid: THREE.Vector3) {
-    this.stalks = new InstancePool(stalkGeo, STALK, this.group, 1024);
+    this.stalks = new InstancePool(stalkGeo, STALK, this.group, 1024, false, true);
     this.gills = new InstancePool(gillGeo, GILLS, this.group, 1024);
-    this.caps = new InstancePool(capGeo, CAP, this.group, 1024, true);
+    this.caps = new InstancePool(capGeo, CAP, this.group, 1024, true, true);
     this.spots = new InstancePool(spotGeo, SPOTS, this.group, 1024 * SPOTS_PER);
     this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
     const n = 260;
@@ -147,7 +151,10 @@ export class Flora {
       const collider = o.h > 5
         ? this.physics.createCollider(this.rapier.ColliderDesc.cylinder(o.h / 2, o.r * 0.85).setTranslation(o.p.x, o.p.y + o.h / 2, o.p.z))
         : null;
-      c.shrooms.push({ id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, collider, slots: { stalk, gill, cap, spots }, alive: true });
+      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, collider, slots: { stalk, gill, cap, spots }, alive: true,
+        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin };
+      c.shrooms.push(s);
+      if (this.harvested.get(s.id)) this.shape(s); // already cut: rebuild its harvested state
     }
 
     // Glowing sprouts.
@@ -189,7 +196,7 @@ export class Flora {
     this.ray.set(this.origin, this.dir);
     let best: Shroom | null = null, bestT = reach;
     for (const c of this.chunks.values()) for (const s of c.shrooms) {
-      if (!s.alive) continue;
+      if (!s.alive || this.usesLeft(s) <= 0) continue; // toppled stalks lie on the ground: nothing left to cut
       const dx = s.base.x - this.origin.x, dz = s.base.z - this.origin.z;
       if (dx * dx + dz * dz > (reach + 2) * (reach + 2)) continue; // cheap reject
       // Approximate the stalk as a sphere at eye height, clamped to the stalk's length.
@@ -208,7 +215,43 @@ export class Flora {
   harvest(s: Shroom) {
     if (this.usesLeft(s) <= 0) return 0;
     this.harvested.set(s.id, (this.harvested.get(s.id) ?? 0) + 1);
+    this.shape(s);
     return STALK_YIELD;
+  }
+
+  /** True once a mushroom has been cut all the way down (it lies toppled). */
+  toppled(s: Shroom) { return this.usesLeft(s) <= 0; }
+
+  /** Rebuilds a mushroom's instances for how often it's been cut: each cut takes ~18% off the stalk (the cap sinks
+   *  with it); the last one topples it: the stalk lies on the ground, the cap is gone. */
+  private shape(s: Shroom) {
+    const n = Math.min(STALK_HARVESTS, this.harvested.get(s.id) ?? 0);
+    const m = new THREE.Matrix4(), v = new THREE.Vector3(), sc = new THREE.Vector3(), top = new THREE.Vector3(), local = new THREE.Vector3();
+    if (n >= STALK_HARVESTS) {
+      // Toppled: the stalk falls over along its spin direction; cap, gills and spots are gone; no collider.
+      const fall = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), Math.PI / 2 - 0.08);
+      const len = s.height * 0.35;
+      m.compose(v.copy(s.base).setY(s.base.y + s.radius * 0.8), fall, sc.set(s.radius, len, s.radius));
+      this.stalks.set(s.slots.stalk, m);
+      this.caps.set(s.slots.cap, ZERO); this.gills.set(s.slots.gill, ZERO);
+      for (const sp of s.slots.spots) this.spots.set(sp, ZERO);
+      if (s.collider) { this.physics.removeCollider(s.collider, false); s.collider = null; }
+      return;
+    }
+    const h = s.height * (1 - 0.18 * n);
+    m.compose(v.copy(s.base).setY(s.base.y - 0.3), s.q, sc.set(s.radius, h + 0.3, s.radius));
+    this.stalks.set(s.slots.stalk, m);
+    top.set(0, h, 0).applyQuaternion(s.q).add(s.base);
+    m.compose(top, s.q, sc.setScalar(s.capR));
+    this.caps.set(s.slots.cap, m);
+    m.compose(v.copy(top).setY(top.y + 0.02), s.q, sc.setScalar(s.capR));
+    this.gills.set(s.slots.gill, m);
+    s.slots.spots.forEach((sp, k) => {
+      const a = k * 2.4 + s.spin, rr = 0.35 + (k % 3) * 0.2;
+      local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55, Math.sin(a) * rr).multiplyScalar(s.capR);
+      m.compose(local.applyQuaternion(s.q).add(top), s.q, sc.setScalar(s.capR * 0.9));
+      this.spots.set(sp, m);
+    });
   }
 
   update(dt: number, viewer: THREE.Vector3, night: number) {

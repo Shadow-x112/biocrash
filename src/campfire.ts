@@ -172,6 +172,15 @@ export class Campfires {
     f.fuel = Math.min(FUEL_MAX, f.fuel + FUEL_PER_WOOD);
   }
 
+  /** A see-through fire ring for placing (green when it fits, red when it doesn't). */
+  makePreview() {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x7dff9a, transparent: true, opacity: 0.45, depthWrite: false });
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(this.parts.ring, mat), new THREE.Mesh(this.parts.logs, mat));
+    group.visible = false;
+    return { group, setOk: (ok: boolean) => mat.color.setHex(ok ? 0x7dff9a : 0xff6a50) };
+  }
+
   /** Take a fire out of the world (its heat source and its own cloned meat material go with it). */
   remove(f: Campfire) {
     const i = this.list.indexOf(f);

@@ -7,6 +7,7 @@ export interface Settings {
   sensitivity: number; // multiplier on the base mouse speed
   invertY: boolean;
   fov: number;         // degrees
+  quality: number;     // 0 Low (no shadows, no MSAA), 1 Medium (1024 shadow), 2 High (2048 shadow)
   resolution: number;  // render scale 0.5..1 (of the screen's pixel density, capped at 1.5)
   autoRes: boolean;    // lower the render scale automatically when the frame rate drops
   post: boolean;       // bloom, vignette, grain (post-processing)
@@ -23,7 +24,7 @@ export interface Settings {
 }
 
 export const DEFAULTS: Settings = {
-  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, tutorial: true,
+  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, tutorial: true,
 };
 
 const KEY = 'biocrash-settings';
@@ -77,6 +78,7 @@ const ROWS: { group: string; rows: Row[] }[] = [
   ] },
   { group: 'View', rows: [
     { key: 'fov', label: 'Field of view', kind: 'range', min: 60, max: 100, step: 1, fmt: (v) => `${v}°` },
+    { key: 'quality', label: 'Graphics quality', kind: 'range', min: 0, max: 2, step: 1, fmt: (v) => ['Low', 'Medium', 'High'][v] ?? 'Medium' },
     { key: 'resolution', label: 'Resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
     { key: 'autoRes', label: 'Lower resolution when slow', kind: 'check' },
     { key: 'post', label: 'Glow, grain and vignette', kind: 'check' },

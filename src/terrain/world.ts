@@ -212,6 +212,7 @@ export class World {
       m.updateMatrix();
       m.updateMatrixWorld();
       m.userData.chunk = c.key;
+      m.receiveShadow = true;
       this.group.add(m);
       c.mesh = m;
     }
