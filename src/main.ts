@@ -81,6 +81,17 @@ async function main() {
     cam.left = cam.bottom = -25; cam.right = cam.top = 25; cam.near = 1; cam.far = 120; cam.updateProjectionMatrix();
     sky.sun.shadow.bias = -0.0004; sky.sun.shadow.normalBias = 0.04;
     post.setSamples(q >= 1 ? 4 : 0);
+    // Shaders compiled while the shadow map didn't exist yet keep a stale shadow sampler, which ANGLE (Chrome on
+    // Windows) rejects on every draw: the whole world vanished. Draw the shadow map now, then recompile once it exists.
+    renderer.shadowMap.needsUpdate = true;
+    recompileIn = 2;
+  };
+  let recompileIn = 0;
+  const recompileAll = () => {
+    for (const root of [scene, hands.scene]) root.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (m) for (const x of Array.isArray(m) ? m : [m]) x.needsUpdate = true;
+    });
   };
   renderer.info.autoReset = false;
   window.addEventListener('resize', () => {
@@ -1145,6 +1156,7 @@ async function main() {
     syncHandLights();
     if (renderer.shadowMap.enabled && ++shadowTick % 3 === 0) renderer.shadowMap.needsUpdate = true;
     post.render(scene, camera, dt, hands);
+    if (recompileIn > 0 && --recompileIn === 0) recompileAll();
     smooth('render', performance.now() - tm);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;
     fps = fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
