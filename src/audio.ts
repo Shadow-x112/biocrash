@@ -39,7 +39,7 @@ export class Audio {
   private lastUsed = new Map<string, number>();
   private sweep = 0;
   private stinger!: GainNode;        // horror stingers: not ducked, but silenced by the pause gain (unlike the UI)
-  private ext = 'webm';              // 'm4a' on browsers that can't decode Opus (Safari before 17.4)
+  private ext = 'webm';              // 'mp4' (AAC) on browsers that can't decode Opus (Safari before 17.4)
   private wantSuspended = false;
   /** Set by the game: does terrain block the straight line between two points? (one physics ray) */
   occluder: ((from: V3, to: V3) => boolean) | null = null;
@@ -99,14 +99,14 @@ export class Audio {
       const res = await fetch('audio/manifest.json');
       if (!res.ok) return;
       this.sampleList = await res.json();
-      // Opus (WebM) decodes everywhere except Safari before 17.4: probe one small file and fall back to AAC (.m4a).
+      // Opus (WebM) decodes everywhere except Safari before 17.4: probe one small file and fall back to AAC (.mp4).
       try { await this.ctx!.decodeAudioData(await (await fetch('audio/ui_1.webm')).arrayBuffer()); }
-      catch { this.ext = 'm4a'; }
+      catch { this.ext = 'mp4'; }
       // Everything is fetched (6.7 MB compressed) but decoded audio is ~220 MB, two thirds of it in the long beds and
       // memories. Those stay compressed until needed and are dropped again after a minute unused.
       await Promise.all(Object.entries(this.sampleList!).map(async ([id, s]) => {
         try {
-          const data = await (await fetch(this.ext === 'webm' ? s.file : s.file.replace(/\.webm$/, '.m4a'))).arrayBuffer();
+          const data = await (await fetch(this.ext === 'webm' ? s.file : s.file.replace(/\.webm$/, '.mp4'))).arrayBuffer();
           if (LAZY.test(id)) { this.packed.set(id, { data, gain: s.gain }); return; }
           this.samples.set(id, { buf: await this.ctx!.decodeAudioData(data), gain: s.gain });
         } catch { /* a missing sound just stays silent */ }
