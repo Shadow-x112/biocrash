@@ -11,12 +11,22 @@ const glowMat = new THREE.MeshBasicMaterial({ color: 0xe07a2f }); // hazard oran
 const beaconGeo = new THREE.CylinderGeometry(0.015, 0.015, 1.4, 4).translate(0, 0.9, 0);
 const beaconMat = new THREE.MeshBasicMaterial({ color: 0xe07a2f, transparent: true, opacity: 0.55, depthWrite: false });
 
+const MAX_PACKS = 20;
+
 export class Packs {
   readonly group = new THREE.Group();
   readonly list: Pack[] = [];
   private t = 0;
 
   add(position: THREE.Vector3, items: Record<string, number>) {
+    // Repeated deaths can't pile up packs forever: past the cap, the oldest pack's contents move into the new one
+    // (nothing is lost, it just isn't where it was).
+    items = { ...items };
+    while (this.list.length >= MAX_PACKS) {
+      const old = this.list[0];
+      for (const [k, n] of Object.entries(old.items)) items[k] = (items[k] ?? 0) + n;
+      this.remove(old);
+    }
     const g = new THREE.Group();
     g.position.copy(position);
     const sack = new THREE.Mesh(sackGeo, sackMat);

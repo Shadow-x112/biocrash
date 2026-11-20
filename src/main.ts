@@ -357,6 +357,26 @@ async function main() {
     overlay.classList.add('showlog');
   };
   $('closelog').onclick = () => overlay.classList.remove('showlog');
+  // Soft-lock escape: wedged in terrain, buried by a fill, or down a shaft you can't climb. Moves you to the surface
+  // straight above, or to the nearest open ground; not to the wreck, so it's no free trip home. Once a minute.
+  let lastUnstuck = -Infinity;
+  $('unstuck').onclick = () => {
+    if (performance.now() - lastUnstuck < 60_000) { flash('You just did that. Try again in a minute.'); return; }
+    const p = player.position;
+    let dest: THREE.Vector3 | null = null;
+    const top = world.groundAt(p.x, p.z);
+    if (top && top.y > p.y - 0.9 + 1.5) dest = new THREE.Vector3(p.x, top.y + 1.2, p.z); // underground: up to the surface
+    for (let r = 2; !dest && r <= 10; r += 2)
+      for (let a = 0; a < 8 && !dest; a++) {
+        const x = p.x + Math.cos(a * Math.PI / 4) * r, z = p.z + Math.sin(a * Math.PI / 4) * r;
+        const g = world.groundAt(x, z);
+        if (g && g.ny > 0.7) dest = new THREE.Vector3(x, g.y + 1.2, z);
+      }
+    if (!dest) { flash('No open ground found nearby. Dig or fill your way out, or try again somewhere else.'); return; }
+    lastUnstuck = performance.now();
+    player.teleport(dest);
+    flash('Moved you to open ground.');
+  };
   $('export').onclick = async () => {
     await saveNow();
     const a = document.createElement('a');
@@ -639,14 +659,23 @@ async function main() {
     if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
   };
 
+  const MAX_FIRES = 40;
   const buildCampfire = () => {
     const hit = aimAtTerrain(5);
     if (!hit || hit.normal.y < 0.6) { flash('Look at flat ground nearby to build a campfire.'); return; }
+    // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
+    if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) { audio.deny(); flash('Too close to another fire.'); return; }
+    if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) { audio.deny(); flash('Step back a little to build here.'); return; }
+    if (campfires.list.length >= MAX_FIRES) {
+      // At the cap, the oldest cold fire pit is cleared to make room; if every fire is burning, refuse.
+      if (!campfires.list.some((f) => !f.lit && f.cooking.length === 0)) { audio.deny(); flash(`You have ${MAX_FIRES} fires burning already.`); return; }
+    }
     if (!inventory.take(CAMPFIRE_COST)) {
       audio.deny();
       flash(`A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`);
       return;
     }
+    if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
     campfires.add(hit.point.clone());
     audio.fireLit(hit.point);
     flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
@@ -831,7 +860,7 @@ async function main() {
   // --- Frame loop ----------------------------------------------------------------------------------
   const timer = new THREE.Timer();
   timer.connect(document);
-  let fps = 0, frameMs = 0, uiTimer = 0, actionCooldown = 0, resTimer = 4;
+  let fps = 0, frameMs = 0, uiTimer = 0, actionCooldown = 0, resTimer = 4, refreshEst = 30;
   // Per-section timings (ms, smoothed) for the F3 profiler.
   const prof = { world: 0, physics: 0, sim: 0, render: 0 };
   const smooth = (k: keyof typeof prof, v: number) => { prof[k] = prof[k] * 0.9 + v * 0.1; };
@@ -959,8 +988,11 @@ async function main() {
     if (settings.autoRes && state === 'playing' && (resTimer -= dt) <= 0) {
       resTimer = 2;
       const prev = resScale;
-      if (fps < 48) resScale = Math.max(0.5, resScale - 0.1);
-      else if (fps > 57) resScale = Math.min(settings.resolution, resScale + 0.05);
+      // Judge against this screen's own refresh rate (the best rate seen recently), not a fixed 60: on a 30 Hz-capped
+      // display a fixed "< 48 fps" rule dropped straight to 50% resolution and stayed there.
+      refreshEst = Math.max(fps, refreshEst * 0.98);
+      if (fps < refreshEst * 0.8) resScale = Math.max(0.5, resScale - 0.1);
+      else if (fps > refreshEst * 0.95) resScale = Math.min(settings.resolution, resScale + 0.05);
       if (resScale !== prev) applyRes();
     }
 

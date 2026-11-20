@@ -146,13 +146,21 @@ export class Audio {
     if (o.fadeIn) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, level), t + o.fadeIn); }
     else g.gain.value = level;
     src.connect(g).connect(this.out(o.bus === 'ui' ? this.ui : o.bus === 'amb' ? this.amb : this.sfx, o.pos, o.hrtf));
-    const offset = o.offset ?? 0;
+    // A bad offset/duration (NaN, negative) would throw in start() after the voice was counted, leaking a voice slot for
+    // good: clamp, and undo the count if start still fails.
+    const offset = Math.min(Math.max(0, Number.isFinite(o.offset) ? o.offset! : 0), Math.max(0, s.buf.duration - 0.01));
+    if (o.dur !== undefined && !(o.dur > 0)) o = { ...o, dur: undefined };
+    try {
     if (o.dur) {
       const end = t + o.dur / (o.rate ?? 1);
       g.gain.setValueAtTime(level, Math.max(t, end - 0.15));
       g.gain.linearRampToValueAtTime(0, end);
       src.start(t, offset, o.dur + 0.05);
     } else src.start(t, offset);
+    } catch {
+      this.voices--; this.perId.set(base, (this.perId.get(base) ?? 1) - 1);
+      return null;
+    }
     src.addEventListener('ended', () => { this.voices--; this.perId.set(base, (this.perId.get(base) ?? 1) - 1); });
     return { gain: g, src };
   }

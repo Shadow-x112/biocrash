@@ -85,6 +85,7 @@ export class Tutorial {
 
   /** Queue a one-off line (ignored if already seen). Milestones wait until the first-night objectives are done. */
   milestone(id: MilestoneId) {
+    if (!this.enabled) return; // objectives switched off: don't use up lines the player never saw
     if (this.seen.has(id) || this.queue.some((q) => q.id === id) || this.current === id || this.urgent?.id === id) return;
     if (URGENT.has(id)) { this.urgent = { id, t: 0 }; this.seen.add(id); this.typed = 0; this.onLine?.(); return; }
     this.queue.push({ id, at: this.clock });

@@ -32,8 +32,16 @@ export function loadSettings(): Settings {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
     const s = { ...DEFAULTS };
+    const ranges = new Map(ROWS.flatMap((g) => g.rows).filter((r) => r.kind === 'range').map((r) => [r.key, r as { min: number; max: number }]));
     for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
-      if (typeof raw[k] === typeof DEFAULTS[k]) (s as unknown as Record<string, unknown>)[k] = raw[k];
+      const v = raw[k];
+      if (typeof v !== typeof DEFAULTS[k]) continue;
+      if (typeof v === 'number') {
+        // NaN is a number too, and an edited or older storage entry can hold anything: clamp to the slider's range.
+        const r = ranges.get(k);
+        if (!Number.isFinite(v)) continue;
+        (s as unknown as Record<string, unknown>)[k] = r ? Math.min(r.max, Math.max(r.min, v)) : v;
+      } else (s as unknown as Record<string, unknown>)[k] = v;
     }
     return s;
   } catch { return { ...DEFAULTS }; }

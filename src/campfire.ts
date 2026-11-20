@@ -65,6 +65,8 @@ class Campfire {
 
   get lit() { return this.fuel > 0; }
 
+  dispose() { (this.meat.material as THREE.Material).dispose(); }
+
   /** Returns how many pieces finished cooking this frame (via `done`). */
   update(dt: number, done: () => void = () => {}) {
     this.fuel = Math.max(0, this.fuel - dt);
@@ -148,6 +150,17 @@ export class Campfires {
   addFuel(f: Campfire) {
     if (!f.lit) f.flare = 1; // relit: a burst of light
     f.fuel = Math.min(FUEL_MAX, f.fuel + FUEL_PER_WOOD);
+  }
+
+  /** Take a fire out of the world (its heat source and its own cloned meat material go with it). */
+  remove(f: Campfire) {
+    const i = this.list.indexOf(f);
+    if (i < 0) return;
+    this.list.splice(i, 1);
+    this.group.remove(f.group);
+    const h = this.heatSources.indexOf(f.heat);
+    if (h >= 0) this.heatSources.splice(h, 1);
+    f.dispose();
   }
 
   /** Called when a piece of meat finishes cooking on a fire. */

@@ -15,6 +15,7 @@ const JUMP_BUFFER = 0.12; // a jump pressed this early before landing still happ
 const ACCEL_GROUND = 30, ACCEL_AIR = 8;
 const STEP_WALK = 1.7, STEP_RUN = 2.3, STEP_SNEAK = 1.2; // metres between footsteps
 const BOB = 0.035;
+const MAX_FALL = 45; // m/s
 
 export class Player {
   readonly position = new THREE.Vector3();
@@ -130,7 +131,7 @@ export class Player {
         this.onJump?.();
       }
       const fallSpeed = -this.velY;
-      this.velY -= GRAVITY * dt;
+      this.velY = Math.max(-MAX_FALL, this.velY - GRAVITY * dt); // terminal velocity: no huge per-frame steps
       if (this.grounded && this.velY < 0) this.velY = -2; // keep pressed to the ground on slopes
 
       const desired = { x: this.vel.x * dt, y: this.velY * dt, z: this.vel.z * dt };
