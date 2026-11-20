@@ -3,13 +3,13 @@
 // (saved per browser); run and sneak can be held or toggled.
 export type Action =
   | 'forward' | 'back' | 'left' | 'right' | 'jump' | 'run' | 'sneak'
-  | 'use' | 'dig' | 'fill' | 'build' | 'eat' | 'lamp' | 'craft' | 'lookLeft' | 'lookRight' | 'lookUp' | 'lookDown';
+  | 'use' | 'dig' | 'fill' | 'build' | 'eat' | 'lamp' | 'craft' | 'rest' | 'lookLeft' | 'lookRight' | 'lookUp' | 'lookDown';
 
 /** Default bindings. Ctrl is deliberately unused: Ctrl+W would close the browser tab. */
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   forward: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
   jump: ['Space'], run: ['ShiftLeft', 'ShiftRight'], sneak: ['KeyC'],
-  use: ['KeyE'], dig: ['KeyR', 'Mouse0'], fill: ['KeyF', 'Mouse2'], build: ['KeyB'], eat: ['KeyQ'], lamp: ['KeyL'], craft: ['Tab'],
+  use: ['KeyE'], dig: ['KeyR', 'Mouse0'], fill: ['KeyF', 'Mouse2'], build: ['KeyB'], eat: ['KeyQ'], lamp: ['KeyL'], craft: ['Tab'], rest: ['KeyZ'],
   lookLeft: ['ArrowLeft'], lookRight: ['ArrowRight'], lookUp: ['ArrowUp'], lookDown: ['ArrowDown'],
 };
 
@@ -17,7 +17,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
 export const REMAPPABLE: [Action, string][] = [
   ['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'],
   ['run', 'Run'], ['sneak', 'Sneak'], ['use', 'Pick up / use'], ['dig', 'Dig / attack'], ['fill', 'Fill'],
-  ['build', 'Build campfire'], ['eat', 'Cook / eat'], ['lamp', 'Wrist lamp'], ['craft', 'Crafting'],
+  ['build', 'Build campfire'], ['eat', 'Cook / eat'], ['lamp', 'Wrist lamp'], ['craft', 'Crafting'], ['rest', 'Rest by the fire'],
 ];
 
 /** Keys the game keeps for itself (menus, debug, hotbar and recipe numbers). */

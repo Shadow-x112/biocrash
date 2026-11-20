@@ -5,7 +5,7 @@ import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
 import { Input, K } from './input';
 import { Player } from './player';
-import { Sky } from './sky';
+import { Sky, DAY_LENGTH } from './sky';
 import { Survival, TEMP } from './survival';
 import { Props } from './props';
 import { Inventory, ITEM_NAMES, MATERIALS, GEAR, type ItemId } from './inventory';
@@ -90,6 +90,17 @@ async function main() {
   const horror = new Horror(audio, scene);
   horror.load(meta?.horror);
   horror.onCaption = (text, pos) => caption(text, pos);
+  /** The lit fire you're sitting by (within 8 m), if any. */
+  const campNear = () => {
+    let best: THREE.Vector3 | null = null, bd = 8;
+    for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f.position; } }
+    return best;
+  };
+  horror.onGutter = () => {
+    let best: (typeof campfires.list)[number] | null = null, bd = 8;
+    for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f; } }
+    best?.gutterNow(10 + Math.random() * 10);
+  };
   // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
   // What's underfoot: caves and dug-out ground are soil, steep rock is gravel, the forest floor is moss.
   const surfaceUnderfoot = (): 'moss' | 'gravel' | 'soil' => {
@@ -263,12 +274,14 @@ async function main() {
 
   // --- Game state ----------------------------------------------------------------------------------
   let state: GameState = 'menu';
+  let resting = false; // resting by the fire (see rest())
   for (const k of ['master', 'fov'] as const) applySetting(k); // everything else is applied with these
   let lockWorked = false; // once mouse capture has worked, never fall back to drag-look
   const craftEl = $('craft');
   const setState = (s: GameState) => {
     state = s;
-    input.enabled = s === 'playing';
+    if (s !== 'playing' && resting) { resting = false; $('rest').style.display = 'none'; }
+    input.enabled = s === 'playing' && !resting;
     if (s !== 'playing') input.release();
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
     if (s !== 'menu') overlay.classList.remove('showsettings', 'showlog');
@@ -440,11 +453,13 @@ async function main() {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
         return `<span class="${have >= need ? 'ok' : 'no'}">${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
       }).join(' · ');
-      const needs = (r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">needs ${ITEM_NAMES[k].toLowerCase()}</span>`).join(' · ');
+      const warm = fireNearPlayer() > 0.5;
+      const needs = [...(r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">needs ${ITEM_NAMES[k].toLowerCase()}</span>`),
+        ...(r.heat ? [`<span class="${warm ? 'ok' : 'no'}">\u{1F525} needs a lit fire close by</span>`] : [])].join(' · ');
       const name = ITEM_NAMES[r.makes];
       const have = inventory.counts[r.makes];
       const done = r.unique && have > 0;
-      const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0);
+      const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
       const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>Craft</button>`;
       return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
@@ -491,6 +506,7 @@ async function main() {
     if (r.unique && inventory.counts[r.makes] > 0) { craftNote(`You already have a ${ITEM_NAMES[r.makes].toLowerCase()}.`); return; }
     const missing = (r.needs ?? []).filter((k) => inventory.counts[k] <= 0);
     if (missing.length) { audio.deny(); craftNote(`You need a ${missing.map((k) => ITEM_NAMES[k].toLowerCase()).join(' and a ')} for this.`); return; }
+    if (r.heat && fireNearPlayer() <= 0.5) { audio.deny(); craftNote('This needs a lit fire close by. Craft it at your camp.'); return; }
     if (r.unique) times = 1;
     let made = 0;
     const first = inventory.counts[r.makes] === 0;
@@ -613,9 +629,9 @@ async function main() {
     for (const f of campfires.list) if (f.lit) n = Math.max(n, 1 - f.position.distanceTo(player.position) / 12);
     return n;
   };
-  /** Drains in about 4 minutes; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
+  /** Drains in 2.5 minutes, so trips away from the fire need planning; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
   const updateLamp = (dt: number, fireNear: number) => {
-    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 240)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
+    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 150)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
     else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0));
     let k = lampOn ? 1 : 0;
     if (lampOn && !settings.reduceFlash && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
@@ -658,6 +674,26 @@ async function main() {
     if (wasNight && sky.time > 0.27 && sky.time < 0.4) { nights++; tutorial.milestone('dawn'); wasNight = false; }
     if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
   };
+
+  // --- Resting by the fire: the night passes ~6x faster, but the fire burns just as fast and the dark doesn't sleep ----
+  const restEl = $('rest');
+  const isNightTime = () => sky.time > 0.7 || sky.time < 0.25;
+  const rest = () => {
+    if (!isNightTime()) { flash('You can only rest through the night.'); return; }
+    if (fireNearPlayer() < 0.58) { flash('Rest beside a lit fire.'); return; }
+    if (!survival.sheltered) { flash('Rest with something over your head: dig in, or find an overhang by the fire.'); return; }
+    resting = true;
+    input.enabled = false; input.release();
+    restEl.style.display = 'flex';
+  };
+  const wake = (why: string) => {
+    if (!resting) return;
+    resting = false;
+    restEl.style.display = 'none';
+    input.enabled = state === 'playing';
+    flash(why);
+  };
+  canvas.addEventListener('mousedown', () => wake('You get up.'));
 
   const MAX_FIRES = 40;
   const buildCampfire = () => {
@@ -748,6 +784,8 @@ async function main() {
       return;
     }
     if (state !== 'playing' || e.repeat) return;
+    if (resting) { wake('You get up.'); return; }
+    if (input.is(e.code, 'rest')) { rest(); return; }
     if (input.is(e.code, 'use')) use();
     else if (input.is(e.code, 'build')) buildCampfire();
     else if (input.is(e.code, 'eat')) food();
@@ -776,7 +814,7 @@ async function main() {
   const hpBar = document.querySelector('#hp > div') as HTMLElement, heatBar = document.querySelector('#heat > div') as HTMLElement;
   const fahrenheit = navigator.language === 'en-US';
   const fmtTemp = (c: number) => (fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
-  const buffsEl = $('buffs'), deathText = $('deathtext'), deathHint = $('deathhint');
+  const goalEl = $('goal'), buffsEl = $('buffs'), deathText = $('deathtext'), deathHint = $('deathhint');
   const updateVitals = () => {
     hpBar.style.width = `${survival.health}%`;
     heatBar.style.width = `${survival.warmth}%`;
@@ -786,7 +824,14 @@ async function main() {
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
     const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ` (${K('lamp')})`}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
-    if (buffsEl.textContent !== buffs) buffsEl.textContent = buffs;
+    // The sky is the only other clock: a readout of time until dark, or until dawn.
+    const until = (to: number) => fmtTime((((to - sky.time) % 1) + 1) % 1 * DAY_LENGTH);
+    const clock = sky.time > 0.55 && sky.time < 0.75 ? `Dark in ${until(0.75)}` : isNightTime() ? `Dawn in ${until(0.27)}` : '';
+    const line = [clock, buffs].filter(Boolean).join('  \u00b7  ');
+    if (buffsEl.textContent !== line) buffsEl.textContent = line;
+    const goal = tutorial.currentGoal();
+    const goalText = goal ? `\u25B8 ${goal}` : '';
+    if (goalEl.textContent !== goalText) goalEl.textContent = goalText;
     if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
       $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
       $('hpv').textContent = String(Math.floor(Math.random() * 999));
@@ -895,16 +940,21 @@ async function main() {
       tm = performance.now();
       if (player.position.y < floorY) player.teleport(spawnPoint); // fell out of the world
 
-      sky.update(dt, camera);
+      const wdt = resting ? dt * 6 : dt; // world time while resting
+      sky.update(wdt, camera);
       if (state === 'playing' && !player.frozen) {
-        survival.update(dt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, meshes: world.meshes() });
+        survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, meshes: world.meshes() });
         player.speedMul = survival.moveFactor();
         if (survival.dead) {
           setState('dead');
           audio.death();
-          // Materials stay where you fell, in a pack on your compass. Tools and gear come with you.
+          // Materials stay where you fell, in a pack on your compass. Tools and gear come with you, and so does a small
+          // fire kit (2 stalkwood), so a night death can't chain into another one before you reach your pack.
           const items: Record<string, number> = {};
-          for (const k of MATERIALS) if (inventory.counts[k] > 0) items[k] = inventory.counts[k];
+          for (const k of MATERIALS) {
+            const keep = k === 'stalkwood' ? Math.min(2, inventory.counts[k]) : 0;
+            if (inventory.counts[k] - keep > 0) items[k] = inventory.counts[k] - keep;
+          }
           const dropped = Object.keys(items).length > 0;
           // On the ground at your feet (the body position is the capsule's centre, ~0.9 m up); underground, the cave floor.
           const feet = player.position.clone().setY(player.position.y - 0.9);
@@ -912,11 +962,19 @@ async function main() {
           if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
           if (dropped) { packs.add(feet, items); inventory.take(items as Partial<Record<ItemId, number>>); }
           deathText.textContent = 'You froze.';
-          deathHint.textContent = dropped ? 'Your materials are where you fell, marked on the compass. Fire and shelter keep your core temperature up.'
+          // Wake at the nearest fire you built that's still burning; with none, at the crash site.
+          let wake: THREE.Vector3 = spawnPoint, best = Infinity;
+          for (const f of campfires.list) {
+            const d = f.position.distanceTo(player.position);
+            if (f.lit && d < best) { best = d; wake = f.position.clone().add(new THREE.Vector3(1.6, 1.4, 0)); }
+          }
+          const atFire = wake !== spawnPoint;
+          if (atFire) { const gw = world.groundAt(wake.x, wake.z); if (gw && Math.abs(gw.y - wake.y) < 4) wake.y = gw.y + 1.2; }
+          deathHint.textContent = dropped ? `Your materials are where you fell, marked on the compass. You kept a fire kit. Waking ${atFire ? 'at your fire' : 'at the crash site'}\u2026`
             : 'Fire and shelter keep your core temperature up. Cooked meat and a hide wrap help you last the night.';
           deathEl.style.display = 'flex';
           setTimeout(() => {
-            player.teleport(spawnPoint);
+            player.teleport(wake);
             survival.respawn();
             if (dropped) tutorial.milestone('death');
             deathEl.style.display = 'none';
@@ -924,9 +982,9 @@ async function main() {
           }, 3000);
         }
       }
-      campfires.update(dt, player.position);
+      campfires.update(wdt, player.position);
       packs.update(dt);
-      flora.update(dt, camera.position, sky.night);
+      flora.update(wdt, camera.position, sky.night);
       const simDt = hitStop > 0 ? dt * 0.05 : dt;
       hitStop = Math.max(0, hitStop - dt);
       for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }
@@ -934,16 +992,23 @@ async function main() {
       hotbar.update(simDt, input.moving);
       particles.update(simDt);
       updateLamp(dt, fireNearPlayer());
+      horror.lampDir = lampOn && lamp.intensity > 1 ? camera.getWorldDirection(new THREE.Vector3()) : null;
       worldSounds(dt);
       if (state === 'playing') {
         let fireNear = 0;
         for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
         const g = world.groundAt(camera.position.x, camera.position.z);
-        horror.update({ dt, camera, night: sky.night, daylight: sky.daylight, fireNear, warmth: survival.warmth, health: survival.health,
+        horror.update({ dt: wdt, camera, night: sky.night, daylight: sky.daylight, fireNear, warmth: survival.warmth, health: survival.health,
           underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint,
           nights, running: input.moving && input.down('run') && !player.crouching, moving: input.moving,
           litFiresNear: campfires.list.filter((f) => f.lit && f.position.distanceToSquared(player.position) < 40 * 40).length,
-          fogNear: (scene.fog as THREE.Fog).near });
+          fogNear: (scene.fog as THREE.Fog).near, camp: campNear() });
+        if (resting) {
+          if (horror.phase === 'peak') wake('You jolt awake.');
+          else if (fireNearPlayer() < 0.58) wake('The fire is dying. You wake.');
+          else if (survival.warmth < 40) wake('You wake up cold.');
+          else if (!isNightTime()) wake('Morning.');
+        }
       }
 
       // Held dig/fill (mouse or R/F): attacks a creature in reach, otherwise shapes the terrain.

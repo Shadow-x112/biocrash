@@ -83,6 +83,14 @@ export class Tutorial {
 
   get done() { return this.step >= STEPS.length; }
 
+  /** The goal to keep pinned under the vitals after its line fades ('' when there's none). */
+  currentGoal(): string {
+    if (!this.enabled) return '';
+    if (!this.done) return keys(STEPS[this.step].goal);
+    if (this.current && MILESTONES[this.current].goal && !this.goalMet(this.current)) return keys(MILESTONES[this.current].goal);
+    return '';
+  }
+
   /** Queue a one-off line (ignored if already seen). Milestones wait until the first-night objectives are done. */
   milestone(id: MilestoneId) {
     if (!this.enabled) return; // objectives switched off: don't use up lines the player never saw

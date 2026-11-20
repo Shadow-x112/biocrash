@@ -38,7 +38,7 @@ function fakeAudio(lazyReady = false) {
   };
 }
 
-async function run(opts: { nightsTo: number; unease: number; seconds: number }) {
+async function run(opts: { nightsTo: number; unease: number | null; seconds: number; camp?: boolean; fireNear?: number }) {
   const { Horror } = await import('../src/horror');
   const audio = fakeAudio();
   const h = new Horror(audio as never, new THREE.Scene());
@@ -47,13 +47,14 @@ async function run(opts: { nightsTo: number; unease: number; seconds: number }) 
   for (let n = 0; n <= opts.nightsTo; n++) {
     h.override = opts.unease;
     for (let t = 0; t < opts.seconds; t += 0.5) {
-      h.update({ dt: 0.5, camera: cam, night: 1, daylight: 0, fireNear: 0, warmth: 80, health: 100, underground: false,
+      h.update({ dt: 0.5, camera: cam, night: 1, daylight: 0, fireNear: opts.fireNear ?? 0, warmth: 80, health: 100, underground: false,
         ground: () => ({ y: 0, ny: 1 }), crashSite: new THREE.Vector3(100, 0, 0), nights: n, running: false, moving: true,
-        litFiresNear: 0, fogNear: 20 });
+        litFiresNear: 0, fogNear: 20, camp: opts.camp ? new THREE.Vector3(0, 0, 0) : null });
       audio.tick(0.5);
     }
   }
   for (const [k, v] of Object.entries(h.fired)) counts[k] = v;
+  counts.finalLevel = h.level;
   return counts;
 }
 
@@ -71,5 +72,17 @@ describe('horror deck', () => {
   it('never fires a big event on the first night', async () => {
     const c = await run({ nightsTo: 0, unease: 0.95, seconds: 900 });
     for (const k of ['memory', 'whisper', 'breath', 'voice', 'falseAlarm', 'figure']) expect(c[k] ?? 0, k).toBe(0);
+  });
+});
+
+describe('camp nights', () => {
+  it('keeps some unease and camp events going beside the fire from night 2', async () => {
+    const c = await run({ nightsTo: 4, unease: null, seconds: 700, camp: true, fireNear: 1 });
+    expect(c.finalLevel).toBeGreaterThan(0.15); // the night floor, even at a full fire
+    expect((c.eyes ?? 0) + (c.circle ?? 0) + (c.gutter ?? 0)).toBeGreaterThan(3);
+  });
+  it('leaves the first night at the fire calm', async () => {
+    const c = await run({ nightsTo: 0, unease: null, seconds: 700, camp: true, fireNear: 1 });
+    expect((c.eyes ?? 0) + (c.circle ?? 0) + (c.gutter ?? 0)).toBe(0);
   });
 });

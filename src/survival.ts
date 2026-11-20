@@ -46,7 +46,7 @@ export class Survival {
   respawn() { this.health = 50; this.warmth = 60; this.fed = 0; this.afterglow = 120; }
 
   /** Multiplier on heat loss from food, clothing and respawn grace. */
-  lossFactor() { return (this.wrapped ? 0.6 : 1) * (this.fed > 0 ? 0.8 : 1) * (this.afterglow > 0 ? 0.5 : 1); }
+  lossFactor() { return (this.wrapped ? 0.75 : 1) * (this.fed > 0 ? 0.85 : 1) * (this.afterglow > 0 ? 0.5 : 1); }
 
   /** Speed multiplier for the player (cold makes you sluggish). */
   moveFactor() { return this.cold ? 0.7 + (this.warmth / 30) * 0.3 : 1; }
@@ -66,7 +66,8 @@ export class Survival {
     // Open-air temperature follows the sun, then shade, shelter and height adjust it.
     let t = THREE.MathUtils.lerp(TEMP.nightC, TEMP.dayC, ctx.daylight);
     if (this.shaded) t += TEMP.shadeC * ctx.daylight;
-    if (this.sheltered) t = THREE.MathUtils.lerp(t, TEMP.shelterC, 0.85);
+    // Shelter only ever helps: it holds the air near 5 °C on a cold night, but a cave at noon is no colder than outside.
+    if (this.sheltered) t = Math.max(t, THREE.MathUtils.lerp(t, TEMP.shelterC, 0.85));
     t -= Math.max(0, ctx.eye.y - TEMP.lapseFrom) * TEMP.lapseCPerM;
     for (const h of this.heatSources) {
       const d = h.position.distanceTo(ctx.eye);

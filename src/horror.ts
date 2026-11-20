@@ -26,6 +26,8 @@ export interface HorrorInput {
   moving: boolean;
   litFiresNear: number;
   fogNear: number;     // the figure never stands closer than this
+  /** The nearest lit fire, when the player is beside it at night (camp events happen around it). */
+  camp: THREE.Vector3 | null;
 }
 
 type Phase = 'calm' | 'build' | 'peak' | 'relax';
@@ -68,7 +70,19 @@ export class Horror {
   private nextMemory = MEMORIES[Math.floor(Math.random() * MEMORIES.length)];
   private awayFromFire = 0;
   private beds: Record<string, Loop> = {};
-  private timers: Record<string, number> = { creature: 30, wreck: 60, swell: 45, major: 40, sting: 3600, glitch: 90, loon: 30, drip: 2 };
+  private timers: Record<string, number> = { creature: 30, wreck: 60, swell: 45, major: 40, sting: 3600, glitch: 90, loon: 30, drip: 2, camp: 120, staged: 150 };
+  /** Wreck groans so far tonight (capped: the same sound every minute stops meaning anything). */
+  private wreckTonight = 0;
+  private tonight = -1;
+  /** Camp events: eyes at the edge of the firelight, and footsteps circling just outside it. */
+  private eyes: THREE.Group;
+  private eyesLife = 0;
+  private eyesSeen = 0;
+  private circle: { centre: THREE.Vector3; angle: number; left: number; step: number } | null = null;
+  /** Called to make a fire gutter for real (burning some fuel). */
+  onGutter: () => void = () => {};
+  /** The player's lamp: eyes vanish when it lands on them. */
+  lampDir: THREE.Vector3 | null = null;
   private pendingSting = -1; // game-time countdown from riser to stinger (pauses with the game)
   private whisperVoice: { gain: GainNode; pos: THREE.Vector3 } | null = null;
   private memoryVoice: { gain: GainNode; end: number } | null = null;
@@ -96,7 +110,13 @@ export class Horror {
     const armR = armL.clone(); armR.position.x = 0.3; armR.rotation.z = -0.06;
     this.figure.add(body, head, armL, armR);
     this.figure.visible = false;
-    scene.add(this.figure, this.traces);
+    // Eyeshine: two pale points, brighter than white so they catch the bloom. Never a body, just the eyes.
+    this.eyes = new THREE.Group();
+    const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.9, 1.5), fog: false });
+    const eyeGeo = new THREE.SphereGeometry(0.035, 6, 4);
+    for (const x of [-0.09, 0.09]) { const e = new THREE.Mesh(eyeGeo, eyeMat); e.position.x = x; this.eyes.add(e); }
+    this.eyes.visible = false;
+    scene.add(this.figure, this.traces, this.eyes);
     this.vignette = document.getElementById('unease')!;
     this.staticEl = document.getElementById('static')!;
   }
@@ -187,8 +207,12 @@ export class Horror {
       dark * 0.4 + (i.underground ? 0.3 : 0) + smooth(30, 0, i.warmth) * 0.15 + smooth(45, 10, i.health) * 0.25
       + Math.min(0.3, this.awayFromFire / 300) + actions
       - i.fireNear * 0.35 - Math.min(0.15, Math.max(0, i.litFiresNear - 1) * 0.05) - i.daylight * (i.underground ? 0 : 0.25))));
+    // From the second night, unease never quite settles at night, even at the fire: +0.05 per night survived, max 0.25.
+    const floor = i.nights >= 1 ? Math.min(0.25, 0.05 * i.nights) * i.night * this.intensity : 0;
+    const goal = Math.max(target, floor);
     if (this.override !== null) this.level = this.override;
-    else this.level += (target - this.level) * Math.min(1, dt * (target > this.level ? 1 / 40 : 1 / 12));
+    else this.level += (goal - this.level) * Math.min(1, dt * (goal > this.level ? 1 / 40 : 1 / 12));
+    if (this.tonight !== i.nights) { this.tonight = i.nights; this.wreckTonight = 0; }
     const u = this.level;
 
     // --- Ambient beds ---------------------------------------------------------------------------
@@ -220,7 +244,7 @@ export class Horror {
 
     // Something big, far off, that you never find. Sometimes it leaves something behind.
     if (t.creature <= 0) {
-      t.creature = rand(40, 95);
+      t.creature = u < 0.35 ? rand(90, 180) : rand(40, 95); // sparse when calm, closer together as it builds
       if (!resting && (i.night > 0.4 || i.underground || u > 0.3)) {
         const p = this.around(cam, rand(35, 65), i.ground);
         const r = Math.random();
@@ -240,8 +264,9 @@ export class Horror {
     }
     // The wreck groans at night.
     if (t.wreck <= 0) {
-      t.wreck = rand(45, 100);
-      if (i.night > 0.5 && !resting && cam.distanceTo(i.crashSite) < 120) {
+      t.wreck = rand(60, 140);
+      if (i.night > 0.5 && !resting && this.wreckTonight < 3 && cam.distanceTo(i.crashSite) < 120) {
+        this.wreckTonight++;
         if (Math.random() < 0.25) this.audio.play('scrape', { pos: i.crashSite, gain: 1.4, rate: rand(0.5, 0.7) });
         else this.audio.playAny('metal', 3, { pos: i.crashSite, gain: 1.6, rate: rand(0.6, 0.9) });
         this.onCaption('metal groans at the wreck', i.crashSite);
@@ -276,6 +301,45 @@ export class Horror {
     }
     if (this.glitch > 0) this.glitch -= dt;
     if (this.staticT > 0) this.staticT -= dt;
+
+    // --- The camp at night (from night 2): something keeps to the edge of the firelight -------------------
+    if (t.camp <= 0) {
+      t.camp = rand(90, 200);
+      if (i.camp && i.nights >= 1 && i.night > 0.6 && !resting && !this.eyes.visible && !this.circle) {
+        const r = Math.random();
+        if (r < 0.4) this.showEyes(i);
+        else if (r < 0.75) { this.circle = { centre: i.camp.clone(), angle: Math.random() * Math.PI * 2, left: rand(5, 8), step: 0 }; this.onCaption('footsteps, circling the camp'); this.fire('circle'); }
+        else { this.onGutter(); this.onCaption('the fire gutters'); this.fire('gutter'); }
+      }
+    }
+    if (this.circle) {
+      const c = this.circle;
+      c.left -= dt; c.step -= dt; c.angle += dt * 0.35; // ~20 m out, walking round
+      if (c.step <= 0) {
+        c.step = rand(0.5, 0.65);
+        const p = new THREE.Vector3(c.centre.x + Math.cos(c.angle) * 19, c.centre.y + 0.3, c.centre.z + Math.sin(c.angle) * 19);
+        this.audio.playAny('step_moss', 5, { pos: p, gain: 0.9, rate: rand(0.78, 0.86) }); // heavier than yours
+      }
+      if (c.left <= 0 || !i.camp) this.circle = null;
+    }
+    if (this.eyes.visible) {
+      this.eyesLife -= dt;
+      const lit = !!this.lampDir && this.tmp.subVectors(this.eyes.position, cam).normalize().dot(this.lampDir) > 0.97;
+      this.eyesSeen = this.looking(camera, this.eyes.position, 0.995) ? this.eyesSeen + dt : 0;
+      if (lit || this.eyesSeen > 1.2 || this.eyesLife <= 0) this.eyes.visible = false; // gone when the light touches them
+    }
+    // --- The first sighting is staged once (nights 4-5, if not seen yet): on the line to the wreck ------------
+    if (t.staged <= 0) {
+      t.staged = rand(30, 60);
+      if (!this.figureSeen && i.nights >= 3 && i.night > 0.6 && this.figureNight !== i.nights && !i.underground && !resting
+          && cam.distanceTo(i.crashSite) < 160 && !this.figure.visible) {
+        const toWreck = Math.atan2(i.crashSite.x - cam.x, i.crashSite.z - cam.z);
+        const facing = Math.atan2(this.fwd.x, this.fwd.z);
+        const off = Math.abs(((toWreck - facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        // Only while you're looking away from the wreck, so the turn toward it is what finds the shape.
+        if (off > 1.0 && this.placeFigure(i, toWreck)) { this.peaked('figure'); this.played.add('figure'); this.fire('staged'); }
+      }
+    }
 
     // --- One big event per build-up, from the deck --------------------------------------------------
     if (this.phase === 'build' && t.major <= 0 && this.pendingSting < 0) {
@@ -354,21 +418,8 @@ export class Horror {
         return true;
       }
       case 'figure': { // at the edge of your vision, once a night at most, never inside the fog's clear zone
-        if (this.figure.visible || i.underground || this.figureNight === i.nights) return false;
         const side = Math.random() < 0.5 ? 1 : -1;
-        const yaw = Math.atan2(this.fwd.x, this.fwd.z) + side * rand(0.9, 1.15); // ~55-65 degrees off centre
-        const d = Math.max(i.fogNear, rand(16, 26));
-        const p = new THREE.Vector3(cam.x + Math.sin(yaw) * d, 0, cam.z + Math.cos(yaw) * d);
-        const g = i.ground(p.x, p.z);
-        if (!g) return false;
-        this.figure.position.set(p.x, g.y, p.z);
-        this.figure.lookAt(cam.x, g.y, cam.z);
-        this.figure.visible = true;
-        this.figureLife = rand(6, 12);
-        this.figureNight = i.nights;
-        this.audio.play('rumble_1', { gain: 0.35, bus: 'amb' }); // felt more than heard
-        this.onCaption('a low rumble');
-        return true;
+        return this.placeFigure(i, Math.atan2(this.fwd.x, this.fwd.z) + side * rand(0.9, 1.15)); // ~55-65 degrees off centre
       }
       case 'voice': { // distant, female, ethereal, impossible
         const p = this.around(cam, rand(25, 40), i.ground);
@@ -382,6 +433,39 @@ export class Horror {
         this.onCaption('everything goes quiet');
         return true;
     }
+  }
+
+  /** Stands the figure on bearing `yaw` from the player, at the fog's near edge or further. */
+  private placeFigure(i: HorrorInput, yaw: number) {
+    const cam = i.camera.position;
+    if (this.figure.visible || i.underground || this.figureNight === i.nights) return false;
+    const d = Math.max(i.fogNear, rand(16, 26));
+    const p = new THREE.Vector3(cam.x + Math.sin(yaw) * d, 0, cam.z + Math.cos(yaw) * d);
+    const g = i.ground(p.x, p.z);
+    if (!g) return false;
+    this.figure.position.set(p.x, g.y, p.z);
+    this.figure.lookAt(cam.x, g.y, cam.z);
+    this.figure.visible = true;
+    this.figureLife = rand(6, 12);
+    this.figureNight = i.nights;
+    this.audio.play('rumble_1', { gain: 0.35, bus: 'amb' }); // felt more than heard
+    this.onCaption('a low rumble');
+    return true;
+  }
+
+  /** Eyes at the edge of the firelight, somewhere in front of you, gone when your lamp finds them. */
+  private showEyes(i: HorrorInput) {
+    const cam = i.camera.position, c = i.camp!;
+    const yaw = Math.atan2(this.fwd.x, this.fwd.z) + rand(-0.8, 0.8);
+    const x = c.x + Math.sin(yaw) * rand(16, 20), z = c.z + Math.cos(yaw) * rand(16, 20);
+    const g = i.ground(x, z);
+    if (!g) return;
+    this.eyes.position.set(x, g.y + rand(0.7, 1.4), z);
+    this.eyes.lookAt(cam);
+    this.eyes.visible = true;
+    this.eyesLife = rand(5, 9);
+    this.eyesSeen = 0;
+    this.fire('eyes');
   }
 
   private stinger() {

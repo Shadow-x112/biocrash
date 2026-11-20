@@ -12,6 +12,8 @@ export interface Recipe {
   needs?: ItemId[];
   /** One is all you'll ever need (gear). */
   unique?: boolean;
+  /** Needs a lit fire close by (curing hide, hardening chitin): night work at the camp. */
+  heat?: boolean;
   blurb: string;
 }
 
@@ -25,8 +27,8 @@ export const RECIPES: Recipe[] = [
     blurb: 'A reach weapon for hunting and defense.' },
   { id: 'bone_needle', makes: 'bone_needle', amount: 1, unique: true, cost: { bone: 1 },
     blurb: 'A splinter of bone, ground to a point. For stitching hide.' },
-  { id: 'hide_wrap', makes: 'hide_wrap', amount: 1, unique: true, cost: { hide: 2, cordage: 2 }, needs: ['bone_needle'],
-    blurb: 'Worn under the suit. You lose body heat 40% slower.' },
-  { id: 'chitin_spearhead', makes: 'chitin_spearhead', amount: 1, unique: true, cost: { chitin: 3, cordage: 1 }, needs: ['spear'],
-    blurb: 'A Tuko shell plate lashed to your spear: half again the damage.' },
+  { id: 'hide_wrap', makes: 'hide_wrap', amount: 1, unique: true, heat: true, cost: { hide: 2, cordage: 2 }, needs: ['bone_needle'],
+    blurb: 'Hide cured over a fire, worn under the suit. You lose body heat 25% slower.' },
+  { id: 'chitin_spearhead', makes: 'chitin_spearhead', amount: 1, unique: true, heat: true, cost: { chitin: 3, cordage: 1 }, needs: ['spear'],
+    blurb: 'A Tuko shell plate, hardened in the fire and lashed to your spear: half again the damage.' },
 ];

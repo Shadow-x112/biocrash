@@ -7,7 +7,7 @@ export const FUEL_START = 180;     // seconds of burn when built
 export const FUEL_PER_WOOD = 90;   // seconds added per stalkwood
 export const FUEL_MAX = 600;
 const HEAT_RADIUS = 8;
-const HEAT_C = 45;
+const HEAT_C = 62; // a full fire keeps you comfortable to ~5 m, room to cook and craft beside it
 const MAX_LIGHTS = 2; // only the two nearest fires cast light: every light costs every lit pixel
 
 export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; }
@@ -66,6 +66,9 @@ class Campfire {
   get lit() { return this.fuel > 0; }
 
   dispose() { (this.meat.material as THREE.Material).dispose(); }
+
+  /** A real gutter (horror camp event): dips the flame and burns `seconds` of fuel. */
+  gutterNow(seconds: number) { this.gutter = 1.6; this.fuel = Math.max(1, this.fuel - seconds); }
 
   /** Returns how many pieces finished cooking this frame (via `done`). */
   update(dt: number, done: () => void = () => {}) {
