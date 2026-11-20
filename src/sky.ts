@@ -50,7 +50,9 @@ export class Sky {
   time = 0.3;
   speed = 1;
   readonly sun = new THREE.DirectionalLight(0xfff1dc, 3);
-  readonly moon = new THREE.DirectionalLight(0x9fb4e0, 0.4);
+  /** Sun and moon are never both meaningful, so one directional light plays whichever is up (one light fewer on every
+   *  pixel, and no shader recompiles: the light count never changes). */
+  private moonCol = new THREE.Color(0x9fb4e0);
   readonly hemi = new THREE.HemisphereLight();
   readonly sunDir = new THREE.Vector3();
   /** 0 by day, 1 at full night. */
@@ -73,7 +75,7 @@ export class Sky {
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(140, 32, 16), mat);
     this.dome.renderOrder = -1;
     this.dome.frustumCulled = false;
-    scene.add(this.dome, this.sun, this.sun.target, this.moon, this.moon.target, this.hemi);
+    scene.add(this.dome, this.sun, this.sun.target, this.hemi);
   }
 
   /** Keep the dome inside the camera's far plane (which follows the fog). */
@@ -111,11 +113,14 @@ export class Sky {
 
     // Sun light warms and fades near the horizon; the big moon takes over at night.
     const sunUp = THREE.MathUtils.smoothstep(elev, -0.08, 0.1);
-    this.sun.intensity = 3.2 * sunUp;
+    const sunI = 3.2 * sunUp;
     this.sun.color.copy(this.tmp.setRGB(1, 0.62, 0.38)).lerp(new THREE.Color(1, 0.95, 0.86), dayW);
     const moonDir = this.uniforms.moonDir.value.copy(this.sunDir).multiplyScalar(-1).add(new THREE.Vector3(0.3, 0.25, -0.2)).normalize();
     this.uniforms.moon2Dir.value.copy(moonDir).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.9).add(new THREE.Vector3(0, -0.15, 0)).normalize();
-    this.moon.intensity = 0.32 * nightW * THREE.MathUtils.smoothstep(moonDir.y, -0.05, 0.15);
+    const moonI = 0.32 * nightW * THREE.MathUtils.smoothstep(moonDir.y, -0.05, 0.15);
+    const moonUp = moonI > sunI;
+    this.sun.intensity = moonUp ? moonI : sunI;
+    if (moonUp) this.sun.color.copy(this.moonCol);
 
     this.uniforms.sunDir.value.copy(this.sunDir);
     this.uniforms.night.value = nightW;
@@ -123,9 +128,7 @@ export class Sky {
     // Lights and dome follow the camera.
     const c = camera.position;
     this.dome.position.copy(c);
-    this.sun.position.copy(c).addScaledVector(this.sunDir, 50);
+    this.sun.position.copy(c).addScaledVector(moonUp ? moonDir : this.sunDir, 50);
     this.sun.target.position.copy(c);
-    this.moon.position.copy(c).addScaledVector(moonDir, 50);
-    this.moon.target.position.copy(c);
   }
 }

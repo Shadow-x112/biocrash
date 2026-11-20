@@ -136,6 +136,9 @@ export const SPECIES: Record<Species['id'], Species> = {
     drops: { hide: 2, bone: 1, raw_meat: 2, fiber: 2 }, build: buildOomi },
 };
 
+type Built = { root: THREE.Group; legs: THREE.Object3D[]; body: THREE.Object3D; glow: THREE.MeshStandardMaterial; ball?: THREE.Object3D };
+const TEMPLATES = new Map<string, Built>();
+
 export class Creature {
   readonly root: THREE.Group;
   private legs: THREE.Object3D[];
@@ -159,8 +162,23 @@ export class Creature {
   private peek = 0;
 
   constructor(readonly species: Species, readonly position: THREE.Vector3) {
-    const b = species.build();
-    this.root = b.root; this.legs = b.legs; this.body = b.body; this.glow = b.glow; this.ball = b.ball;
+    // Each species is built (and its body merged) once; every spawn clones that template, sharing its geometry and
+    // materials. Only the glow material is per creature, because it flashes red when that creature is hurt.
+    let t = TEMPLATES.get(species.id);
+    if (!t) {
+      t = species.build();
+      t.body.name = 'body';
+      if (t.ball) t.ball.name = 'ball';
+      t.legs.forEach((l, i) => { l.userData.leg = i; });
+      TEMPLATES.set(species.id, t);
+    }
+    const tpl = t;
+    this.root = tpl.root.clone(true);
+    this.glow = tpl.glow.clone();
+    this.root.traverse((o) => { if (o instanceof THREE.Mesh && o.material === tpl.glow) o.material = this.glow; });
+    this.body = this.root.getObjectByName('body')!;
+    this.ball = this.root.getObjectByName('ball');
+    this.legs = this.root.children.filter((o) => o.userData.leg !== undefined).sort((a, b) => a.userData.leg - b.userData.leg);
     this.health = species.health;
     this.root.position.copy(position);
   }
@@ -319,13 +337,8 @@ export class Fauna {
 
   private remove(c: Creature) {
     this.group.remove(c.root);
-    // Each creature owns its geometries and materials: free them so long sessions don't leak GPU memory.
-    c.root.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
-        o.geometry.dispose();
-        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
-      }
-    });
+    // Geometry and materials are shared with the species template; only the creature's own glow material is freed.
+    c.glow.dispose();
     this.list.splice(this.list.indexOf(c), 1);
   }
 

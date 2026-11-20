@@ -35,7 +35,6 @@ export class Survival {
   /** Seconds after a respawn with slower heat loss, so penalties don't stack up. */
   afterglow = 0;
   private probeTimer = 0;
-  private ray = new THREE.Raycaster();
 
   get cold() { return this.warmth < 30; }
   get dead() { return this.health <= 0; }
@@ -51,16 +50,22 @@ export class Survival {
   /** Speed multiplier for the player (cold makes you sluggish). */
   moveFactor() { return this.cold ? 0.7 + (this.warmth / 30) * 0.3 : 1; }
 
-  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; meshes: THREE.Object3D[] }) {
-    // Expensive checks (is the sky above you? is the sun blocked?) run a few times a second.
+  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; roof: (eye: THREE.Vector3) => boolean;
+    ground: (x: number, z: number) => { y: number } | null }) {
+    // Is there anything over your head, and is the sun behind terrain? A few times a second. The roof uses the physics
+    // ray (fast); the shade check walks along the sun's direction against the height map instead of raycasting meshes.
     if ((this.probeTimer -= dt) <= 0) {
       this.probeTimer = 0.4;
-      this.ray.far = 40;
-      this.ray.set(ctx.eye, new THREE.Vector3(0, 1, 0));
-      this.sheltered = this.ray.intersectObjects(ctx.meshes, false).length > 0;
-      this.ray.far = 120;
-      this.ray.set(ctx.eye, ctx.sunDir);
-      this.shaded = ctx.sunDir.y > 0 && this.ray.intersectObjects(ctx.meshes, false).length > 0;
+      this.sheltered = ctx.roof(ctx.eye);
+      this.shaded = false;
+      if (ctx.sunDir.y > 0) {
+        for (let d = 3; d <= 120; d += 3) {
+          const x = ctx.eye.x + ctx.sunDir.x * d, y = ctx.eye.y + ctx.sunDir.y * d, z = ctx.eye.z + ctx.sunDir.z * d;
+          const g = ctx.ground(x, z);
+          if (g && g.y > y) { this.shaded = true; break; }
+          if (y > 90) break; // above any terrain
+        }
+      }
     }
 
     // Open-air temperature follows the sun, then shade, shelter and height adjust it.

@@ -43,7 +43,9 @@ async function main() {
   hud.textContent = '';
 
   // --- Renderer, scene, camera ---------------------------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  // With post-processing on, its own multisampled buffer does the anti-aliasing; canvas AA would be paid for twice
+  // (~150 MB at 1080p). Turning post off takes effect for AA on the next load.
+  const renderer = new THREE.WebGLRenderer({ antialias: !loadSettings().post, stencil: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -572,6 +574,7 @@ async function main() {
 
   // --- Actions -----------------------------------------------------------------------------------
   const aimDir = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
   /** What terrain the crosshair is on, within `reach` (through the physics colliders, not the render meshes). */
   const aimAtTerrain = (reach: number) => world.raycast(camera.position, camera.getWorldDirection(aimDir), reach);
   const hitEl = $('hitmark'), crossEl = $('crosshair');
@@ -943,7 +946,8 @@ async function main() {
       const wdt = resting ? dt * 6 : dt; // world time while resting
       sky.update(wdt, camera);
       if (state === 'playing' && !player.frozen) {
-        survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, meshes: world.meshes() });
+        survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40),
+          ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor();
         if (survival.dead) {
           setState('dead');

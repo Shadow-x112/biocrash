@@ -1,5 +1,6 @@
 // Campfires: the first heat source you build. They burn fuel, light the night and keep you warm.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { HeatSource } from './survival';
 
 export const CAMPFIRE_COST = { stalkwood: 4, stone: 5 } as const;
@@ -35,22 +36,10 @@ class Campfire {
   /** Light jitter, so lit surfaces crawl. */
   readonly jitter = new THREE.Vector3();
 
-  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { stone: THREE.BufferGeometry; log: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
+  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
     this.group.position.copy(position);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const s = new THREE.Mesh(parts.stone, parts.mats.stone);
-      s.position.set(Math.cos(a) * 0.55, 0.08, Math.sin(a) * 0.55);
-      s.rotation.set(a, a * 2, 0);
-      s.scale.setScalar(0.8 + ((i * 37) % 10) / 25);
-      this.group.add(s);
-    }
-    for (let i = 0; i < 3; i++) {
-      const l = new THREE.Mesh(parts.log, parts.mats.log);
-      l.position.y = 0.18;
-      l.rotation.set(Math.PI / 2 - 0.5, (i / 3) * Math.PI * 2, 0, 'YXZ');
-      this.group.add(l);
-    }
+    // The stone ring and log pile are pre-merged (shared by every fire): 2 draw calls instead of 11.
+    this.group.add(new THREE.Mesh(parts.ring, parts.mats.stone), new THREE.Mesh(parts.logs, parts.mats.log));
     this.flame = new THREE.Mesh(parts.flame, parts.mats.flame);
     this.flame.position.y = 0.45;
     this.inner = new THREE.Mesh(parts.flame, parts.mats.flameCore);
@@ -102,13 +91,39 @@ class Campfire {
   }
 }
 
+/** Eight stones in a ring, baked into one geometry. */
+function ringGeometry() {
+  const stone = new THREE.DodecahedronGeometry(0.16, 0), m = new THREE.Object3D(), parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    m.position.set(Math.cos(a) * 0.55, 0.08, Math.sin(a) * 0.55);
+    m.rotation.set(a, a * 2, 0);
+    m.scale.setScalar(0.8 + ((i * 37) % 10) / 25);
+    m.updateMatrix();
+    parts.push(stone.clone().applyMatrix4(m.matrix));
+  }
+  return mergeGeometries(parts)!;
+}
+
+/** Three logs leaning together, baked into one geometry. */
+function logsGeometry() {
+  const log = new THREE.CylinderGeometry(0.05, 0.07, 0.8, 6), m = new THREE.Object3D(), parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 3; i++) {
+    m.position.set(0, 0.18, 0);
+    m.rotation.set(Math.PI / 2 - 0.5, (i / 3) * Math.PI * 2, 0, 'YXZ');
+    m.updateMatrix();
+    parts.push(log.clone().applyMatrix4(m.matrix));
+  }
+  return mergeGeometries(parts)!;
+}
+
 export class Campfires {
   readonly group = new THREE.Group();
   readonly list: Campfire[] = [];
   private lights: THREE.PointLight[] = [];
   private parts = {
-    stone: new THREE.DodecahedronGeometry(0.16, 0),
-    log: new THREE.CylinderGeometry(0.05, 0.07, 0.8, 6),
+    ring: ringGeometry(),
+    logs: logsGeometry(),
     flame: new THREE.ConeGeometry(0.28, 0.9, 7, 1, true).translate(0, 0.1, 0),
     meat: new THREE.DodecahedronGeometry(0.13, 0).scale(1.3, 0.8, 1),
     mats: {
@@ -142,10 +157,12 @@ export class Campfires {
   private ray = new THREE.Raycaster();
   private centre = new THREE.Vector2(0, 0);
   lookAt(camera: THREE.Camera, reach: number) {
-    if (!this.list.length) return null;
+    // Only fires within reach are worth a raycast (this runs 10 times a second).
+    const near = this.list.filter((f) => f.position.distanceToSquared(camera.position) < (reach + 2) ** 2);
+    if (!near.length) return null;
     this.ray.setFromCamera(this.centre, camera);
     this.ray.far = reach;
-    const hits = this.ray.intersectObjects(this.list.map((f) => f.group), true);
+    const hits = this.ray.intersectObjects(near.map((f) => f.group), true);
     if (!hits.length) return null;
     return this.list.find((f) => hits[0].object.parent === f.group) ?? null;
   }

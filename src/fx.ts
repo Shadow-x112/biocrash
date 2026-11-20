@@ -29,7 +29,9 @@ export class Post {
     // Chromatic aberration (the pass's one convolution effect) sits at zero offset unless the core glitches. Everything
     // is merged into one pass: a disabled last pass would leave nothing drawn to the screen.
     this.ca = new ChromaticAberrationEffect({ offset: new THREE.Vector2(0, 0), radialModulation: true, modulationOffset: 0.2 });
-    this.composer.addPass(new EffectPass(camera, this.bloom, this.ca, this.vignette, this.noise, new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC })));
+    const pass = new EffectPass(camera, this.bloom, this.ca, this.vignette, this.noise, new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
+    pass.dithering = true; // the final 8-bit image otherwise bands in near-black night gradients
+    this.composer.addPass(pass);
   }
 
   setEnabled(on: boolean) {
