@@ -30,6 +30,8 @@ export interface SaveMeta {
   /** Nights survived: the horror layer unlocks events over the first few. */
   nights?: number;
   horror?: { figureSeen: boolean; figureNight: number };
+  /** Wrist-lamp charge 0..100. */
+  lamp?: number;
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -106,6 +108,8 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     out.packs = out.packs.slice(0, 50);
   }
   if (typeof m.wasNight === 'boolean') out.wasNight = m.wasNight;
+  const lampC = num(m.lamp, 0, 100);
+  if (lampC !== undefined) out.lamp = lampC;
   const nights = num(m.nights, 0, 1e5);
   if (nights !== undefined) out.nights = Math.floor(nights);
   const h = m.horror as Record<string, unknown> | undefined;

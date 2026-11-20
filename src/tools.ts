@@ -90,10 +90,28 @@ export class Hotbar {
   update(dt: number, moving: boolean) {
     this.swingT = Math.min(1, this.swingT + dt * 3.2);
     this.bobT += dt * (moving ? 9 : 2);
-    const swing = Math.sin(this.swingT * Math.PI);
+    // Wind-up, a fast strike that lands at ~0.4 of the swing (about 0.12 s, when the hit registers), then recovery.
+    const t = this.swingT;
+    const strike = t < 0.25 ? -0.35 * Math.sin((t / 0.25) * Math.PI / 2) : t < 0.42 ? -0.35 + 1.35 * ((t - 0.25) / 0.17) : 1 - (t - 0.42) / 0.58;
+    const s = t >= 1 ? 0 : strike;
     const bob = moving ? 0.012 : 0.004;
-    const stab = this.slot === 'spear';
-    this.view.position.set(0.26 + Math.cos(this.bobT) * bob, -0.2 + Math.abs(Math.sin(this.bobT)) * bob - swing * (stab ? 0.02 : 0.06), -0.42 - swing * (stab ? 0.28 : 0.04));
-    this.view.rotation.set(stab ? swing * 0.15 : -swing * 0.9, 0, stab ? 0 : swing * 0.2);
+    const bx = 0.26 + Math.cos(this.bobT) * bob, by = -0.2 + Math.abs(Math.sin(this.bobT)) * bob, bz = -0.42;
+    switch (this.slot) {
+      case 'spear': // straight stab
+        this.view.position.set(bx, by - s * 0.02, bz - s * 0.3);
+        this.view.rotation.set(s * 0.12, 0, 0);
+        break;
+      case 'stone_pick': // big overhead chop
+        this.view.position.set(bx - s * 0.03, by + 0.05 * Math.max(0, -s) - s * 0.09, bz - s * 0.06);
+        this.view.rotation.set(-s * 1.25, 0, s * 0.1);
+        break;
+      case 'stone_knife': // sideways slash
+        this.view.position.set(bx - s * 0.16, by - s * 0.03, bz - s * 0.08);
+        this.view.rotation.set(-s * 0.3, s * 0.5, s * 0.7);
+        break;
+      default: // hands: a short grab forward
+        this.view.position.set(bx - s * 0.04, by - s * 0.04, bz - s * 0.12);
+        this.view.rotation.set(-s * 0.5, 0, s * 0.15);
+    }
   }
 }

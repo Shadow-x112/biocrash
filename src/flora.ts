@@ -1,6 +1,7 @@
 // Fungal forest flora: giant mushrooms you can harvest for stalkwood, glowing sprouts, and drifting
 // spores at night. Placement comes from the worker's decoration pass (unedited terrain, seeded per chunk).
 import * as THREE from 'three';
+import { addSway } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
@@ -26,6 +27,9 @@ const GILLS = new THREE.MeshStandardMaterial({ color: 0x8c6f86, roughness: 1, fl
 const SPOTS = new THREE.MeshStandardMaterial({ color: 0x20302c, emissive: 0x6ff0d8, emissiveIntensity: 0.3, flatShading: true });
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
 const CAP = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, flatShading: true }); // tinted per instance
+// Caps, gills and their glowing spots sway together (same world-space motion); sprouts bend from the base.
+for (const m of [CAP, GILLS, SPOTS]) addSway(m, 0.06);
+addSway(SPROUT, 0.1, true);
 const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.Color(c));
 
 // Unit geometries, scaled per instance: 1 m tall stalk, 1 m radius cap.

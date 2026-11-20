@@ -255,6 +255,7 @@ export class Horror {
       }
     }
     if (this.glitch > 0) this.glitch -= dt;
+    if (this.staticT > 0) this.staticT -= dt;
 
     // --- One big event per build-up, from the deck --------------------------------------------------
     if (this.phase === 'build' && t.major <= 0 && this.pendingSting < 0) {
@@ -367,7 +368,11 @@ export class Horror {
     this.fire('sting');
   }
 
+  /** Seconds of static flash left (the post pass turns it into grain and split colours). */
+  staticT = 0;
+
   private flashStatic(seconds: number) {
+    this.staticT = seconds;
     this.staticEl.style.opacity = '0.35';
     setTimeout(() => { this.staticEl.style.opacity = '0'; }, seconds * 1000);
   }

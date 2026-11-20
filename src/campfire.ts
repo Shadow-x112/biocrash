@@ -8,7 +8,7 @@ export const FUEL_PER_WOOD = 90;   // seconds added per stalkwood
 export const FUEL_MAX = 600;
 const HEAT_RADIUS = 8;
 const HEAT_C = 45;
-const MAX_LIGHTS = 4;
+const MAX_LIGHTS = 2; // only the two nearest fires cast light: every light costs every lit pixel
 
 export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; }
 /** Seconds to cook one piece of meat over a lit fire. */
@@ -23,6 +23,17 @@ class Campfire {
   /** Seconds left on each piece of meat on the spit (only the first cooks; the fire must be lit). */
   cooking: number[] = [];
   private meat: THREE.Mesh;
+  /** Flicker: a random walk toward new targets every few frames (sines read as mechanical). */
+  private flick = 1;
+  private flickTarget = 1;
+  private flickTimer = 0;
+  /** Now and then the fire gutters to ~40% for a moment: a warning that usually means nothing. */
+  private gutter = 0;
+  private gutterTimer = 60 + Math.random() * 120;
+  /** 0..1 burst of light when lit or relit. */
+  flare = 1;
+  /** Light jitter, so lit surfaces crawl. */
+  readonly jitter = new THREE.Vector3();
 
   constructor(readonly position: THREE.Vector3, public fuel: number, parts: { stone: THREE.BufferGeometry; log: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
     this.group.position.copy(position);
@@ -67,12 +78,22 @@ class Campfire {
     }
     // Small fires (low fuel) burn lower and give less heat.
     const strength = this.lit ? Math.min(1, 0.45 + this.fuel / FUEL_START) : 0;
-    const flicker = 1 + Math.sin(this.t * 13) * 0.06 + Math.sin(this.t * 23.7) * 0.04;
+    if ((this.flickTimer -= dt) <= 0) {
+      this.flickTimer = 0.05 + Math.random() * 0.09;
+      this.flickTarget = 0.82 + Math.random() * 0.3;
+      this.jitter.set((Math.random() - 0.5) * 0.16, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.16);
+    }
+    this.flick += (this.flickTarget - this.flick) * Math.min(1, dt * 18);
+    if ((this.gutterTimer -= dt) <= 0) { this.gutterTimer = 90 + Math.random() * 180; this.gutter = 1.6; }
+    this.gutter = Math.max(0, this.gutter - dt);
+    const gut = this.gutter > 0 ? 0.4 + 0.6 * Math.abs(this.gutter - 0.8) / 0.8 : 1; // dips to 40% and recovers
+    this.flare = Math.max(0, this.flare - dt * 0.8);
+    const flicker = this.flick * gut;
     this.flame.visible = this.inner.visible = this.lit;
     this.flame.scale.set(strength * flicker, strength * (1.1 + Math.sin(this.t * 9) * 0.12), strength * flicker);
     this.inner.scale.set(0.55 * strength, 0.6 * strength * flicker, 0.55 * strength);
     this.heat.heatC = HEAT_C * strength;
-    return strength * flicker;
+    return strength * flicker + (this.lit ? this.flare * 1.2 : 0);
   }
 }
 
@@ -89,8 +110,9 @@ export class Campfires {
       stone: new THREE.MeshStandardMaterial({ color: 0x7c776f, roughness: 1, flatShading: true }),
       meat: new THREE.MeshStandardMaterial({ color: 0xbf5249, roughness: 0.7, flatShading: true }),
       log: new THREE.MeshStandardMaterial({ color: 0x5a4636, roughness: 1, flatShading: true }),
-      flame: new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-      flameCore: new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      // Brighter than white on purpose (HDR): the bloom pass picks the flames out.
+      flame: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.9, 0.28), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      flameCore: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 1.9, 0.8), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
     } as Record<string, THREE.Material>,
   };
 
@@ -123,7 +145,10 @@ export class Campfires {
     return this.list.find((f) => hits[0].object.parent === f.group) ?? null;
   }
 
-  addFuel(f: Campfire) { f.fuel = Math.min(FUEL_MAX, f.fuel + FUEL_PER_WOOD); }
+  addFuel(f: Campfire) {
+    if (!f.lit) f.flare = 1; // relit: a burst of light
+    f.fuel = Math.min(FUEL_MAX, f.fuel + FUEL_PER_WOOD);
+  }
 
   /** Called when a piece of meat finishes cooking on a fire. */
   onCooked: (f: Campfire) => void = () => {};
@@ -135,8 +160,11 @@ export class Campfires {
     this.lights.forEach((l, i) => {
       const x = lit[i];
       if (!x) { l.intensity = 0; return; }
-      l.position.copy(x.f.position).add(new THREE.Vector3(0, 0.9, 0));
+      l.position.copy(x.f.position).add(x.f.jitter).y += 0.9;
       l.intensity = 7 * x.s;
+      // Redder as the fuel runs low.
+      const low = Math.min(1, x.f.fuel / 120);
+      l.color.setRGB(1, 0.42 + 0.2 * low, 0.18 + 0.12 * low);
     });
   }
 
@@ -145,6 +173,6 @@ export class Campfires {
   }
 
   load(list: CampfireSave[] | undefined) {
-    for (const s of list ?? []) this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel).cooking = [...(s.cooking ?? [])];
+    for (const s of list ?? []) { const f = this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel); f.cooking = [...(s.cooking ?? [])]; f.flare = 0; }
   }
 }

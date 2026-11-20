@@ -15,6 +15,7 @@ import { Fauna, type Creature } from './creatures';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Packs } from './packs';
+import { Post, fxUniforms, addTerrainMist } from './fx';
 import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
@@ -55,11 +56,19 @@ async function main() {
   const sky = new Sky(scene);
   const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, CHUNK * (VIEW_RADIUS + 1));
   scene.add(camera); // the held tool is a child of the camera
+  const post = new Post(renderer, scene, camera);
+  renderer.info.autoReset = false;
   window.addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    post.setSize(innerWidth, innerHeight);
   });
+  // Wrist lamp: the AI core's emergency light. A narrow cone, no shadows, on a charge that refills at fires and in daylight.
+  const lamp = new THREE.SpotLight(0xdff4ff, 0, 32, 0.42, 0.55, 1.2);
+  lamp.position.set(0.15, -0.12, 0);
+  lamp.target.position.set(0, -0.05, -1);
+  camera.add(lamp, lamp.target);
 
   // --- Load the save ---------------------------------------------------------------------------
   const store = await SaveStore.open();
@@ -71,6 +80,7 @@ async function main() {
   const physics = new RAPIER.World({ x: 0, y: -22, z: 0 });
   const world = new World(seed, RAPIER, physics);
   scene.add(world.group);
+  addTerrainMist(world.material);
   if (loaded) for (const [k, v] of loaded.edits) world.edits.set(k, v);
 
   const input = new Input(canvas);
@@ -124,7 +134,7 @@ async function main() {
   // Render scale: the Resolution setting, lowered automatically (down to 50%) while the frame rate is poor.
   const basePR = Math.min(devicePixelRatio, 1.5);
   let resScale = 1;
-  const applyRes = () => renderer.setPixelRatio(basePR * resScale);
+  const applyRes = () => { renderer.setPixelRatio(basePR * resScale); post.setSize(innerWidth, innerHeight); };
 
   // --- Settings (per browser) and the station core's first-night objectives ------------------------
   const settings = loadSettings();
@@ -155,6 +165,9 @@ async function main() {
     player.headBob = settings.headBob;
     player.shakeScale = settings.shake ? 1 : 0;
     compassEl.style.display = settings.compass ? '' : 'none';
+    post.setEnabled(settings.post);
+    // With post-processing on, its vignette and grain replace the CSS overlays.
+    for (const id of ['unease', 'static']) $(id).style.display = settings.post ? 'none' : '';
     if (k === 'resolution' || k === 'autoRes' || k === 'master') { resScale = settings.resolution; applyRes(); }
     tutorial.enabled = settings.tutorial;
   };
@@ -182,7 +195,7 @@ async function main() {
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
-    milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(),
+    milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
     inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
@@ -377,6 +390,15 @@ async function main() {
     }).join('');
   }
   const lastCounts: Partial<Record<ItemId, number>> = {};
+  const popPrev: Partial<Record<ItemId, number>> = {};
+  /** A small "+1 Fiber" that floats up from the crosshair. */
+  const pop = (text: string) => {
+    const el = document.createElement('div');
+    el.className = 'pop';
+    el.textContent = text;
+    document.body.append(el);
+    setTimeout(() => el.remove(), 1100);
+  };
   inventory.onChange = () => {
     invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
       const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
@@ -387,6 +409,11 @@ async function main() {
     if (inventory.counts.raw_meat > 0) tutorial.milestone('raw_meat');
     if (inventory.counts.hide > 0 && !inventory.counts.hide_wrap) tutorial.milestone('hide');
     requestAnimationFrame(() => invEl.querySelectorAll('.row.got').forEach((el) => el.classList.remove('got')));
+    if (state === 'playing') for (const k of [...MATERIALS, ...GEAR]) {
+      const d = inventory.counts[k] - (popPrev[k] ?? inventory.counts[k]);
+      if (d > 0) pop(`+${d} ${ITEM_NAMES[k]}`);
+    }
+    for (const k of [...MATERIALS, ...GEAR]) popPrev[k] = inventory.counts[k];
     renderHotbar();
     if (state === 'craft') renderCraft();
   };
@@ -518,6 +545,22 @@ async function main() {
       } else flash('This stalk has been cut back as far as it goes.');
     }
   };
+  // --- Wrist lamp ---------------------------------------------------------------------------------
+  let lampOn = false, lampCharge = meta?.lamp ?? 100;
+  const fireNearPlayer = () => {
+    let n = 0;
+    for (const f of campfires.list) if (f.lit) n = Math.max(n, 1 - f.position.distanceTo(player.position) / 12);
+    return n;
+  };
+  /** Drains in about 4 minutes; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
+  const updateLamp = (dt: number, fireNear: number) => {
+    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 240)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
+    else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0));
+    let k = lampOn ? 1 : 0;
+    if (lampOn && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
+    lamp.intensity = 18 * k * (lampCharge < 15 ? 0.6 : 1);
+  };
+
   /** Q: cook raw meat on the fire you're looking at, otherwise eat cooked meat. */
   const food = () => {
     const f = campfires.lookAt(camera, USE_REACH);
@@ -567,8 +610,15 @@ async function main() {
     audio.fireLit(hit.point);
     flash('Campfire built. Add stalkwood (E) to keep it burning.');
   };
+  /** Hits land when the swing connects (~0.12 s in), not when it starts. */
+  const pendingHits: { t: number; c: Creature }[] = [];
+  let hitStop = 0;
   const attack = (c: Creature) => {
     hotbar.swing();
+    pendingHits.push({ t: 0.12, c });
+  };
+  const landHit = (c: Creature) => {
+    if (!c.alive) return;
     const dmg = ATTACK[hotbar.slot].damage * (hotbar.slot === 'spear' && inventory.counts.chitin_spearhead > 0 ? 1.5 : 1);
     const hit = c.damage(dmg, player.position);
     const at = c.hitCentre();
@@ -578,7 +628,9 @@ async function main() {
       audio.hit(at, !c.alive);
       if (!c.alive) { audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 }); tutorial.milestone('first_kill'); }
       particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
-      player.shake(c.alive ? 0.25 : 0.45);
+      // Heavier hits feel heavier: shake and a brief freeze of the world (hit-stop) scale with damage.
+      player.shake(Math.min(0.55, 0.08 + dmg / 70 + (c.alive ? 0 : 0.2)));
+      hitStop = Math.min(0.09, 0.03 + dmg / 900 + (c.alive ? 0 : 0.03));
     } else if (c.state === 'curl') { audio.shellClack(at); particles.burst(at, 4, 0xffffff, { speed: 4, size: 0.03, life: 0.3 }); }
     if (!hit && c.state === 'curl') flash(`The ${c.species.name} curled into its shell.`);
     else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (E).`);
@@ -629,6 +681,10 @@ async function main() {
     if (e.code === 'KeyE') use();
     else if (e.code === 'KeyB') buildCampfire();
     else if (e.code === 'KeyQ') food();
+    else if (e.code === 'KeyL') {
+      if (!lampOn && lampCharge < 3) { audio.deny(); flash('The lamp is out of charge. It refills by a fire or in daylight.'); }
+      else { lampOn = !lampOn; audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: lampOn ? 1.4 : 1.1 }); }
+    }
     else if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
     else {
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
@@ -642,7 +698,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, getState: () => state, setNights: (n: number) => { nights = n; } } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, post, renderer, scene, getState: () => state, setNights: (n: number) => { nights = n; } } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
@@ -658,7 +714,7 @@ async function main() {
     $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
-    const buffs = [survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
+    const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ' (L)'}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
     if (buffsEl.textContent !== buffs) buffsEl.textContent = buffs;
     if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
       $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
@@ -785,9 +841,13 @@ async function main() {
       campfires.update(dt, player.position);
       packs.update(dt);
       flora.update(dt, camera.position, sky.night);
-      fauna.update(dt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
-      hotbar.update(dt, input.moving);
-      particles.update(dt);
+      const simDt = hitStop > 0 ? dt * 0.05 : dt;
+      hitStop = Math.max(0, hitStop - dt);
+      for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }
+      fauna.update(simDt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
+      hotbar.update(simDt, input.moving);
+      particles.update(simDt);
+      updateLamp(dt, fireNearPlayer());
       worldSounds(dt);
       if (state === 'playing') {
         let fireNear = 0;
@@ -819,6 +879,12 @@ async function main() {
     audio.updateListener(camera);
     audio.updateLoops();
     renderer.toneMappingExposure = horror.exposure;
+    // Atmosphere uniforms: mist pools at night and with unease; mushrooms breathe at night.
+    fxUniforms.uFxTime.value += dt;
+    fxUniforms.uMist.value = Math.min(0.75, sky.night * 0.55 + horror.level * 0.3);
+    fxUniforms.uMistTop.value = camera.position.y - 1.5;
+    fxUniforms.uBreath.value = Math.min(1, sky.night * 0.6 + horror.level * 0.5);
+    post.update(horror.level, horror.glitch, horror.staticT);
     const fog = scene.fog as THREE.Fog;
     fog.far = CHUNK * VIEW_RADIUS * (1 - sky.night * 0.4 - horror.level * 0.15);
     fog.near = fog.far * (0.55 - sky.night * 0.25);
@@ -827,7 +893,8 @@ async function main() {
     if (Math.abs(camera.far - far) > 2) { camera.far = far; camera.updateProjectionMatrix(); sky.setRadius(far * 0.9); }
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
-    renderer.render(scene, camera);
+    renderer.info.reset(); // count every pass of the frame for the F3 readout
+    post.render(scene, camera, dt);
     smooth('render', performance.now() - tm);
     frameMs = frameMs * 0.95 + (performance.now() - t0) * 0.05;
     fps = fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;

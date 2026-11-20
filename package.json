@@ -12,6 +12,7 @@
   "dependencies": {
     "@dimforge/rapier3d": "^0.21.0",
     "alea": "^1.0.1",
+    "postprocessing": "^6.39.6",
     "simplex-noise": "^4.0.3",
     "three": "^0.187.0"
   },
