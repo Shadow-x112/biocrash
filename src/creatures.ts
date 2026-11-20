@@ -150,6 +150,11 @@ export class Creature {
   health: number;
   state: State = 'idle';
   heading = Math.random() * Math.PI * 2;
+  /** Its own voice: a pitch offset (semitones) and a filter tint, fixed for life. */
+  readonly voice = Math.random() * 6 - 3;
+  readonly tint = 2500 + Math.random() * 12000;
+  /** Last state the sound code saw (to catch the moment it takes fright). */
+  heardState: string = 'idle';
   /** Knockback velocity from hits (m/s), decays quickly. */
   private knock = new THREE.Vector2();
   private timer = Math.random() * 3;

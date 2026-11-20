@@ -112,6 +112,15 @@ async function main() {
   const input = new Input(canvas);
   const player = new Player(RAPIER, physics, camera, input);
   const audio = new Audio();
+  { // Sound obstruction: one terrain ray from the listener to the sound (stopping short of the sound itself).
+    const a = new THREE.Vector3(), d = new THREE.Vector3();
+    audio.occluder = (from, to) => {
+      a.set(from.x, from.y, from.z); d.set(to.x - from.x, to.y - from.y, to.z - from.z);
+      const len = d.length();
+      if (len < 4) return false;
+      return world.raycast(a, d.divideScalar(len), len - 1.5) !== null;
+    };
+  }
   const particles = new Particles(scene);
   const horror = new Horror(audio, scene);
   horror.load(meta?.horror);
@@ -649,7 +658,7 @@ async function main() {
         particles.burst(t.s.base.clone().setY(t.s.base.y + 1.2), 8, 0xd9cfb8, { speed: 2.5 });
         if (flora.toppled(t.s)) { // the last cut: it comes down in a puff of spores
           particles.burst(t.s.base.clone().setY(t.s.base.y + 1), 26, 0x9fffe6, { speed: 3.5, life: 1.4 });
-          audio.dig(t.s.base, true);
+          audio.topple(t.s.base);
           player.shake(0.3);
           flash('The stalk comes down.');
         }
@@ -705,7 +714,10 @@ async function main() {
     if (survival.warmth < 45 && sky.night > 0.3) tutorial.milestone('cold');
     if (sky.time > 0.6 && sky.time < 0.66) tutorial.milestone('sunset'); // urgent: shows even mid-tutorial
     if (sky.night > 0.8) wasNight = true;
-    if (wasNight && sky.time > 0.27 && sky.time < 0.4) { nights++; tutorial.milestone('dawn'); wasNight = false; }
+    if (wasNight && sky.time > 0.27 && sky.time < 0.4) {
+      nights++; tutorial.milestone('dawn'); wasNight = false;
+      if (fireNearPlayer() > 0.5) audio.safeMotif(); // the reward cue: you kept the fire through the night
+    }
     if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
   };
 
@@ -771,7 +783,7 @@ async function main() {
     inventory.take(CAMPFIRE_COST);
     if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
     campfires.add(hit.point.clone());
-    audio.fireLit(hit.point);
+    audio.place(hit.point);
     flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
   };
   const updatePlacing = (dt: number) => {
@@ -798,6 +810,7 @@ async function main() {
       hitEl.className = c.alive ? 'on' : 'on kill';
       requestAnimationFrame(() => requestAnimationFrame(() => { hitEl.className = c.alive ? '' : 'kill'; }));
       audio.hit(at, !c.alive);
+      audio.creatureCall(c.species.id, at, c.alive ? 'hurt' : 'death', c.voice, c.tint, 0.05);
       if (!c.alive) { audio.play('meat_drop', { pos: at, gain: 0.8, delay: 0.15 }); tutorial.milestone('first_kill'); }
       particles.burst(at, c.alive ? 6 : 14, c.species.id === 'tuko' ? 0x6fd8c8 : 0xc9a27a, { speed: 3 });
       // Heavier hits feel heavier: shake and a brief freeze of the world (hit-stop) scale with damage.
@@ -917,13 +930,24 @@ async function main() {
         audio.fireCrackle(f.position, Math.min(1, f.fuel / 180));
       }
     }
+    // Fright: the moment a creature bolts (or a tuko balls up) it gives an alarm call.
+    for (const c of fauna.list) {
+      if (c.state === c.heardState) continue;
+      if ((c.state === 'flee' || c.state === 'curl') && c.heardState !== 'flee' && c.heardState !== 'curl' && c.position.distanceToSquared(player.position) < 40 * 40)
+        audio.creatureCall(c.species.id, c.position, 'alarm', c.voice, c.tint);
+      c.heardState = c.state;
+    }
     if ((callTimer -= dt) <= 0) {
       callTimer = 1.5 + Math.random() * 3;
       const near = fauna.list.filter((c) => c.alive && c.position.distanceToSquared(player.position) < 30 * 30);
       const c = near[Math.floor(Math.random() * near.length)];
+      if (c && c.state !== 'curl' && c.state !== 'sleep') {
+        audio.creatureCall(c.species.id, c.position, 'idle', c.voice, c.tint);
+        // Sometimes another of its kind answers, from somewhere else, a moment later.
+        const other = near.find((o) => o !== c && o.species.id === c.species.id && o.state !== 'curl' && o.state !== 'sleep');
+        if (other && Math.random() < 0.4) audio.creatureCall(other.species.id, other.position, 'idle', other.voice, other.tint, 1 + Math.random() * 2);
+      } else if (c && c.species.id === 'oomi') audio.oomiHoot(c.position, true);
       if (c) {
-        if (c.species.id === 'tuko' && c.state !== 'curl') audio.tukoChirp(c.position);
-        else if (c.species.id === 'oomi') audio.oomiHoot(c.position, c.state === 'sleep');
         if (performance.now() - lastCallCaption > 10_000) { lastCallCaption = performance.now(); caption(c.species.id === 'tuko' ? 'Tuko chirping' : 'Oomi hooting', c.position); }
       }
     }

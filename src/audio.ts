@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 
 type V3 = { x: number; y: number; z: number };
+type Bus = 'sfx' | 'ui' | 'amb' | 'stinger';
 
 export class Audio {
   ctx: AudioContext | null = null;
@@ -37,6 +38,14 @@ export class Audio {
   private decoding = new Map<string, Promise<void>>();
   private lastUsed = new Map<string, number>();
   private sweep = 0;
+  private stinger!: GainNode;        // horror stingers: not ducked, but silenced by the pause gain (unlike the UI)
+  private ext = 'webm';              // 'm4a' on browsers that can't decode Opus (Safari before 17.4)
+  private wantSuspended = false;
+  /** Set by the game: does terrain block the straight line between two points? (one physics ray) */
+  occluder: ((from: V3, to: V3) => boolean) | null = null;
+  private occCache = new Map<string, { occ: boolean; t: number }>();
+  private tracked: { pos: V3; f: BiquadFilterNode; g: GainNode; send: GainNode | null; base: number; sendBase: number; until: number }[] = [];
+  private occTimer = 0;
 
   /** Call from a click handler. Safe to call repeatedly. */
   unlock() {
@@ -56,6 +65,13 @@ export class Audio {
     // ominous to Jorge (A/B at matched loudness, 2026-11-19). Keep the weight; adjust here only by ear.
     const ambShelf = this.ambShelf = ctx.createBiquadFilter(); ambShelf.type = 'lowshelf'; ambShelf.frequency.value = 160; ambShelf.gain.value = 0;
     this.sfx.connect(this.world); this.amb.connect(ambShelf).connect(this.world); this.ui.connect(this.master);
+    this.stinger = ctx.createGain(); this.stinger.connect(this.pause);
+    // iOS/Safari can suspend ("interrupted") the context on a call or a lock screen: resume at the next touch or key.
+    ctx.addEventListener('statechange', () => {
+      if (ctx.state === 'running' || this.wantSuspended) return;
+      const kick = () => { if (!this.wantSuspended) void ctx.resume(); };
+      for (const e of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(e, kick, { once: true });
+    });
     // Shared reverb: two generated impulse responses (no files), crossfaded between open air and caves.
     this.reverbIn = ctx.createGain();
     const mkVerb = (seconds: number, damp: number, level: number) => {
@@ -83,11 +99,14 @@ export class Audio {
       const res = await fetch('audio/manifest.json');
       if (!res.ok) return;
       this.sampleList = await res.json();
+      // Opus (WebM) decodes everywhere except Safari before 17.4: probe one small file and fall back to AAC (.m4a).
+      try { await this.ctx!.decodeAudioData(await (await fetch('audio/ui_1.webm')).arrayBuffer()); }
+      catch { this.ext = 'm4a'; }
       // Everything is fetched (6.7 MB compressed) but decoded audio is ~220 MB, two thirds of it in the long beds and
       // memories. Those stay compressed until needed and are dropped again after a minute unused.
       await Promise.all(Object.entries(this.sampleList!).map(async ([id, s]) => {
         try {
-          const data = await (await fetch(s.file)).arrayBuffer();
+          const data = await (await fetch(this.ext === 'webm' ? s.file : s.file.replace(/\.webm$/, '.m4a'))).arrayBuffer();
           if (LAZY.test(id)) { this.packed.set(id, { data, gain: s.gain }); return; }
           this.samples.set(id, { buf: await this.ctx!.decodeAudioData(data), gain: s.gain });
         } catch { /* a missing sound just stays silent */ }
@@ -125,8 +144,11 @@ export class Audio {
   }
   get sampleCount() { return this.samples.size; }
 
+  /** A playing loop keeps its sound decoded (so its next crossfade doesn't wait for a decode). */
+  touch(id: string) { if (this.lastUsed.has(id)) this.lastUsed.set(id, performance.now()); }
+
   /** Plays a recorded sound once. offset/dur play a slice of a longer file. Returns the gain node (for fades) or null. */
-  play(id: string, o: { pos?: V3; gain?: number; rate?: number; bus?: 'sfx' | 'ui' | 'amb'; hrtf?: boolean; offset?: number; dur?: number; fadeIn?: number; delay?: number } = {}) {
+  play(id: string, o: { pos?: V3; gain?: number; rate?: number; rateEnd?: number; lp?: number; bus?: Bus; hrtf?: boolean; offset?: number; dur?: number; fadeIn?: number; delay?: number } = {}) {
     const ctx = this.ctx;
     if (!ctx) return null;
     const s = this.buffer(id);
@@ -140,12 +162,16 @@ export class Audio {
     const t = ctx.currentTime + (o.delay ?? 0);
     const src = ctx.createBufferSource();
     src.buffer = s.buf;
-    src.playbackRate.value = o.rate ?? 1;
+    src.playbackRate.setValueAtTime(o.rate ?? 1, t);
     const g = ctx.createGain();
     const level = s.gain * (o.gain ?? 1);
+    const len = (o.dur ?? s.buf.duration) / (o.rate ?? 1);
+    if (o.rateEnd) src.playbackRate.exponentialRampToValueAtTime(o.rateEnd, t + len);
     if (o.fadeIn) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, level), t + o.fadeIn); }
     else g.gain.value = level;
-    src.connect(g).connect(this.out(o.bus === 'ui' ? this.ui : o.bus === 'amb' ? this.amb : this.sfx, o.pos, o.hrtf));
+    let head: AudioNode = g;
+    if (o.lp) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.lp; g.connect(f); head = f; }
+    src.connect(g); head.connect(this.out(this.bus(o.bus), o.pos, o.hrtf, len + (o.delay ?? 0)));
     // A bad offset/duration (NaN, negative) would throw in start() after the voice was counted, leaking a voice slot for
     // good: clamp, and undo the count if start still fails.
     const offset = Math.min(Math.max(0, Number.isFinite(o.offset) ? o.offset! : 0), Math.max(0, s.buf.duration - 0.01));
@@ -238,6 +264,7 @@ export class Audio {
     this.sfx.gain.value = this.volumes.sfx;
     this.amb.gain.value = this.volumes.ambience;
     this.ui.gain.value = this.volumes.ui;
+    this.stinger.gain.value = this.volumes.ui;
   }
 
   /** Pause/resume with the game (menus mute the world, not the UI). */
@@ -250,8 +277,8 @@ export class Audio {
   }
 
   /** Tab hidden: stop the audio clock entirely. Visible again: resume (menus stay muted by the pause gain). */
-  suspend() { if (this.ctx?.state === 'running') void this.ctx.suspend(); }
-  resume() { if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume(); }
+  suspend() { this.wantSuspended = true; if (this.ctx?.state === 'running') void this.ctx.suspend(); }
+  resume() { this.wantSuspended = false; if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') void this.ctx.resume(); }
 
   /** Move the listener with the camera. */
   updateListener(camera: THREE.Camera) {
@@ -275,7 +302,21 @@ export class Audio {
 
   /** Routes a voice to its bus. Positioned voices get panning, air absorption (darker with distance) and a reverb send
    *  that grows with distance, so far sounds read as far, not just quiet. HRTF only when asked (it is expensive). */
-  private out(bus: GainNode, pos?: V3, hrtf = false) {
+  private bus(b?: Bus) { return b === 'ui' ? this.ui : b === 'amb' ? this.amb : b === 'stinger' ? this.stinger : this.sfx; }
+
+  /** Cached terrain check (one physics ray per ~1 m cell per half second). */
+  private occludedAt(pos: V3) {
+    if (!this.occluder) return false;
+    const k = `${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)}`, now = performance.now();
+    const c = this.occCache.get(k);
+    if (c && now - c.t < 500) return c.occ;
+    if (this.occCache.size > 256) this.occCache.clear();
+    const occ = this.occluder(this.listenerPos, pos);
+    this.occCache.set(k, { occ, t: now });
+    return occ;
+  }
+
+  private out(bus: GainNode, pos?: V3, hrtf = false, life = 0) {
     const ctx = this.ctx!;
     if (!pos) return bus;
     const d = this.listenerPos.distanceTo(pos as THREE.Vector3);
@@ -284,15 +325,28 @@ export class Audio {
     p.distanceModel = 'inverse';
     p.refDistance = 2.5; p.rolloffFactor = 1.1;
     p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
+    // Obstruction: terrain between the sound and the listener muffles it (low-pass ~1.5 kHz), takes ~6 dB off and
+    // sends more of it to the reverb, so a call behind a hill sounds around the hill, not through it.
+    const occ = bus !== this.ui && d > 4 && this.occludedAt(pos);
+    const og = ctx.createGain(); og.gain.value = occ ? 0.5 : 1;
+    og.connect(p);
     p.connect(bus);
     const f = ctx.createBiquadFilter();
     f.type = 'lowpass';
-    f.frequency.value = 18000 * Math.pow(2500 / 18000, Math.min(1, Math.max(0, (d - 5) / 55)));
-    f.connect(p);
+    const base = 18000 * Math.pow(2500 / 18000, Math.min(1, Math.max(0, (d - 5) / 55)));
+    f.frequency.value = occ ? Math.min(base, 1500) : base;
+    f.connect(og);
+    let send: GainNode | null = null;
+    const sendBase = Math.min(0.6, 0.08 + d / 90);
     if (bus !== this.ui) {
-      const send = ctx.createGain();
-      send.gain.value = Math.min(0.6, 0.08 + d / 90);
+      send = ctx.createGain();
+      send.gain.value = occ ? Math.min(0.8, sendBase * 1.6) : sendBase;
       f.connect(send).connect(this.reverbIn);
+    }
+    // Long sounds are re-checked while they play (creatures walk behind hills, the listener moves).
+    if (life > 1.5 && this.occluder) {
+      this.tracked.push({ pos: { x: pos.x, y: pos.y, z: pos.z }, f, g: og, send, base, sendBase, until: ctx.currentTime + life });
+      if (this.tracked.length > 6) this.tracked.shift();
     }
     return f;
   }
@@ -305,7 +359,7 @@ export class Audio {
   }
 
   /** A filtered noise burst with an attack/decay envelope. */
-  noiseHit(o: { dur: number; type: BiquadFilterType; freq: number; freqEnd?: number; q?: number; gain: number; attack?: number; bus?: 'sfx' | 'ui' | 'amb'; pos?: V3; delay?: number; rate?: number }) {
+  noiseHit(o: { dur: number; type: BiquadFilterType; freq: number; freqEnd?: number; q?: number; gain: number; attack?: number; bus?: Bus; pos?: V3; delay?: number; rate?: number }) {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime + (o.delay ?? 0);
@@ -321,13 +375,13 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(Number.isFinite(o.gain) ? Math.max(0.0002, o.gain) : 0.0002, t + a);
     g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-    src.connect(f).connect(g).connect(this.out(o.bus === 'ui' ? this.ui : o.bus === 'amb' ? this.amb : this.sfx, o.pos));
+    src.connect(f).connect(g).connect(this.out(this.bus(o.bus), o.pos, false, o.dur));
     src.start(t, Math.random() * 0.8);
     src.stop(t + o.dur + 0.05);
   }
 
   /** An oscillator blip with a pitch glide. */
-  tone(o: { dur: number; freq: number; freqEnd?: number; type?: OscillatorType; gain: number; attack?: number; bus?: 'sfx' | 'ui' | 'amb'; pos?: V3; delay?: number; vibrato?: number; hrtf?: boolean }) {
+  tone(o: { dur: number; freq: number; freqEnd?: number; type?: OscillatorType; gain: number; attack?: number; bus?: Bus; pos?: V3; delay?: number; vibrato?: number; hrtf?: boolean }) {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime + (o.delay ?? 0);
@@ -346,7 +400,7 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(Number.isFinite(o.gain) ? Math.max(0.0002, o.gain) : 0.0002, t + a);
     g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
-    osc.connect(g).connect(this.out(o.bus === 'ui' ? this.ui : o.bus === 'amb' ? this.amb : this.sfx, o.pos, o.hrtf));
+    osc.connect(g).connect(this.out(this.bus(o.bus), o.pos, o.hrtf, o.dur));
     osc.start(t);
     osc.stop(t + o.dur + 0.05);
   }
@@ -389,10 +443,41 @@ export class Audio {
 
   jump() { this.noiseHit({ dur: 0.08, type: 'bandpass', freq: 500, q: 0.7, gain: 0.08 }); }
 
+  // Interaction sounds are layered: a transient (the contact), a body (the material) and a tail (what follows), each
+  // with its own small random pitch, level and timing offset, so no two hits are the same.
+  private jit() { return Math.random() * 0.012; }
+  private dbv(db = 1.5) { return Math.pow(10, (Math.random() * 2 - 1) * db / 20); }
+  /** A short slice of a long recording, from a random point: one file becomes dozens of variants. */
+  private slice(id: string, pos: V3 | undefined, dur: number, gain: number, rate: number, delay = 0) {
+    const s = this.samples.get(id);
+    if (!s) return false;
+    this.play(id, { pos, dur, gain: gain * this.dbv(), rate: this.vary(rate, 0.08), offset: Math.random() * Math.max(0, s.buf.duration - dur * rate - 0.1), delay });
+    return true;
+  }
+
   dig(pos: V3, strong: boolean) {
     if (!this.ctx || !this.canPlay('dig', 0.08)) return;
-    this.noiseHit({ dur: strong ? 0.16 : 0.22, type: 'lowpass', freq: this.vary(strong ? 900 : 500), freqEnd: 180, q: 1.5, gain: strong ? 0.38 : 0.26, pos });
-    this.noiseHit({ dur: 0.06, type: 'bandpass', freq: this.vary(strong ? 2600 : 1600), q: 2, gain: strong ? 0.16 : 0.06, pos }); // crunch
+    this.noiseHit({ dur: 0.05, type: 'bandpass', freq: this.vary(strong ? 2600 : 1600), q: 2, gain: (strong ? 0.18 : 0.08) * this.dbv(), pos, delay: this.jit() }); // bite
+    if (!this.slice(strong ? 'step_gravel_' + (1 + Math.floor(Math.random() * 8)) : 'step_soil_' + (1 + Math.floor(Math.random() * 8)), pos, 0.25, strong ? 0.8 : 0.7, strong ? 0.8 : 0.7, this.jit()))
+      this.noiseHit({ dur: strong ? 0.16 : 0.22, type: 'lowpass', freq: this.vary(strong ? 900 : 500), freqEnd: 180, q: 1.5, gain: strong ? 0.38 : 0.26, pos });
+    this.noiseHit({ dur: 0.4, type: 'highpass', freq: this.vary(3000, 0.3), gain: 0.025, attack: 0.08, pos, delay: 0.06 + this.jit() }); // trickle
+  }
+
+  /** Something set down on the ground: a thump and a short scrape. */
+  place(pos: V3) {
+    this.tone({ dur: 0.16, freq: this.vary(110), freqEnd: 55, gain: 0.3, pos });
+    this.noiseHit({ dur: 0.12, type: 'lowpass', freq: 500, gain: 0.25, pos });
+    if (!this.slice('scrape', pos, 0.35, 0.5, 1)) this.noiseHit({ dur: 0.3, type: 'bandpass', freq: 1800, q: 1, gain: 0.05, pos, delay: 0.05 });
+  }
+
+  /** The last cut on a giant stalk: it creaks, leans and comes down (matches the topple animation). */
+  topple(pos: V3) {
+    if (!this.slice('friction', pos, 1.1, 0.8, 0.45))
+      this.tone({ dur: 1, freq: 95, freqEnd: 60, type: 'sawtooth', gain: 0.05, attack: 0.3, pos });
+    this.noiseHit({ dur: 0.7, type: 'bandpass', freq: 400, freqEnd: 1400, q: 0.6, gain: 0.08, attack: 0.5, pos, delay: 0.5 }); // the swish of the fall
+    this.tone({ dur: 0.5, freq: 70, freqEnd: 32, gain: 0.55, pos, delay: 1.05 });
+    this.noiseHit({ dur: 0.6, type: 'lowpass', freq: 600, freqEnd: 120, gain: 0.45, pos, delay: 1.05 });
+    this.slice('crunch', pos, 0.4, 0.6, 0.8, 1.1);
   }
 
   fill(pos: V3) {
@@ -407,8 +492,10 @@ export class Audio {
   }
 
   chop(pos: V3) {
-    this.noiseHit({ dur: 0.12, type: 'bandpass', freq: this.vary(1100), q: 3, gain: 0.3, pos });
-    this.tone({ dur: 0.1, freq: this.vary(220), freqEnd: 140, type: 'triangle', gain: 0.12, pos });
+    this.noiseHit({ dur: 0.03, type: 'highpass', freq: this.vary(3500, 0.2), gain: 0.22 * this.dbv(), pos }); // blade contact
+    if (!this.slice('crunch', pos, 0.18, 0.6, 1.1, this.jit())) this.noiseHit({ dur: 0.12, type: 'bandpass', freq: this.vary(1100), q: 3, gain: 0.3, pos });
+    this.tone({ dur: 0.12, freq: this.vary(200), freqEnd: 120, type: 'triangle', gain: 0.12 * this.dbv(), pos, delay: this.jit() }); // fibrous body
+    this.noiseHit({ dur: 0.3, type: 'lowpass', freq: this.vary(700), gain: 0.04, attack: 0.03, pos, delay: 0.05 }); // spores settling
   }
 
   craft() {
@@ -421,8 +508,11 @@ export class Audio {
   deny() { this.tone({ dur: 0.12, freq: 220, freqEnd: 180, type: 'square', gain: 0.04, bus: 'ui' }); }
 
   hit(pos: V3, kill: boolean) {
-    this.tone({ dur: kill ? 0.3 : 0.14, freq: kill ? 160 : 140, freqEnd: 45, gain: 0.45, pos });
-    this.noiseHit({ dur: 0.08, type: 'bandpass', freq: 900, q: 1.2, gain: 0.3, pos });
+    this.noiseHit({ dur: 0.025, type: 'highpass', freq: this.vary(2500, 0.2), gain: 0.25 * this.dbv(), pos }); // impact
+    this.tone({ dur: kill ? 0.3 : 0.14, freq: this.vary(kill ? 160 : 140, 0.1), freqEnd: 45, gain: 0.45 * this.dbv(), pos, delay: this.jit() });
+    this.noiseHit({ dur: 0.08, type: 'bandpass', freq: this.vary(900), q: 1.2, gain: 0.3, pos, delay: this.jit() });
+    if (!this.slice('tear', pos, kill ? 0.45 : 0.2, kill ? 0.7 : 0.4, 1.2, 0.02)) // wet tail
+      this.noiseHit({ dur: 0.25, type: 'lowpass', freq: 500, gain: 0.08, pos, delay: 0.03 });
   }
 
   swing() { this.noiseHit({ dur: 0.12, type: 'bandpass', freq: 800, freqEnd: 2400, q: 1.5, gain: 0.05 }); }
@@ -430,6 +520,43 @@ export class Audio {
   shellClack(pos: V3) {
     this.noiseHit({ dur: 0.05, type: 'highpass', freq: 3000, gain: 0.35, pos });
     this.tone({ dur: 0.06, freq: 1900, type: 'square', gain: 0.05, pos });
+  }
+
+  /** Creature voices. `voice` is the creature's own pitch offset in semitones (+-3) and `tint` its low-pass, so each
+   *  one is recognisable; calls come in idle, alarm, hurt and death sets. */
+  creatureCall(sp: 'tuko' | 'oomi', pos: V3, kind: 'idle' | 'alarm' | 'hurt' | 'death', voice = 0, tint = 20000, delay = 0) {
+    if (!this.ctx) return;
+    const k = Math.pow(2, voice / 12);
+    if (!this.has(`${sp}_1`)) { // synthesized fallback
+      if (sp === 'tuko') this.tone({ dur: kind === 'death' ? 0.5 : 0.07, freq: this.vary(1900 * k, 0.08), freqEnd: kind === 'death' ? 600 : 2700, gain: 0.07, pos, delay });
+      else this.tone({ dur: 0.55, freq: this.vary(230 * k, 0.06), freqEnd: kind === 'death' ? 70 : 170, gain: 0.16, vibrato: 6, attack: 0.08, pos, delay });
+      return;
+    }
+    const o = { pos, lp: tint };
+    if (sp === 'tuko') {
+      if (kind === 'idle') {
+        const v = this.playAny('tuko', 4, { ...o, gain: 0.7, rate: (1.7 + Math.random() * 0.7) * k, dur: 0.25 + Math.random() * 0.2, delay });
+        if (v && Math.random() < 0.5) this.playAny('tuko', 4, { ...o, gain: 0.5, rate: (2 + Math.random() * 0.5) * k, dur: 0.18, delay: delay + 0.16 });
+      } else if (kind === 'alarm') for (let i = 0; i < 3; i++) this.playAny('tuko', 4, { ...o, gain: 0.85, rate: 2.4 * k * this.vary(1, 0.05), dur: 0.12, delay: delay + i * 0.11 });
+      else if (kind === 'hurt') this.playAny('tuko', 4, { ...o, gain: 1, rate: 1.3 * k, rateEnd: 2.2 * k, dur: 0.22, delay });
+      else this.playAny('tuko', 4, { ...o, gain: 0.9, rate: 1.5 * k, rateEnd: 0.5 * k, dur: 0.7, delay });
+    } else {
+      if (kind === 'idle') this.playAny('oomi', 3, { ...o, gain: 1.1, rate: (0.6 + Math.random() * 0.12) * k, dur: 1.6, fadeIn: 0.15, delay });
+      else if (kind === 'alarm') for (let i = 0; i < 2; i++) this.playAny('oomi', 3, { ...o, gain: 1.2, rate: 0.85 * k, dur: 0.45, delay: delay + i * 0.4 });
+      else if (kind === 'hurt') this.playAny('oomi', 3, { ...o, gain: 1.3, rate: 0.8 * k, rateEnd: 0.65 * k, dur: 0.5, delay });
+      else this.playAny('oomi', 3, { ...o, gain: 1.2, rate: 0.6 * k, rateEnd: 0.33 * k, dur: 2.4, fadeIn: 0.1, delay });
+    }
+  }
+
+  /** The only music: a sparse, warm phrase when the first light finds you at a lit fire. */
+  safeMotif() {
+    if (!this.ctx) return;
+    const notes = [293.66, 440, 369.99, 329.63, 293.66]; // D A F# E D
+    notes.forEach((f, i) => {
+      const d = i * 1.1 + (i === 4 ? 0.6 : 0);
+      this.tone({ dur: 3.2, freq: f, type: 'triangle', gain: 0.035, attack: 0.35, bus: 'amb', delay: d });
+      this.tone({ dur: 3.4, freq: f / 2, gain: 0.025, attack: 0.5, bus: 'amb', delay: d });
+    });
   }
 
   tukoChirp(pos: V3) {
@@ -493,6 +620,16 @@ export class Audio {
   /** Called each frame by the game to keep loops crossfading. */
   updateLoops() {
     for (const l of this.loops) l.tick();
+    if (this.ctx && this.tracked.length && ++this.occTimer % 30 === 0) { // ~twice a second
+      const t = this.ctx.currentTime;
+      this.tracked = this.tracked.filter((v) => v.until > t);
+      for (const v of this.tracked) {
+        const occ = this.occludedAt(v.pos);
+        v.f.frequency.setTargetAtTime(occ ? Math.min(v.base, 1500) : v.base, t, 0.15);
+        v.g.gain.setTargetAtTime(occ ? 0.5 : 1, t, 0.15);
+        v.send?.gain.setTargetAtTime(occ ? Math.min(0.8, v.sendBase * 1.6) : v.sendBase, t, 0.15);
+      }
+    }
     if (++this.sweep % 600 === 0) this.evict();
   }
 
@@ -529,7 +666,7 @@ const LAZY = /^(bed_|earth_|drips$)/;
 
 export class Loop {
   private out: GainNode | null = null;
-  private voices: { src: AudioBufferSourceNode; g: GainNode; startedAt: number; dur: number }[] = [];
+  private voices: { src: AudioBufferSourceNode; g: GainNode; startedAt: number; dur: number; out?: boolean }[] = [];
   private level = 0;
   constructor(private audio: Audio, private id: string, private bus: 'amb' | 'sfx') {}
 
@@ -553,6 +690,7 @@ export class Loop {
       this.voices = [];
       return;
     }
+    this.audio.touch(this.id); // playing: keep the decoded bed in memory
     const cur = this.voices[this.voices.length - 1];
     const fade = 2.5;
     if (!cur) {
@@ -563,13 +701,19 @@ export class Loop {
     const remaining = cur.dur - (now - cur.startedAt);
     if (remaining < Math.min(fade, cur.dur / 3)) {
       const f = Math.min(fade, cur.dur / 3);
-      cur.g.gain.cancelScheduledValues(now);
-      cur.g.gain.setValueAtTime(cur.g.gain.value, now);
-      cur.g.gain.linearRampToValueAtTime(0, now + f);
-      cur.src.stop(now + f + 0.05);
-      const v = this.audio.startLoopVoice(this.id, this.out, f);
-      if (v) this.voices.push(v);
-      setTimeout(() => { this.voices = this.voices.filter((x) => x !== cur); }, (f + 0.2) * 1000);
+      // Fade the old copy out exactly once. (Re-entering this every frame while the next copy decodes made the bed dip.)
+      if (!cur.out) {
+        cur.out = true;
+        cur.g.gain.cancelScheduledValues(now);
+        cur.g.gain.setValueAtTime(cur.g.gain.value, now);
+        cur.g.gain.linearRampToValueAtTime(0, now + f);
+        cur.src.stop(now + f + 0.05);
+      }
+      const v = this.audio.startLoopVoice(this.id, this.out, f); // null while decoding: tried again next frame
+      if (v) {
+        this.voices.push(v);
+        setTimeout(() => { this.voices = this.voices.filter((x) => x !== cur); }, (f + 0.2) * 1000);
+      }
     }
   }
 }

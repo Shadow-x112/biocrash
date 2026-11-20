@@ -294,8 +294,8 @@ export class Horror {
       if (u > 0.3 && i.nights >= UNLOCK.glitch && !resting) {
         this.glitch = rand(0.6, 1.0); // never hides the vitals for more than a second
         this.onCaption('static on the wrist unit');
-        if (Math.random() < 0.3) this.audio.play('receiver', { gain: 0.35, bus: 'ui', offset: rand(0, 12), dur: this.glitch + 0.3 });
-        else this.audio.playAny('disrupt', 4, { gain: 0.4, bus: 'ui', dur: 0.8 });
+        if (Math.random() < 0.3) this.audio.play('receiver', { gain: 0.35, bus: 'stinger', offset: rand(0, 12), dur: this.glitch + 0.3 });
+        else this.audio.playAny('disrupt', 4, { gain: 0.4, bus: 'stinger', dur: 0.8 });
         this.fire('glitch');
       }
     }
@@ -356,7 +356,7 @@ export class Horror {
     }
     if (this.memoryVoice && this.audio.ctx && this.audio.ctx.currentTime >= this.memoryVoice.end - 0.05) {
       this.memoryVoice = null;
-      this.audio.playAny('disrupt', 4, { gain: 0.7, bus: 'ui' });
+      this.audio.playAny('disrupt', 4, { gain: 0.7, bus: 'stinger' });
       this.flashStatic(0.2);
     }
     // The figure vanishes when looked at, approached, or after a few seconds.
@@ -369,13 +369,13 @@ export class Horror {
         this.figure.visible = false;
         if (seen || close) this.figureSeen = true;
         if ((seen || close) && t.sting <= 0 && u > 0.7 && Math.random() < 0.5) this.stinger();
-        else if (seen || close) { this.audio.play('static', { gain: 0.35, bus: 'ui', dur: 0.4 }); this.flashStatic(0.12); }
+        else if (seen || close) { this.audio.play('static', { gain: 0.35, bus: 'stinger', dur: 0.4 }); this.flashStatic(0.12); }
       }
     }
     // A rare scare out of nowhere, with a riser first: only once the figure has been seen, at most once an hour.
     if (this.figureSeen && this.phase === 'build' && t.sting <= 0 && this.pendingSting < 0 && u > 0.75 && Math.random() < dt / 60) {
       this.audio.duck(-14, 1.5, 0.8, 0.3);                     // the world goes quiet first
-      this.audio.playAny('riser', 3, { gain: 0.35, bus: 'ui', delay: 0.6 });
+      this.audio.playAny('riser', 3, { gain: 0.35, bus: 'stinger', delay: 0.6 });
       this.pendingSting = 2.4;
       t.sting = rand(3600, 5400);
     }
@@ -429,7 +429,7 @@ export class Horror {
       }
       case 'falseAlarm': // the world holds its breath... and nothing happens
         this.audio.duck(-14, 1.5, rand(3, 5), 2.5);
-        this.audio.play('gasp', { gain: 0.35, bus: 'ui', delay: 1.4 });
+        this.audio.play('gasp', { gain: 0.35, bus: 'stinger', delay: 1.4 });
         this.onCaption('everything goes quiet');
         return true;
     }
@@ -472,8 +472,8 @@ export class Horror {
     this.pendingSting = -1;
     this.audio.duck(-10, 0.05, 0.4, 1.5);                     // everything else steps back under the hit
     const ids = ['sting_shadows', 'sting_from_below', 'sting_taken', 'sting_lights_out'];
-    this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'ui' });
-    this.audio.play('subdrop', { gain: 0.4, bus: 'ui' });
+    this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'stinger' });
+    this.audio.play('subdrop', { gain: 0.4, bus: 'stinger' });
     this.onCaption('a sudden shriek');
     this.flashStatic(0.25);
     this.timers.sting = rand(3600, 5400); // at most one scare an hour
