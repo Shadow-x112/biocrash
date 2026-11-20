@@ -197,7 +197,7 @@ async function main() {
     post.setEnabled(settings.post);
     // With post-processing on, its vignette and grain replace the CSS overlays.
     for (const id of ['unease', 'static']) $(id).style.display = settings.post ? 'none' : '';
-    if (k === 'resolution' || k === 'autoRes' || k === 'master') { resScale = settings.resolution; applyRes(); }
+    if (k === 'resolution' || k === 'autoRes' || k === 'fov') { resScale = settings.resolution; applyRes(); } // 'fov' = the startup pass
     tutorial.enabled = settings.tutorial;
   };
 
@@ -383,8 +383,8 @@ async function main() {
       const f = picker.files?.[0];
       if (!f) return;
       try {
-        clearInterval(autosave);
-        await store.importFile(await f.text()); // validates fully before replacing anything
+        await store.importFile(await f.text()); // validates fully, then blocks saving while it swaps the world
+        clearInterval(autosave); // only once it worked: a rejected file must leave autosave running
         location.reload();
       } catch (err) { flash((err as Error).message); }
     };
@@ -572,7 +572,7 @@ async function main() {
       else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
     } else if (t.kind === 'pack') {
       const got: string[] = [];
-      for (const [k, n] of Object.entries(t.pk.items)) if (k in inventory.counts && n > 0) { inventory.add(k as ItemId, n); got.push(`${n} ${ITEM_NAMES[k as ItemId].toLowerCase()}`); }
+      for (const [k, n] of Object.entries(t.pk.items)) if (Object.hasOwn(inventory.counts, k) && n > 0) { inventory.add(k as ItemId, n); got.push(`${n} ${ITEM_NAMES[k as ItemId].toLowerCase()}`); }
       packs.remove(t.pk);
       audio.pickup('fiber');
       flash(got.length ? `Recovered ${got.join(', ')}.` : 'The pack was empty.');
@@ -633,7 +633,7 @@ async function main() {
   /** Station-core lines triggered by the world (the tutorial queues them and shows one at a time). */
   const milestones = () => {
     if (survival.warmth < 45 && sky.night > 0.3) tutorial.milestone('cold');
-    if (tutorial.done && sky.time > 0.6 && sky.time < 0.7) tutorial.milestone('sunset');
+    if (sky.time > 0.6 && sky.time < 0.66) tutorial.milestone('sunset'); // urgent: shows even mid-tutorial
     if (sky.night > 0.8) wasNight = true;
     if (wasNight && sky.time > 0.27 && sky.time < 0.4) { nights++; tutorial.milestone('dawn'); wasNight = false; }
     if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
@@ -699,7 +699,7 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F3') { e.preventDefault(); hud.style.display = hud.style.display === 'none' ? '' : 'none'; return; }
     if (e.code === 'F5') { e.preventDefault(); void saveNow().then((ok) => flash(ok ? 'Saved' : 'Not saved')); return; }
-    if (input.is(e.code, 'craft')) {
+    if (input.is(e.code, 'craft') && (state === 'playing' || state === 'craft')) { // Tab stays free for menu focus
       e.preventDefault();
       if (state === 'craft') { setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.')); }
       else if (state === 'playing') { setState('craft'); if (document.pointerLockElement) document.exitPointerLock(); }
@@ -726,7 +726,8 @@ async function main() {
       if (!lampOn && lampCharge < 3) { audio.deny(); flash('The lamp is out of charge. It refills by a fire or in daylight.'); }
       else { lampOn = !lampOn; audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: lampOn ? 1.4 : 1.1 }); }
     }
-    else if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
+    else if (e.code === 'KeyT' && import.meta.env.DEV) { // fast time: a development aid only
+      sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
     else {
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
       if (n >= 0 && !hotbar.select(SLOTS[n], (id) => inventory.counts[id] > 0)) flash(`Craft a ${SLOT_NAMES[SLOTS[n]].toLowerCase()} first (${K('craft')}).`);
@@ -835,7 +836,17 @@ async function main() {
   const prof = { world: 0, physics: 0, sim: 0, render: 0 };
   const smooth = (k: keyof typeof prof, v: number) => { prof[k] = prof[k] * 0.9 + v * 0.1; };
   const floorY = MIN_CY * CHUNK - 8;
+  // An error inside a frame is retried a few times (it may be a one-off); if it keeps happening, the loop stops, the
+  // world is saved, and the recovery screen appears instead of the game throwing every frame behind a frozen picture.
+  let loopErrors = 0;
   renderer.setAnimationLoop(() => {
+    try { frame(); loopErrors = 0; } catch (err) {
+      if (++loopErrors < 5) { console.error(err); return; }
+      renderer.setAnimationLoop(null);
+      void saveNow().finally(() => showFatal(err, 'Biocrash hit an error', () => store.reset()));
+    }
+  });
+  function frame() {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.05);
     const t0 = performance.now();
@@ -866,7 +877,11 @@ async function main() {
           const items: Record<string, number> = {};
           for (const k of MATERIALS) if (inventory.counts[k] > 0) items[k] = inventory.counts[k];
           const dropped = Object.keys(items).length > 0;
-          if (dropped) { packs.add(player.position.clone(), items); inventory.take(items as Partial<Record<ItemId, number>>); }
+          // On the ground at your feet (the body position is the capsule's centre, ~0.9 m up); underground, the cave floor.
+          const feet = player.position.clone().setY(player.position.y - 0.9);
+          const g = world.groundAt(feet.x, feet.z);
+          if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
+          if (dropped) { packs.add(feet, items); inventory.take(items as Partial<Record<ItemId, number>>); }
           deathText.textContent = 'You froze.';
           deathHint.textContent = dropped ? 'Your materials are where you fell, marked on the compass. Fire and shelter keep your core temperature up.'
             : 'Fire and shelter keep your core temperature up. Cooked meat and a hide wrap help you last the night.';
@@ -972,17 +987,23 @@ async function main() {
           `seed ${seed}  ${state}${store.owner ? '' : '  (read-only tab)'}`;
       }
     }
-  });
+  }
 }
 
-main().catch((err) => {
+main().catch((err) => showFatal(err, 'Biocrash couldn\u2019t start'));
+
+/** Never leave the player stuck: offer the raw save and a clean start, even if the game itself can't run. */
+function showFatal(err: unknown, title: string, wipe: () => Promise<void> = () => SaveStore.wipe()) {
   console.error(err);
-  // Safe start: never leave the player stuck. Offer the raw save and a clean start, even if the game itself can't run.
+  if (document.getElementById('fatal')) return;
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d1014;color:#e8edf2;font:14px system-ui,sans-serif;z-index:10';
-  box.innerHTML = `<div style="max-width:440px;padding:24px;background:#161b22;border-radius:10px"><h2 style="margin:0 0 8px">Biocrash couldn\u2019t start</h2>
+  box.id = 'fatal';
+  box.innerHTML = `<div style="max-width:440px;padding:24px;background:#161b22;border-radius:10px"><h2 style="margin:0 0 8px"></h2>
     <p style="color:#b9c2cc"></p><button id="fx-export">Export raw save</button> <button id="fx-new">Start a new world</button></div>`;
-  box.querySelector('p')!.textContent = (err as Error).message;
+  box.querySelector('h2')!.textContent = title;
+  box.querySelector('p')!.textContent = (err as Error)?.message ?? String(err);
+  if (document.pointerLockElement) document.exitPointerLock();
   document.body.append(box);
   box.querySelector<HTMLButtonElement>('#fx-export')!.onclick = async () => {
     const blob = await SaveStore.dumpRaw();
@@ -994,7 +1015,7 @@ main().catch((err) => {
   let armed = false;
   box.querySelector<HTMLButtonElement>('#fx-new')!.onclick = async (e) => {
     if (!armed) { armed = true; (e.target as HTMLButtonElement).textContent = 'Click again to delete the old world'; return; }
-    await SaveStore.wipe();
-    location.reload();
+    try { await wipe(); location.reload(); }
+    catch (er) { (e.target as HTMLButtonElement).textContent = (er as Error).message; }
   };
-});
+}

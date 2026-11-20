@@ -97,6 +97,12 @@ export class Audio {
 
   has(id: string) { return this.samples.has(id) || this.packed.has(id); }
 
+  /** Is this sound decoded and ready to play right now? */
+  ready(id: string) { return this.samples.has(id); }
+
+  /** Start decoding a lazy sound so it's ready when needed (keeps it for a minute). */
+  prefetch(id: string) { this.buffer(id); }
+
   /** Decoded buffer for `id`, or null while a lazy sound is still decoding (the decode starts on the first ask). */
   private buffer(id: string) {
     const s = this.samples.get(id);
@@ -124,12 +130,9 @@ export class Audio {
     const ctx = this.ctx;
     if (!ctx) return null;
     const s = this.buffer(id);
-    if (!s) {
-      // A lazy sound still decoding: play it as soon as it's ready (a short delay is fine for beds and memories).
-      const job = this.decoding.get(id);
-      if (job) { const asked = performance.now(); void job.then(() => { if (performance.now() - asked < 1500 && this.samples.has(id)) this.play(id, o); }); }
-      return null;
-    }
+    // A lazy sound that isn't decoded yet starts decoding and this play is skipped: callers that care (the horror
+    // director) prefetch ahead instead, so a sound never plays late, outside the pacing that asked for it.
+    if (!s) return null;
     // Voice limit: at most 3 of the same sound and 32 overall (the UI is never dropped).
     const base = id.replace(/_\d+$/, '');
     if (o.bus !== 'ui' && ((this.perId.get(base) ?? 0) >= 3 || this.voices >= 32)) return null;

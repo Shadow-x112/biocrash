@@ -54,6 +54,7 @@ export const MILESTONES = {
   death: { say: 'I pulled your vitals back at the crash site. What you carried is where you fell: it’s on your compass.', goal: 'Recover your pack' },
 } as const;
 export type MilestoneId = keyof typeof MILESTONES;
+const URGENT = new Set<MilestoneId>(['cold', 'sunset']);
 
 export class Tutorial {
   step = 0;
@@ -64,7 +65,10 @@ export class Tutorial {
   private typed = 0;       // characters of the line shown so far
   private shown = '';
   private greeted = false;
-  private queue: MilestoneId[] = [];
+  private queue: { id: MilestoneId; at: number }[] = [];
+  /** A time-critical line (cold, sunset) shown at once over anything else for a few seconds. */
+  private urgent: { id: MilestoneId; t: number } | null = null;
+  private clock = 0;
   private current: MilestoneId | null = null;
   private metAt = -1;
   onLine?: () => void;
@@ -81,8 +85,9 @@ export class Tutorial {
 
   /** Queue a one-off line (ignored if already seen). Milestones wait until the first-night objectives are done. */
   milestone(id: MilestoneId) {
-    if (this.seen.has(id) || this.queue.includes(id) || this.current === id) return;
-    this.queue.push(id);
+    if (this.seen.has(id) || this.queue.some((q) => q.id === id) || this.current === id || this.urgent?.id === id) return;
+    if (URGENT.has(id)) { this.urgent = { id, t: 0 }; this.seen.add(id); this.typed = 0; this.onLine?.(); return; }
+    this.queue.push({ id, at: this.clock });
   }
 
   /** Everything the core has said so far, oldest first (for the log in the pause menu). */
@@ -107,6 +112,16 @@ export class Tutorial {
 
   update(dt: number, inv: Inventory, fires: number, glitch: number) {
     if (!this.enabled) { this.el.style.display = 'none'; return; }
+    this.clock += dt;
+    // Urgent lines interrupt the tutorial and other lines for ~9 s: the slowest players need them most.
+    if (this.urgent) {
+      if ((this.urgent.t += dt) < 9) {
+        this.el.style.display = 'block';
+        this.render(MILESTONES[this.urgent.id].say, '', glitch, dt);
+        return;
+      }
+      this.urgent = null; this.typed = 0; this.shown = '';
+    }
     this.t += dt;
     if (!this.done) {
       this.el.style.display = 'block';
@@ -128,9 +143,11 @@ export class Tutorial {
         return;
       }
     }
-    // Milestones: one at a time; a line stays ~14 s, or until 4 s after its goal is met (up to 3 minutes).
+    // Milestones: one at a time; a line stays ~14 s, or until 4 s after its goal is met (up to 90 s).
+    // Lines that waited too long are dropped rather than arriving out of context.
+    while (this.queue.length && this.clock - this.queue[0].at > 240) this.queue.shift();
     if (!this.current && this.queue.length) {
-      this.current = this.queue.shift()!;
+      this.current = this.queue.shift()!.id;
       this.seen.add(this.current);
       this.t = 0; this.typed = 0; this.metAt = -1;
       this.onLine?.();
@@ -139,7 +156,7 @@ export class Tutorial {
     const m = MILESTONES[this.current];
     const met = !!m.goal && this.goalMet(this.current);
     if (met && this.metAt < 0) this.metAt = this.t;
-    const expired = m.goal ? (this.metAt >= 0 && this.t - this.metAt > 4) || this.t > 180 : this.t > 14;
+    const expired = m.goal ? (this.metAt >= 0 && this.t - this.metAt > 4) || this.t > 90 : this.t > 14;
     if (expired) { this.current = null; this.el.style.display = 'none'; return; }
     this.el.style.display = 'block';
     this.render(m.say, m.goal ? `<span class="tc-box">${met ? '✓' : ''}</span>${m.goal}` : '', glitch, dt);

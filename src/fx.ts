@@ -74,12 +74,13 @@ export function addTerrainMist(mat: THREE.Material) {
       .replace('#include <common>', '#include <common>\nvarying vec3 vMistWorld;\nuniform float uFxTime; uniform float uMist; uniform float uMistTop;')
       .replace('#include <fog_fragment>', `#include <fog_fragment>
       #ifdef USE_FOG
-        float mistH = smoothstep(uMistTop, uMistTop - 7.0, vMistWorld.y);
+        float mistH = 1.0 - smoothstep(uMistTop - 7.0, uMistTop, vMistWorld.y); // (reversed edges are undefined in GLSL)
         float drift = sin(vMistWorld.x * 0.09 + uFxTime * 0.13) * sin(vMistWorld.z * 0.11 - uFxTime * 0.09) * 0.5 + 0.5;
         float mistD = smoothstep(4.0, 38.0, vFogDepth);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, clamp(uMist * mistH * mistD * (0.5 + 0.5 * drift), 0.0, 0.85));
       #endif`);
   };
+  mat.customProgramCacheKey = () => 'mist';
   mat.needsUpdate = true;
 }
 
@@ -106,5 +107,8 @@ export function addSway(mat: THREE.Material, amp: number, bend = false) {
         gl_Position = projectionMatrix * mvPosition;
       }`);
   };
+  // three.js caches programs by the onBeforeCompile source text, which is the same for every call: key on the settings,
+  // or two materials with different sway (spots vs sprouts) share whichever program compiled first.
+  mat.customProgramCacheKey = () => `sway:${amp}:${bend}`;
   mat.needsUpdate = true;
 }

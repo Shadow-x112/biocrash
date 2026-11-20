@@ -35,8 +35,9 @@ const MAJORS: Major[] = ['whisper', 'breath', 'memory', 'figure', 'voice', 'fals
 const UNLOCK: Record<Major | 'glitch', number> = { memory: 1, whisper: 2, glitch: 2, breath: 2, voice: 2, falseAlarm: 2, figure: 3 };
 /** Unease needed for each big event. */
 const NEED: Record<Major, number> = { memory: 0.5, whisper: 0.45, breath: 0.65, voice: 0.6, falseAlarm: 0.55, figure: 0.6 };
+const MEMORIES = ['earth_farm', 'earth_woods', 'earth_night', 'earth_rain'];
 
-export interface HorrorSave { figureSeen: boolean; figureNight: number }
+export interface HorrorSave { figureSeen: boolean; figureNight: number; played?: string[]; last?: string | null }
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -60,8 +61,11 @@ export class Horror {
   figureSeen = false;
   figureNight = -1;
   private phaseT = 0;
-  private deck: Major[] = [];
+  /** Big events already played this cycle; the cycle restarts once every event that can play now has played. */
+  private played = new Set<Major>();
   private last: Major | null = null;
+  /** The Earth memory to play next, decoded ahead so it's ready the moment its card comes up. */
+  private nextMemory = MEMORIES[Math.floor(Math.random() * MEMORIES.length)];
   private awayFromFire = 0;
   private beds: Record<string, Loop> = {};
   private timers: Record<string, number> = { creature: 30, wreck: 60, swell: 45, major: 40, sting: 3600, glitch: 90, loon: 30, drip: 2 };
@@ -97,10 +101,12 @@ export class Horror {
     this.staticEl = document.getElementById('static')!;
   }
 
-  save(): HorrorSave { return { figureSeen: this.figureSeen, figureNight: this.figureNight }; }
+  save(): HorrorSave { return { figureSeen: this.figureSeen, figureNight: this.figureNight, played: [...this.played], last: this.last }; }
   load(s: Partial<HorrorSave> | undefined) {
     if (typeof s?.figureSeen === 'boolean') this.figureSeen = s.figureSeen;
     if (typeof s?.figureNight === 'number' && Number.isFinite(s.figureNight)) this.figureNight = s.figureNight;
+    if (Array.isArray(s?.played)) for (const k of s.played) if ((MAJORS as string[]).includes(k)) this.played.add(k as Major);
+    if (typeof s?.last === 'string' && (MAJORS as string[]).includes(s.last)) this.last = s.last as Major;
   }
 
   private fire(k: string) { this.fired[k] = (this.fired[k] ?? 0) + 1; }
@@ -109,13 +115,17 @@ export class Horror {
   /** A big event happened: hold the peak a few seconds, then rest. */
   private peaked(k: Major) { this.phase = 'peak'; this.phaseT = rand(3, 5); this.last = k; this.fire(k); }
 
-  /** Next card; when the deck runs out it's reshuffled, never starting with the card that just played. */
-  private draw(): Major {
-    if (!this.deck.length) {
-      this.deck = [...MAJORS].sort(() => Math.random() - 0.5);
-      if (this.deck[0] === this.last) this.deck.push(this.deck.shift()!);
+  /** Big events that could play right now, in random order: unlocked tonight, unease high enough, not yet played this
+   *  cycle, never the one that just played. When every playable event has had its turn, the cycle restarts. Cards that
+   *  can't play are simply skipped (they used to be pushed to the back and jam the deck for good). */
+  private candidates(nights: number, u: number): Major[] {
+    const open = MAJORS.filter((k) => nights >= UNLOCK[k] && u >= NEED[k]);
+    let fresh = open.filter((k) => !this.played.has(k) && k !== this.last);
+    if (!fresh.length && open.some((k) => this.played.has(k))) {
+      for (const k of open) this.played.delete(k);
+      fresh = open.filter((k) => k !== this.last);
     }
-    return this.deck.shift()!;
+    return fresh.sort(() => Math.random() - 0.5);
   }
 
   /** A point `dist` metres from the listener in a random direction, on the ground if possible. */
@@ -195,6 +205,7 @@ export class Horror {
     // --- Pacing ---------------------------------------------------------------------------------
     this.phaseT -= dt;
     if (this.phase === 'calm' && u > 0.35) { this.phase = 'build'; this.timers.major = Math.max(this.timers.major, rand(20, 45)); }
+    if (this.phase === 'build' && i.nights >= UNLOCK.memory) this.audio.prefetch(this.nextMemory); // decoded before its card comes up
     else if (this.phase === 'build' && u < 0.25) this.phase = 'calm';
     else if (this.phase === 'peak' && this.phaseT <= 0) { this.phase = 'relax'; this.phaseT = rand(60, 120); }
     else if (this.phase === 'relax' && this.phaseT <= 0) this.phase = 'calm';
@@ -269,11 +280,8 @@ export class Horror {
     // --- One big event per build-up, from the deck --------------------------------------------------
     if (this.phase === 'build' && t.major <= 0 && this.pendingSting < 0) {
       t.major = rand(25, 60);
-      // Try the deck in order; cards that can't play right now go to the back.
-      for (let tries = 0; tries < MAJORS.length; tries++) {
-        const k = this.draw();
-        if (i.nights >= UNLOCK[k] && u >= NEED[k] && this.trigger(k, i)) { this.peaked(k); break; }
-        this.deck.push(k);
+      for (const k of this.candidates(i.nights, u)) {
+        if (this.trigger(k, i)) { this.played.add(k); this.peaked(k); break; }
       }
     }
     // A whisper stops if you turn around.
@@ -334,13 +342,14 @@ export class Horror {
       }
       case 'memory': { // Earth: a farm, birds, people. It shouldn't be here, and it cuts off.
         if (this.memoryVoice) return false;
-        const pool = ['earth_farm', 'earth_woods', 'earth_night', 'earth_rain'];
-        const id = pool[Math.floor(Math.random() * pool.length)];
+        const id = this.nextMemory;
+        if (!this.audio.ready(id)) { this.audio.prefetch(id); return false; } // not decoded yet: another event goes instead
         const len = rand(6, 11);
         const v = this.audio.play(id, { gain: 0.6, fadeIn: 3, offset: rand(0, 10), bus: 'amb' });
         if (!v) return false;
         this.memoryVoice = { gain: v.gain, end: this.audio.ctx!.currentTime + len };
         v.src.stop(this.audio.ctx!.currentTime + len + 0.1);
+        this.nextMemory = MEMORIES[Math.floor(Math.random() * MEMORIES.length)];
         this.onCaption({ earth_farm: 'a farm, birds, people... Earth?', earth_woods: 'woods, birdsong... Earth?', earth_night: 'crickets... Earth?', earth_rain: 'rain on a roof... Earth?' }[id] ?? 'Earth?');
         return true;
       }

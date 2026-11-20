@@ -29,7 +29,7 @@ export interface SaveMeta {
   wasNight?: boolean;
   /** Nights survived: the horror layer unlocks events over the first few. */
   nights?: number;
-  horror?: { figureSeen: boolean; figureNight: number };
+  horror?: { figureSeen: boolean; figureNight: number; played?: string[]; last?: string | null };
   /** Wrist-lamp charge 0..100. */
   lamp?: number;
 }
@@ -113,7 +113,11 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
   const nights = num(m.nights, 0, 1e5);
   if (nights !== undefined) out.nights = Math.floor(nights);
   const h = m.horror as Record<string, unknown> | undefined;
-  if (h && typeof h === 'object') out.horror = { figureSeen: h.figureSeen === true, figureNight: Math.floor(num(h.figureNight, -1, 1e5) ?? -1) };
+  if (h && typeof h === 'object') out.horror = {
+    figureSeen: h.figureSeen === true, figureNight: Math.floor(num(h.figureNight, -1, 1e5) ?? -1),
+    played: Array.isArray(h.played) ? h.played.filter((x): x is string => typeof x === 'string').slice(0, 10) : [],
+    last: typeof h.last === 'string' ? h.last.slice(0, 20) : null,
+  };
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);
   return out;
@@ -167,8 +171,9 @@ export class SaveStore {
   private constructor(private db: IDBDatabase) {}
 
   static async open() {
-    // Ask the browser not to evict our data (Safari wipes idle sites after 7 days otherwise).
-    try { await navigator.storage?.persist?.(); } catch { /* not supported */ }
+    // Ask the browser not to evict our data (Safari wipes idle sites after 7 days otherwise). Never wait for the answer:
+    // Firefox asks the player with a popup, and waiting left "Click to play" dead until it was answered.
+    try { void navigator.storage?.persist?.().catch(() => {}); } catch { /* not supported */ }
     const store = new SaveStore(await openDb());
     await store.claim();
     return store;
@@ -241,6 +246,11 @@ export class SaveStore {
 
   /** Last-resort wipe from the startup error screen. */
   static async wipe() {
+    // Only if no other tab has this world open: it would re-save its own state on top of the wipe.
+    if (navigator.locks) {
+      const free = await navigator.locks.request('biocrash-world', { ifAvailable: true }, (lock) => !!lock);
+      if (!free) throw new Error('This world is open in another tab. Close it first.');
+    }
     const db = await openDb();
     const tx = db.transaction([META, CHUNKS], 'readwrite');
     tx.objectStore(META).clear();

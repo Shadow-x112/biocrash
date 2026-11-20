@@ -130,6 +130,9 @@ export function buildKeysForm(el: HTMLElement, onChange: () => void) {
   });
   window.addEventListener('keydown', (e) => {
     if (!waiting) return;
+    // Only while the keys list is actually on screen: a prompt left open when the menu closed must not grab the next
+    // gameplay key (it used to rebind W to whatever was waiting).
+    if (!el.isConnected || el.getClientRects().length === 0) { waiting = null; render(); return; }
     e.preventDefault(); e.stopImmediatePropagation();
     if (e.code !== 'Escape' && !RESERVED.has(e.code)) {
       // One key, one action: take it off anything else that had it.
