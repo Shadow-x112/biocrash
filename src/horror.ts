@@ -51,6 +51,11 @@ export class Horror {
   /** Counts of what fired (debug/tests). */
   readonly fired: Record<string, number> = {};
   phase: Phase = 'calm';
+  /** Player settings: how hard the layer leans in (0.5..1.5), and no flashing visuals. */
+  intensity = 1;
+  reduceFlash = false;
+  /** Caption hook: what a meaningful sound is, and where it came from. */
+  onCaption: (text: string, pos?: THREE.Vector3) => void = () => {};
   /** The figure shows at most once per night; stingers only after it has been seen. */
   figureSeen = false;
   figureNight = -1;
@@ -168,10 +173,10 @@ export class Horror {
     this.prevFwd.copy(this.fwd);
     this.turn += (turnNow - this.turn) * Math.min(1, dt * 2);
     const actions = dark * ((i.running ? 0.1 : 0) + Math.min(0.1, (this.still / 60) * 0.1) + smooth(2, 6, this.turn) * 0.08);
-    const target = Math.min(1, Math.max(0,
+    const target = Math.min(1, Math.max(0, this.intensity * (
       dark * 0.4 + (i.underground ? 0.3 : 0) + smooth(30, 0, i.warmth) * 0.15 + smooth(45, 10, i.health) * 0.25
       + Math.min(0.3, this.awayFromFire / 300) + actions
-      - i.fireNear * 0.35 - Math.min(0.15, Math.max(0, i.litFiresNear - 1) * 0.05) - i.daylight * (i.underground ? 0 : 0.25)));
+      - i.fireNear * 0.35 - Math.min(0.15, Math.max(0, i.litFiresNear - 1) * 0.05) - i.daylight * (i.underground ? 0 : 0.25))));
     if (this.override !== null) this.level = this.override;
     else this.level += (target - this.level) * Math.min(1, dt * (target > this.level ? 1 / 40 : 1 / 12));
     const u = this.level;
@@ -211,6 +216,7 @@ export class Horror {
         if (r < 0.2) this.audio.playAny('moan', 2, { pos: p, gain: 1.3, rate: rand(0.75, 0.95) });
         else if (r < 0.45) this.audio.playAny('mutation', 4, { pos: p, gain: 1.3, rate: rand(0.7, 0.9) });
         else this.audio.playAny('growl', 10, { pos: p, gain: 1.5, rate: rand(0.7, 0.95) });
+        this.onCaption(r < 0.2 ? 'distant moan' : r < 0.45 ? 'something wet, far off' : 'distant growl', p);
         if (u > 0.55 && i.nights >= 1 && Math.random() < 0.3) this.audio.play('horn', { pos: this.around(cam, 70, i.ground), gain: 1.3, rate: 0.8 });
         if (!i.underground && Math.random() < 0.35) this.leaveTrace(cam.clone().lerp(p, rand(0.4, 0.6)), i.ground);
         this.fire('creature');
@@ -227,6 +233,7 @@ export class Horror {
       if (i.night > 0.5 && !resting && cam.distanceTo(i.crashSite) < 120) {
         if (Math.random() < 0.25) this.audio.play('scrape', { pos: i.crashSite, gain: 1.4, rate: rand(0.5, 0.7) });
         else this.audio.playAny('metal', 3, { pos: i.crashSite, gain: 1.6, rate: rand(0.6, 0.9) });
+        this.onCaption('metal groans at the wreck', i.crashSite);
         this.fire('wreck');
       }
     }
@@ -236,6 +243,7 @@ export class Horror {
       if (u > 0.35 && !resting) {
         if (Math.random() < 0.3) this.audio.play('friction', { gain: 0.35 * u, fadeIn: 2, bus: 'amb' });
         else this.audio.playAny('lowstring', 3, { gain: 0.4 * u, fadeIn: 2, bus: 'amb' });
+        this.onCaption('low strings swell');
         this.fire('swell');
       }
     }
@@ -248,7 +256,8 @@ export class Horror {
     if (t.glitch <= 0) {
       t.glitch = rand(90, 180);
       if (u > 0.3 && i.nights >= UNLOCK.glitch && !resting) {
-        this.glitch = rand(0.6, 1.4);
+        this.glitch = rand(0.6, 1.0); // never hides the vitals for more than a second
+        this.onCaption('static on the wrist unit');
         if (Math.random() < 0.3) this.audio.play('receiver', { gain: 0.35, bus: 'ui', offset: rand(0, 12), dur: this.glitch + 0.3 });
         else this.audio.playAny('disrupt', 4, { gain: 0.4, bus: 'ui', dur: 0.8 });
         this.fire('glitch');
@@ -314,11 +323,14 @@ export class Horror {
         if (!v) return false;
         this.whisperVoice = { gain: v.gain, pos };
         v.src.onended = () => { this.whisperVoice = null; };
+        this.onCaption('whispering', pos);
         return true;
       }
       case 'breath': { // close, when it's very bad
         const pos = cam.clone().addScaledVector(this.fwd, -1.2);
-        return !!this.audio.play('breathing', { pos, gain: 0.5, hrtf: true, offset: rand(0, 10), dur: rand(5, 8), fadeIn: 2 });
+        const ok = !!this.audio.play('breathing', { pos, gain: 0.5, hrtf: true, offset: rand(0, 10), dur: rand(5, 8), fadeIn: 2 });
+        if (ok) this.onCaption('breathing', pos);
+        return ok;
       }
       case 'memory': { // Earth: a farm, birds, people. It shouldn't be here, and it cuts off.
         if (this.memoryVoice) return false;
@@ -329,6 +341,7 @@ export class Horror {
         if (!v) return false;
         this.memoryVoice = { gain: v.gain, end: this.audio.ctx!.currentTime + len };
         v.src.stop(this.audio.ctx!.currentTime + len + 0.1);
+        this.onCaption({ earth_farm: 'a farm, birds, people... Earth?', earth_woods: 'woods, birdsong... Earth?', earth_night: 'crickets... Earth?', earth_rain: 'rain on a roof... Earth?' }[id] ?? 'Earth?');
         return true;
       }
       case 'figure': { // at the edge of your vision, once a night at most, never inside the fog's clear zone
@@ -345,13 +358,19 @@ export class Horror {
         this.figureLife = rand(6, 12);
         this.figureNight = i.nights;
         this.audio.play('rumble_1', { gain: 0.35, bus: 'amb' }); // felt more than heard
+        this.onCaption('a low rumble');
         return true;
       }
-      case 'voice': // distant, female, ethereal, impossible
-        return !!this.audio.playAny('voice', 3, { pos: this.around(cam, rand(25, 40), i.ground), gain: 0.45, fadeIn: 1.5 });
+      case 'voice': { // distant, female, ethereal, impossible
+        const p = this.around(cam, rand(25, 40), i.ground);
+        const ok = !!this.audio.playAny('voice', 3, { pos: p, gain: 0.45, fadeIn: 1.5 });
+        if (ok) this.onCaption('a woman\u2019s voice, far away', p);
+        return ok;
+      }
       case 'falseAlarm': // the world holds its breath... and nothing happens
         this.audio.duck(-14, 1.5, rand(3, 5), 2.5);
         this.audio.play('gasp', { gain: 0.35, bus: 'ui', delay: 1.4 });
+        this.onCaption('everything goes quiet');
         return true;
     }
   }
@@ -362,6 +381,7 @@ export class Horror {
     const ids = ['sting_shadows', 'sting_from_below', 'sting_taken', 'sting_lights_out'];
     this.audio.play(ids[Math.floor(Math.random() * ids.length)], { gain: 0.9, bus: 'ui' });
     this.audio.play('subdrop', { gain: 0.4, bus: 'ui' });
+    this.onCaption('a sudden shriek');
     this.flashStatic(0.25);
     this.timers.sting = rand(3600, 5400); // at most one scare an hour
     this.phase = 'relax'; this.phaseT = rand(90, 150); // a longer calm stretch afterwards
@@ -372,6 +392,7 @@ export class Horror {
   staticT = 0;
 
   private flashStatic(seconds: number) {
+    if (this.reduceFlash) return;
     this.staticT = seconds;
     this.staticEl.style.opacity = '0.35';
     setTimeout(() => { this.staticEl.style.opacity = '0'; }, seconds * 1000);

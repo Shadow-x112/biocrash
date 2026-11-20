@@ -15,6 +15,8 @@ export class Post {
   private noise: NoiseEffect;
   private ca: ChromaticAberrationEffect;
   enabled = true;
+  /** Reduce flashing: no colour split or grain spikes. */
+  reduceFlash = false;
 
   constructor(private renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
     // Half-float buffers: 8-bit ones band badly in near-black night scenes.
@@ -42,8 +44,8 @@ export class Post {
   update(unease: number, glitch: number, staticFlash: number) {
     this.vignette.darkness = 0.25 + smooth(0.2, 1, unease) * 0.6;
     this.vignette.offset = 0.32 - smooth(0.3, 1, unease) * 0.12;
-    this.noise.blendMode.opacity.value = 0.05 + smooth(0.3, 1, unease) * 0.12 + (staticFlash > 0 ? 0.35 : 0);
-    if (glitch > 0 || staticFlash > 0) this.ca.offset.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.006);
+    this.noise.blendMode.opacity.value = 0.05 + smooth(0.3, 1, unease) * 0.12 + (staticFlash > 0 && !this.reduceFlash ? 0.35 : 0);
+    if ((glitch > 0 || staticFlash > 0) && !this.reduceFlash) this.ca.offset.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.006);
     else this.ca.offset.set(0, 0);
   }
 

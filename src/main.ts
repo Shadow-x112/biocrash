@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type RAPIERType from '@dimforge/rapier3d';
 import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
-import { Input } from './input';
+import { Input, K } from './input';
 import { Player } from './player';
 import { Sky } from './sky';
 import { Survival, TEMP } from './survival';
@@ -20,7 +20,7 @@ import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
 import { SaveStore, type SaveMeta } from './save';
-import { loadSettings, buildSettingsForm, type Settings } from './settings';
+import { loadSettings, buildSettingsForm, buildKeysForm, type Settings } from './settings';
 import { Tutorial, type MilestoneId } from './tutorial';
 import { CHUNK, VIEW_RADIUS, REACH, GEN_VERSION, SAVE_VERSION, MIN_CY } from './config';
 
@@ -89,6 +89,7 @@ async function main() {
   const particles = new Particles(scene);
   const horror = new Horror(audio, scene);
   horror.load(meta?.horror);
+  horror.onCaption = (text, pos) => caption(text, pos);
   // Rocky ground under foot when the terrain there is steep (mauve rock in the palette).
   // What's underfoot: caves and dug-out ground are soil, steep rock is gravel, the forest floor is moss.
   const surfaceUnderfoot = (): 'moss' | 'gravel' | 'soil' => {
@@ -151,6 +152,25 @@ async function main() {
   };
   tutorial.onLine = () => { if (audio.has('ui_2')) audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: 1.3 }); };
   const compassEl = $('compass');
+  // --- Captions: what the sound means and where it is, for sounds that carry the horror ------------
+  const captionsEl = $('captions');
+  let captionsOn = false;
+  const dirOf = (p: THREE.Vector3) => {
+    const f = camera.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+    const to = p.clone().sub(camera.position).setY(0);
+    if (to.lengthSq() < 4) return 'close';
+    to.normalize();
+    const ahead = f.dot(to), side = f.x * to.z - f.z * to.x; // >0: to the right
+    return ahead > 0.7 ? 'ahead' : ahead < -0.7 ? 'behind' : side > 0 ? 'right' : 'left';
+  };
+  const caption = (text: string, pos?: THREE.Vector3) => {
+    if (!captionsOn) return;
+    const el = document.createElement('div');
+    el.textContent = `[${text}${pos ? ', ' + dirOf(pos) : ''}]`;
+    captionsEl.append(el);
+    while (captionsEl.children.length > 3) captionsEl.firstElementChild!.remove();
+    setTimeout(() => el.remove(), 4500);
+  };
   let uiBlip = 0;
   const applySetting = (k: keyof Settings) => {
     if (k === 'master' || k === 'sfx' || k === 'ambience' || k === 'ui') {
@@ -163,7 +183,16 @@ async function main() {
     player.invertY = settings.invertY;
     player.baseFov = settings.fov;
     player.headBob = settings.headBob;
-    player.shakeScale = settings.shake ? 1 : 0;
+    player.shakeScale = settings.shakeAmt;
+    input.toggles.clear();
+    if (settings.runToggle) input.toggles.add('run');
+    if (settings.sneakToggle) input.toggles.add('sneak');
+    document.documentElement.style.setProperty('--ui', String(settings.uiScale));
+    horror.intensity = settings.horrorAmt;
+    horror.reduceFlash = settings.reduceFlash;
+    post.reduceFlash = settings.reduceFlash;
+    captionsOn = settings.captions;
+    if (!captionsOn) captionsEl.innerHTML = '';
     compassEl.style.display = settings.compass ? '' : 'none';
     post.setEnabled(settings.post);
     // With post-processing on, its vignette and grain replace the CSS overlays.
@@ -307,6 +336,18 @@ async function main() {
 
   // --- Pause-menu buttons --------------------------------------------------------------------------
   buildSettingsForm($('settingsform'), settings, applySetting);
+  /** The key list on the pause screen and the crafting hint follow the player's bindings. */
+  const renderKeyList = () => {
+    $('keylist').textContent =
+      `${K('forward')}${K('left')}${K('back')}${K('right')} move \u00b7 ${K('jump')} jump \u00b7 ${K('run')} run \u00b7 ${K('sneak')} sneak\n` +
+      `${K('use')} pick up / use \u00b7 ${K('craft')} crafting \u00b7 1-4 tools\n` +
+      `${K('build')} build campfire \u00b7 ${K('eat')} cook at a fire / eat \u00b7 ${K('lamp')} wrist lamp\n` +
+      `${K('dig')} / left click dig \u00b7 ${K('fill')} / right click fill\n` +
+      'Arrow keys also look around\nF3 debug info \u00b7 F5 save now \u00b7 Esc pause';
+    $('craftsub').textContent = `Number keys or click to craft \u00b7 Shift+click makes up to 5 \u00b7 ${K('craft')} or Esc to close`;
+  };
+  renderKeyList();
+  buildKeysForm($('keysform'), renderKeyList);
   $('opensettings').onclick = () => overlay.classList.add('showsettings');
   $('closesettings').onclick = () => overlay.classList.remove('showsettings');
   $('openlog').onclick = () => {
@@ -477,18 +518,18 @@ async function main() {
     switch (t.kind) {
       case 'creature':
         return t.c.alive ? t.c.species.name
-          : inventory.counts.stone_knife > 0 ? `E  harvest ${t.c.species.name}` : `${t.c.species.name}  ·  needs a stone knife to harvest`;
-      case 'prop': return `E  pick up ${ITEM_NAMES[t.p.kind].toLowerCase()}`;
+          : inventory.counts.stone_knife > 0 ? `${K('use')}  harvest ${t.c.species.name}` : `${t.c.species.name}  ·  needs a stone knife to harvest`;
+      case 'prop': return `${K('use')}  pick up ${ITEM_NAMES[t.p.kind].toLowerCase()}`;
       case 'fire': {
         const cook = t.f.cooking.length ? `  \u00b7  cooking ${Math.ceil(t.f.cooking[0])}s${t.f.cooking.length > 1 ? ` (+${t.f.cooking.length - 1})` : ''}`
-          : inventory.counts.raw_meat > 0 && t.f.lit ? '  \u00b7  Q  cook raw meat' : '';
-        return (t.f.lit ? `E  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : 'E  relight with stalkwood') + cook;
+          : inventory.counts.raw_meat > 0 && t.f.lit ? `  \u00b7  ${K('eat')}  cook raw meat` : '';
+        return (t.f.lit ? `${K('use')}  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : `${K('use')}  relight with stalkwood`) + cook;
       }
-      case 'pack': return `E  recover your pack (${Object.values(t.pk.items).reduce((a, b) => a + b, 0)} items)`;
+      case 'pack': return `${K('use')}  recover your pack (${Object.values(t.pk.items).reduce((a, b) => a + b, 0)} items)`;
       case 'stalk': {
         const left = flora.usesLeft(t.s);
         if (left <= 0) return 'Cut back';
-        return inventory.counts.stone_knife + inventory.counts.stone_pick > 0 ? `E  cut stalkwood  ·  ${left} left` : 'Stalkwood · needs a knife or pick';
+        return inventory.counts.stone_knife + inventory.counts.stone_pick > 0 ? `${K('use')}  cut stalkwood  ·  ${left} left` : 'Stalkwood · needs a knife or pick';
       }
     }
   };
@@ -557,7 +598,7 @@ async function main() {
     if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 240)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
     else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0));
     let k = lampOn ? 1 : 0;
-    if (lampOn && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
+    if (lampOn && !settings.reduceFlash && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
     lamp.intensity = 18 * k * (lampCharge < 15 ? 0.6 : 1);
   };
 
@@ -565,7 +606,7 @@ async function main() {
   const food = () => {
     const f = campfires.lookAt(camera, USE_REACH);
     if (f && inventory.counts.raw_meat > 0) {
-      if (!f.lit) { audio.deny(); flash('Light the fire first: E with stalkwood.'); return; }
+      if (!f.lit) { audio.deny(); flash(`Light the fire first: ${K('use')} with stalkwood.`); return; }
       if (f.cooking.length >= 4) { flash('The spit is full.'); return; }
       inventory.take({ raw_meat: 1 });
       f.cooking.push(COOK_TIME);
@@ -581,7 +622,7 @@ async function main() {
       return;
     }
     audio.deny();
-    flash(inventory.counts.raw_meat > 0 ? 'Cook raw meat first: look at a lit fire and press Q.' : 'Nothing to eat. Hunt, then cook the meat at a fire.');
+    flash(inventory.counts.raw_meat > 0 ? `Cook raw meat first: look at a lit fire and press ${K('eat')}.` : 'Nothing to eat. Hunt, then cook the meat at a fire.');
   };
   campfires.onCooked = (f) => {
     inventory.add('cooked_meat');
@@ -608,7 +649,7 @@ async function main() {
     }
     campfires.add(hit.point.clone());
     audio.fireLit(hit.point);
-    flash('Campfire built. Add stalkwood (E) to keep it burning.');
+    flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */
   const pendingHits: { t: number; c: Creature }[] = [];
@@ -633,7 +674,7 @@ async function main() {
       hitStop = Math.min(0.09, 0.03 + dmg / 900 + (c.alive ? 0 : 0.03));
     } else if (c.state === 'curl') { audio.shellClack(at); particles.burst(at, 4, 0xffffff, { speed: 4, size: 0.03, life: 0.3 }); }
     if (!hit && c.state === 'curl') flash(`The ${c.species.name} curled into its shell.`);
-    else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (E).`);
+    else if (!c.alive) flash(`${c.species.name} down. Harvest it with a stone knife (${K('use')}).`);
   };
   const brush = (fill: boolean) => {
     const aim = aimAtTerrain(REACH);
@@ -658,7 +699,7 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F3') { e.preventDefault(); hud.style.display = hud.style.display === 'none' ? '' : 'none'; return; }
     if (e.code === 'F5') { e.preventDefault(); void saveNow().then((ok) => flash(ok ? 'Saved' : 'Not saved')); return; }
-    if (e.code === 'Tab') {
+    if (input.is(e.code, 'craft')) {
       e.preventDefault();
       if (state === 'craft') { setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.')); }
       else if (state === 'playing') { setState('craft'); if (document.pointerLockElement) document.exitPointerLock(); }
@@ -678,17 +719,17 @@ async function main() {
       return;
     }
     if (state !== 'playing' || e.repeat) return;
-    if (e.code === 'KeyE') use();
-    else if (e.code === 'KeyB') buildCampfire();
-    else if (e.code === 'KeyQ') food();
-    else if (e.code === 'KeyL') {
+    if (input.is(e.code, 'use')) use();
+    else if (input.is(e.code, 'build')) buildCampfire();
+    else if (input.is(e.code, 'eat')) food();
+    else if (input.is(e.code, 'lamp')) {
       if (!lampOn && lampCharge < 3) { audio.deny(); flash('The lamp is out of charge. It refills by a fire or in daylight.'); }
       else { lampOn = !lampOn; audio.play('ui_2', { bus: 'ui', gain: 0.35, rate: lampOn ? 1.4 : 1.1 }); }
     }
     else if (e.code === 'KeyT') { sky.speed = sky.speed === 1 ? 60 : 1; flash(sky.speed > 1 ? 'Fast time on (T)' : 'Fast time off'); }
     else {
       const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
-      if (n >= 0 && !hotbar.select(SLOTS[n], (id) => inventory.counts[id] > 0)) flash(`Craft a ${SLOT_NAMES[SLOTS[n]].toLowerCase()} first (Tab).`);
+      if (n >= 0 && !hotbar.select(SLOTS[n], (id) => inventory.counts[id] > 0)) flash(`Craft a ${SLOT_NAMES[SLOTS[n]].toLowerCase()} first (${K('craft')}).`);
     }
   });
   window.addEventListener('wheel', (e) => {
@@ -711,10 +752,10 @@ async function main() {
     heatBar.style.width = `${survival.warmth}%`;
     heatBar.style.backgroundColor = survival.warmth > 60 ? '#e0a050' : survival.warmth > 30 ? '#c9b98a' : '#8fc3e8';
     $('hpv').textContent = String(Math.ceil(survival.health));
-    $('heatlabel').textContent = survival.cold ? 'Body heat · freezing' : 'Body heat';
+    $('heatlabel').textContent = survival.cold ? '\u2744 Body heat \u00b7 freezing' : survival.warmth < 60 ? 'Body heat \u00b7 cooling' : 'Body heat';
     $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
     frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
-    const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ' (L)'}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
+    const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ` (${K('lamp')})`}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
     if (buffsEl.textContent !== buffs) buffsEl.textContent = buffs;
     if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
       $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
@@ -724,7 +765,7 @@ async function main() {
   };
 
   // --- Sounds the world makes on its own: fires, creatures, your body when it's in trouble ---------
-  let fireTimer = 0, callTimer = 1, bodyTimer = 0;
+  let fireTimer = 0, callTimer = 1, bodyTimer = 0, lastCallCaption = 0;
   const hurtEl = $('hurt');
   const worldSounds = (dt: number) => {
     if ((fireTimer -= dt) <= 0) {
@@ -741,6 +782,7 @@ async function main() {
       if (c) {
         if (c.species.id === 'tuko' && c.state !== 'curl') audio.tukoChirp(c.position);
         else if (c.species.id === 'oomi') audio.oomiHoot(c.position, c.state === 'sleep');
+        if (performance.now() - lastCallCaption > 10_000) { lastCallCaption = performance.now(); caption(c.species.id === 'tuko' ? 'Tuko chirping' : 'Oomi hooting', c.position); }
       }
     }
     if (state === 'playing' && (bodyTimer -= dt) <= 0) {

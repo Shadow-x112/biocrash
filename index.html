@@ -15,7 +15,8 @@
       #crosshair.none { opacity: 0.35; }
       #crosshair.dig { width: 6px; height: 6px; }
       #crosshair.use { width: 18px; height: 18px; background: transparent; border-color: rgba(255,255,255,0.9); }
-      #crosshair.enemy { width: 22px; height: 22px; background: rgba(230,80,60,0.15); border-color: #ff6a50; }
+      /* Enemy in reach: a red diamond, so it differs by shape as well as colour. */
+      #crosshair.enemy { width: 20px; height: 20px; border-radius: 2px; transform: translate(-50%,-50%) rotate(45deg); background: rgba(230,80,60,0.15); border-color: #ff6a50; }
       #crosshair.far { width: 14px; height: 14px; background: transparent; border-color: rgba(255,255,255,0.35); }
       #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%,-50%) rotate(45deg); pointer-events: none; opacity: 0; }
       #hitmark::before, #hitmark::after { content: ''; position: absolute; background: #fff; left: 50%; top: 50%; transform: translate(-50%,-50%); }
@@ -72,6 +73,14 @@
                 font: 600 14px system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0,0,0,0.8); pointer-events: none; }
       #inv { position: fixed; right: 16px; bottom: 16px; width: 150px; color: #e8edf2; font: 12px/1.7 system-ui, sans-serif;
              background: rgba(0,0,0,0.35); padding: 8px 10px; border-radius: 6px; pointer-events: none; }
+      :root { --ui: 1; }
+      /* Interface size setting: scales every HUD panel. */
+      #vitals, #inv, #hotbar, #core, #compass, #prompt, #toast, #captions, #craft .panel, #overlay .panel { zoom: var(--ui); }
+      #captions { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); pointer-events: none; text-align: center; }
+      #captions div { margin-top: 4px; padding: 3px 10px; background: rgba(0,0,0,0.72); color: #fff; border-radius: 4px;
+                      font: 15px/1.35 system-ui, sans-serif; max-width: 38ch; display: inline-block; }
+      #captions div + div { display: table; margin-left: auto; margin-right: auto; }
+      .kbtn { min-width: 90px; padding: 4px 8px !important; margin: 0 !important; font: 12px ui-monospace, monospace !important; }
       #toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); color: #fff; opacity: 0;
                transition: opacity 0.4s; background: rgba(0,0,0,0.5); padding: 6px 12px; border-radius: 6px;
                font: 13px system-ui, sans-serif; pointer-events: none; }
@@ -129,9 +138,10 @@
     </div>
     <div id="prompt"></div>
     <div id="toast"></div>
+    <div id="captions"></div>
     <div id="inv"></div>
     <div id="hotbar"></div>
-    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub">Number keys or click to craft · Shift+click makes up to 5 · Tab or Esc to close</p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
+    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
     <div id="death"><div><div id="deathtext">You froze.</div><div id="deathhint"></div><div class="sub">Recovering at the crash site…</div></div></div>
     <div id="crosshair"></div><div id="hitmark"></div>
     <div id="compass"></div>
@@ -141,12 +151,7 @@
         <div id="mainmenu">
         <h1>Biocrash</h1>
         <p>The station came down hard. You walked away from it. Now survive the night.</p>
-        <div class="keys">WASD move · Space jump · Shift run · C sneak
-E pick up / use · Tab crafting · 1-4 tools
-B build campfire · Q cook at a fire / eat · L wrist lamp
-Left click dig · Right click fill (or R / F)
-Arrow keys also look around
-F3 debug info · F5 save now · Esc pause</div>
+        <div class="keys" id="keylist"></div>
         <button id="play" class="primary">Click to play</button>
         <button id="export">Export save</button>
         <button id="import">Import save</button>
@@ -155,7 +160,7 @@ F3 debug info · F5 save now · Esc pause</div>
         <button id="openlog">Core log</button>
         </div>
         <div id="corelog"><h1>Core log</h1><div id="logtext"></div><button id="closelog" class="primary">Back</button></div>
-        <div id="settings"><h1>Settings</h1><div id="settingsform"></div><button id="closesettings" class="primary">Back</button></div>
+        <div id="settings"><h1>Settings</h1><div id="settingsform"></div><div id="keysform"></div><button id="closesettings" class="primary">Back</button></div>
         <div id="status"></div>
       </div>
     </div>
