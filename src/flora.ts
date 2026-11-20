@@ -40,6 +40,9 @@ const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE
 const stalkGeo = new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0);
 const capGeo = new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.42);
 capGeo.scale(1, 0.55, 1);
+// The dome's rim sits CAP_RIM above its centre: lower it so the rim meets the gills (it used to float ~0.7 m above them).
+const CAP_RIM = Math.cos(Math.PI * 0.42) * 0.55;
+capGeo.translate(0, -CAP_RIM, 0);
 const gillGeo = new THREE.CircleGeometry(0.93, 14).rotateX(Math.PI / 2);
 const spotGeo = new THREE.IcosahedronGeometry(0.09, 0);
 const sproutGeo = (() => {
@@ -144,7 +147,7 @@ export class Flora {
       const spots: number[] = [];
       for (let k = 0; k < SPOTS_PER; k++) {
         const a = k * 2.4 + o.spin, rr = 0.35 + (k % 3) * 0.2;
-        local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55, Math.sin(a) * rr).multiplyScalar(o.cap);
+        local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55 - CAP_RIM, Math.sin(a) * rr).multiplyScalar(o.cap);
         m.compose(local.applyQuaternion(q).add(topP), q, sc.setScalar(o.cap * 0.9));
         spots.push(this.spots.alloc(m));
       }
@@ -248,7 +251,7 @@ export class Flora {
     this.gills.set(s.slots.gill, m);
     s.slots.spots.forEach((sp, k) => {
       const a = k * 2.4 + s.spin, rr = 0.35 + (k % 3) * 0.2;
-      local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55, Math.sin(a) * rr).multiplyScalar(s.capR);
+      local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55 - CAP_RIM, Math.sin(a) * rr).multiplyScalar(s.capR);
       m.compose(local.applyQuaternion(s.q).add(top), s.q, sc.setScalar(s.capR * 0.9));
       this.spots.set(sp, m);
     });
