@@ -1,12 +1,11 @@
 // Fungal forest flora: giant mushrooms you can harvest for stalkwood, glowing sprouts, and drifting
 // spores at night. Placement comes from the worker's decoration pass (unedited terrain, seeded per chunk).
 import * as THREE from 'three';
-import { addSway, addRim } from './fx';
+import { addSway, fxUniforms } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
 
-const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 export const STALK_HARVESTS = 4;   // uses per mushroom
 export const STALK_YIELD = 2;      // stalkwood per use
 const SPOTS_PER = 7;
@@ -14,8 +13,8 @@ const SPOTS_PER = 7;
 interface Shroom {
   id: string; source: number; kind: 'giant' | 'small';
   base: THREE.Vector3; radius: number; height: number;
-  colliders: RAPIER.Collider[];
-  slots: { stalk: number; gill: number; cap: number; spots: number[] };
+  body: RAPIER.RigidBody | null;
+  slot: number;
   alive: boolean;
   /** Placement, kept so harvesting can rebuild the instances (shorter stalk, toppled at the end). */
   q: THREE.Quaternion; capR: number; color: number; spin: number;
@@ -25,19 +24,11 @@ interface ChunkFlora {
   sprouts: { slot: number; source: number }[];
 }
 
-const STALK = new THREE.MeshStandardMaterial({ color: 0xd8ccb4, roughness: 0.9, flatShading: true });
-const GILLS = new THREE.MeshStandardMaterial({ color: 0x8c6f86, roughness: 1, flatShading: true, side: THREE.DoubleSide });
-const SPOTS = new THREE.MeshStandardMaterial({ color: 0x20302c, emissive: 0x6ff0d8, emissiveIntensity: 0.3, flatShading: true });
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
-const CAP = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, flatShading: true }); // tinted per instance
-// Caps, gills and their glowing spots sway together (same world-space motion); sprouts bend from the base.
-for (const m of [CAP, GILLS, SPOTS]) addSway(m, 0.06);
-addRim(STALK);
 addSway(SPROUT, 0.1, true);
 const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.Color(c));
 
 // Unit geometries, scaled per instance: 1 m tall stalk, 1 m radius cap.
-const stalkGeo = new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0);
 const capGeo = new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.42);
 capGeo.scale(1, 0.55, 1);
 // The dome's rim sits CAP_RIM above its centre: lower it so the rim meets the gills (it used to float ~0.7 m above them).
@@ -52,8 +43,78 @@ const CAP_HULL = (() => {
   }
   return out;
 })();
-const gillGeo = new THREE.CircleGeometry(0.93, 14).rotateX(Math.PI / 2);
-const spotGeo = new THREE.IcosahedronGeometry(0.09, 0);
+
+// --- One mushroom = one object -------------------------------------------------------------------
+// Trunk, cap, gills and spots are merged into a single mesh, so the parts can never drift apart. Each vertex says
+// which part it belongs to (aPart 0 = trunk, 1 = crown), whether it takes the mushroom's cap colour (aTint) and how
+// much it glows (aGlow). Per mushroom (iDims): trunk radius, trunk length, cap radius. The shader stretches only the
+// trunk and seats the crown on top of it, so cutting shortens the trunk and the cap sinks with it, still attached.
+const STALK_COL = new THREE.Color(0xd8ccb4), GILL_COL = new THREE.Color(0x8c6f86), SPOT_COL = new THREE.Color(0x20302c);
+const bodyGeo = (() => {
+  const parts: { g: THREE.BufferGeometry; part: number; tint: number; glow: number; col: THREE.Color }[] = [
+    { g: new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0), part: 0, tint: 0, glow: 0, col: STALK_COL },
+    { g: capGeo, part: 1, tint: 1, glow: 0, col: new THREE.Color(1, 1, 1) },
+    // Gills face the ground, so no sun reaches them: a faint glow of their own colour keeps them from going black.
+    { g: new THREE.CircleGeometry(0.93, 14).rotateX(Math.PI / 2).translate(0, 0.004, 0), part: 1, tint: 0, glow: -0.45, col: GILL_COL },
+  ];
+  for (let k = 0; k < SPOTS_PER; k++) {
+    const a = k * 2.4, rr = 0.35 + (k % 3) * 0.2;
+    parts.push({ g: new THREE.IcosahedronGeometry(0.081, 0).translate(Math.cos(a) * rr, Math.sqrt(1 - rr * rr) * 0.55 - CAP_RIM, Math.sin(a) * rr), part: 1, tint: 0, glow: 1, col: SPOT_COL });
+  }
+  const pos: number[] = [], nrm: number[] = [], col: number[] = [], part: number[] = [], tint: number[] = [], glow: number[] = [];
+  for (const p of parts) {
+    const g = p.g.index ? p.g.toNonIndexed() : p.g;
+    const n = g.getAttribute('position').count;
+    pos.push(...(g.getAttribute('position').array as Float32Array)); nrm.push(...(g.getAttribute('normal').array as Float32Array));
+    for (let i = 0; i < n; i++) { col.push(p.col.r, p.col.g, p.col.b); part.push(p.part); tint.push(p.tint); glow.push(p.glow); }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  out.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
+  out.setAttribute('aTint', new THREE.Float32BufferAttribute(tint, 1));
+  out.setAttribute('aGlow', new THREE.Float32BufferAttribute(glow, 1));
+  return out;
+})();
+const BODY_VERT = `
+  vec3 transformed = aPart < 0.5
+    ? vec3(position.x * iDims.x, position.y * (iDims.y + 0.3) - 0.3, position.z * iDims.x)
+    : position * iDims.z + vec3(0.0, iDims.y, 0.0);`;
+const SWAY = `
+  {
+    vec3 base = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
+    float ph = base.x * 0.15 + base.z * 0.11, speed = mix(1.0, 0.45, uBreath);
+    vec3 sway = vec3(sin(uFxTime * 0.7 * speed + ph), sin(uFxTime * 0.4 + ph * 2.0) * uBreath * 0.6, cos(uFxTime * 0.53 * speed + ph * 1.3)) * 0.07 * (1.0 + uBreath);
+    sway *= clamp(transformed.y / max(iDims.y, 0.5), 0.0, 1.0); // rooted: the trunk bends, the crown moves most
+    mvPosition.xyz += (viewMatrix * vec4(sway, 0.0)).xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }`;
+const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
+const glowU = { value: 0.25 };
+BODY.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU });
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute vec3 iDims;\nvarying float vGlow; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow;')
+    .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb * mix(vec3(1.0), instanceColor.rgb, aTint);')
+    .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying float vGlow; uniform float uGlow; uniform vec3 uRim;')
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance += vGlow > 0.0 ? vec3(0.435, 0.941, 0.847) * vGlow * uGlow : diffuseColor.rgb * -vGlow;
+      { float rimF = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
+        totalEmissiveRadiance += uRim * rimF; }`);
+};
+BODY.customProgramCacheKey = () => 'shroom-body';
+// Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit mushroom.
+const BODY_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+BODY_DEPTH.onBeforeCompile = (sh) => {
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute vec3 iDims;')
+    .replace('#include <begin_vertex>', BODY_VERT);
+};
+BODY_DEPTH.customProgramCacheKey = () => 'shroom-depth';
 const sproutGeo = (() => {
   const parts = [new THREE.ConeGeometry(0.05, 0.35, 5).translate(0, 0.17, 0), new THREE.SphereGeometry(0.06, 6, 4).translate(0, 0.37, 0)];
   const pos: number[] = [], nrm: number[] = [];
@@ -72,10 +133,7 @@ export class Flora {
   /** How many times each mushroom has been harvested (saved). */
   readonly harvested = new Map<string, number>();
   private chunks = new Map<string, ChunkFlora>();
-  private stalks: InstancePool;
-  private gills: InstancePool;
-  private caps: InstancePool;
-  private spots: InstancePool;
+  private bodies: InstancePool;
   private sprouts: InstancePool;
   private spores: THREE.Points;
   private sporeVel: Float32Array;
@@ -87,10 +145,7 @@ export class Flora {
   private dir = new THREE.Vector3();
 
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, private avoid: THREE.Vector3) {
-    this.stalks = new InstancePool(stalkGeo, STALK, this.group, 1024, false, true);
-    this.gills = new InstancePool(gillGeo, GILLS, this.group, 1024);
-    this.caps = new InstancePool(capGeo, CAP, this.group, 1024, true, true);
-    this.spots = new InstancePool(spotGeo, SPOTS, this.group, 1024 * SPOTS_PER);
+    this.bodies = new InstancePool(bodyGeo, BODY, this.group, 1024, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
     this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
     const n = 260;
     const pos = new Float32Array(n * 3);
@@ -142,34 +197,21 @@ export class Flora {
       }
     }
 
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), v = new THREE.Vector3(), local = new THREE.Vector3(), topP = new THREE.Vector3();
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), one = new THREE.Vector3(1, 1, 1);
     for (const o of placed) {
       e.set(o.tilt, o.spin, o.tilt * 0.6);
       q.setFromEuler(e);
-      m.compose(v.copy(o.p).setY(o.p.y - 0.3), q, sc.set(o.r, o.h + 0.3, o.r));
-      const stalk = this.stalks.alloc(m);
-      topP.set(0, o.h, 0).applyQuaternion(q).add(o.p);
-      m.compose(topP, q, sc.setScalar(o.cap));
-      const cap = this.caps.alloc(m, CAP_COLORS[o.color]);
-      m.compose(v.copy(topP).setY(topP.y + 0.02), q, sc.setScalar(o.cap));
-      const gill = this.gills.alloc(m);
-      const spots: number[] = [];
-      for (let k = 0; k < SPOTS_PER; k++) {
-        const a = k * 2.4 + o.spin, rr = 0.35 + (k % 3) * 0.2;
-        local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55 - CAP_RIM, Math.sin(a) * rr).multiplyScalar(o.cap);
-        m.compose(local.applyQuaternion(q).add(topP), q, sc.setScalar(o.cap * 0.9));
-        spots.push(this.spots.alloc(m));
-      }
-      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, colliders: [], slots: { stalk, gill, cap, spots }, alive: true,
+      const slot = this.bodies.alloc(m.compose(o.p, q, one), CAP_COLORS[o.color]);
+      this.bodies.setExtra(slot, o.r, o.h, o.cap);
+      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
         q: q.clone(), capR: o.cap, color: o.color, spin: o.spin };
       c.shrooms.push(s);
-      if (this.harvested.get(s.id)) this.shape(s); // already cut: rebuild its harvested state
-      else this.solid(s, o.h, null);
+      this.shape(s); // physics, and the harvested state if it was already cut
     }
 
     // Glowing sprouts.
     const sd = deco.sprout;
-    const up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), sc = new THREE.Vector3();
     for (let i = 0; i < sd.length / STRIDE; i++) {
       const o = i * STRIDE;
       if (!sd[o + 8]) continue;
@@ -182,11 +224,8 @@ export class Flora {
   private removeShroom(s: Shroom) {
     if (!s.alive) return;
     s.alive = false;
-    this.clearColliders(s);
-    this.stalks.release(s.slots.stalk);
-    this.gills.release(s.slots.gill);
-    this.caps.release(s.slots.cap);
-    for (const sp of s.slots.spots) this.spots.release(sp);
+    this.clearBody(s);
+    this.bodies.release(s.slot);
   }
 
   /** After digging or filling: mushrooms and sprouts whose ground changed are removed (with their colliders). */
@@ -234,67 +273,46 @@ export class Flora {
 
   /** Rebuilds a mushroom's instances for how often it's been cut: each cut takes ~18% off the stalk (the cap sinks
    *  with it); the last one topples it: the stalk lies on the ground, the cap is gone. */
-  private clearColliders(s: Shroom) {
-    for (const c of s.colliders) this.physics.removeCollider(c, false);
-    s.colliders = [];
+  private clearBody(s: Shroom) {
+    if (s.body) { this.physics.removeRigidBody(s.body); s.body = null; }
   }
 
-  /** Physics for a mushroom as it currently looks: every stalk (giant or small) and every cap is solid. Standing:
-   *  a tilted cylinder for the stalk plus the cap's convex hull. Toppled (`fall` set): the stalk lying on the ground. */
-  private solid(s: Shroom, h: number, fall: THREE.Quaternion | null) {
-    this.clearColliders(s);
-    const R = this.rapier, c = new THREE.Vector3();
-    if (fall) {
-      c.set(0, h / 2, 0).applyQuaternion(fall).add(s.base).setY(c.y + s.radius * 0.8);
-      s.colliders.push(this.physics.createCollider(R.ColliderDesc.cylinder(h / 2, s.radius * 0.85)
-        .setTranslation(c.x, c.y, c.z).setRotation(fall)));
-      return;
-    }
+  /** One solid body per mushroom, posed like its mesh: a trunk cylinder plus the cap's convex hull (you can stand on
+   *  it). Every mushroom, small ones included. */
+  private solid(s: Shroom, pos: THREE.Vector3, rot: THREE.Quaternion, h: number) {
+    this.clearBody(s);
+    const R = this.rapier;
+    const body = this.physics.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation(rot));
     const len = h + 0.3;
-    c.set(0, len / 2, 0).applyQuaternion(s.q).add(s.base).setY(c.y - 0.3);
-    s.colliders.push(this.physics.createCollider(R.ColliderDesc.cylinder(len / 2, s.radius * 0.85)
-      .setTranslation(c.x, c.y, c.z).setRotation(s.q)));
-    const top = c.set(0, h, 0).applyQuaternion(s.q).add(s.base);
+    this.physics.createCollider(R.ColliderDesc.cylinder(len / 2, s.radius * 0.85).setTranslation(0, len / 2 - 0.3, 0), body);
     const pts = new Float32Array(CAP_HULL.length);
     for (let i = 0; i < pts.length; i++) pts[i] = CAP_HULL[i] * s.capR;
     const hull = R.ColliderDesc.convexHull(pts);
-    if (hull) s.colliders.push(this.physics.createCollider(hull.setTranslation(top.x, top.y, top.z).setRotation(s.q)));
+    if (hull) this.physics.createCollider(hull.setTranslation(0, h, 0), body);
+    s.body = body;
   }
 
+  /** Poses a mushroom for how often it's been cut: each cut takes ~18% off the trunk and the cap sinks with it. The
+   *  last cut fells it whole, cap and all: it tips over along its spin direction until the cap rim meets the ground,
+   *  leaving the trunk propped at an angle. */
   private shape(s: Shroom) {
     const n = Math.min(STALK_HARVESTS, this.harvested.get(s.id) ?? 0);
-    const m = new THREE.Matrix4(), v = new THREE.Vector3(), sc = new THREE.Vector3(), top = new THREE.Vector3(), local = new THREE.Vector3();
+    const m = new THREE.Matrix4(), pos = s.base.clone(), one = new THREE.Vector3(1, 1, 1);
+    let rot = s.q, h = s.height * (1 - 0.18 * n);
     if (n >= STALK_HARVESTS) {
-      // Toppled: the stalk falls over along its spin direction; cap, gills and spots are gone; no collider.
-      const fall = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), Math.PI / 2 - 0.08);
-      const len = s.height * 0.35;
-      m.compose(v.copy(s.base).setY(s.base.y + s.radius * 0.8), fall, sc.set(s.radius, len, s.radius));
-      this.stalks.set(s.slots.stalk, m);
-      this.caps.set(s.slots.cap, ZERO); this.gills.set(s.slots.gill, ZERO);
-      for (const sp of s.slots.spots) this.spots.set(sp, ZERO);
-      this.solid(s, len, fall);
-      return;
+      h = s.height * (1 - 0.18 * (STALK_HARVESTS - 1)); // cut at the base: the whole remaining trunk comes down
+      const lean = Math.min(Math.PI / 2 - 0.08, Math.max(0.9, Math.PI / 2 - Math.atan2(s.capR - s.radius, h)));
+      rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), lean);
+      pos.y += s.radius * 0.6;
     }
-    const h = s.height * (1 - 0.18 * n);
-    m.compose(v.copy(s.base).setY(s.base.y - 0.3), s.q, sc.set(s.radius, h + 0.3, s.radius));
-    this.solid(s, h, null);
-    this.stalks.set(s.slots.stalk, m);
-    top.set(0, h, 0).applyQuaternion(s.q).add(s.base);
-    m.compose(top, s.q, sc.setScalar(s.capR));
-    this.caps.set(s.slots.cap, m);
-    m.compose(v.copy(top).setY(top.y + 0.02), s.q, sc.setScalar(s.capR));
-    this.gills.set(s.slots.gill, m);
-    s.slots.spots.forEach((sp, k) => {
-      const a = k * 2.4 + s.spin, rr = 0.35 + (k % 3) * 0.2;
-      local.set(Math.cos(a) * rr, Math.sqrt(Math.max(0, 1 - rr * rr)) * 0.55 - CAP_RIM, Math.sin(a) * rr).multiplyScalar(s.capR);
-      m.compose(local.applyQuaternion(s.q).add(top), s.q, sc.setScalar(s.capR * 0.9));
-      this.spots.set(sp, m);
-    });
+    this.bodies.set(s.slot, m.compose(pos, rot, one));
+    this.bodies.setExtra(s.slot, s.radius, h, s.capR);
+    this.solid(s, pos, rot, h);
   }
 
   update(dt: number, viewer: THREE.Vector3, night: number) {
     const glow = 0.25 + night * 1.9;
-    SPOTS.emissiveIntensity = glow;
+    glowU.value = glow;
     SPROUT.emissiveIntensity = glow * 1.1;
     const pos = this.spores.geometry.getAttribute('position') as THREE.BufferAttribute;
     if (night > 0.02) {

@@ -11,7 +11,13 @@ export class InstancePool {
   private dirtyBounds = true;
   private colored: boolean;
 
-  constructor(private geometry: THREE.BufferGeometry, private material: THREE.Material, private parent: THREE.Object3D, capacity = 512, colored = false, private castShadow = false) {
+  /** Optional per-instance attribute (name, floats per instance) and a custom depth material for shadows. */
+  private extra?: { name: string; size: number };
+  private depth?: THREE.Material;
+
+  constructor(private geometry: THREE.BufferGeometry, private material: THREE.Material, private parent: THREE.Object3D, capacity = 512, colored = false, private castShadow = false,
+    opts: { extra?: { name: string; size: number }; depth?: THREE.Material } = {}) {
+    this.extra = opts.extra; this.depth = opts.depth;
     this.colored = colored;
     this.mesh = this.make(capacity);
     parent.add(this.mesh);
@@ -24,6 +30,14 @@ export class InstancePool {
     m.castShadow = this.castShadow;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     if (this.colored) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
+    if (this.depth) m.customDepthMaterial = this.depth;
+    if (this.extra) {
+      const old = this.geometry.getAttribute(this.extra.name) as THREE.InstancedBufferAttribute | undefined;
+      const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * this.extra.size), this.extra.size);
+      a.setUsage(THREE.DynamicDrawUsage);
+      if (old) a.array.set(old.array.subarray(0, Math.min(old.array.length, a.array.length)));
+      this.geometry.setAttribute(this.extra.name, a);
+    }
     return m;
   }
 
@@ -60,6 +74,13 @@ export class InstancePool {
     this.mesh.setMatrixAt(i, matrix);
     this.mesh.instanceMatrix.needsUpdate = true;
     this.dirtyBounds = true;
+  }
+
+  /** Per-instance values for the extra attribute. */
+  setExtra(i: number, ...v: number[]) {
+    const a = this.geometry.getAttribute(this.extra!.name) as THREE.InstancedBufferAttribute;
+    (a.array as Float32Array).set(v, i * this.extra!.size);
+    a.needsUpdate = true;
   }
 
   /** Hide an instance and give its slot back. */
