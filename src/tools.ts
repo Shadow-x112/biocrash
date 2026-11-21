@@ -14,6 +14,9 @@ export const DIG_POWER: Record<Slot, { strength: number; radius: number; interva
   spear: { strength: 0.8, radius: 1.3, interval: 0.25 },
 };
 
+/** Where the fist closes around a handle (viewmodel space). */
+const GRIP: [number, number, number] = [0, -0.09, -0.14];
+
 const wood = new THREE.MeshStandardMaterial({ color: 0xcdbfa3, roughness: 0.9, flatShading: true });
 const rock = new THREE.MeshStandardMaterial({ color: 0x8a857c, roughness: 1, flatShading: true });
 const cord = new THREE.MeshStandardMaterial({ color: 0x8aa46f, roughness: 1, flatShading: true });
@@ -67,6 +70,8 @@ export class Hotbar {
   private lag = new THREE.Vector2(); // trails the mouse a little
   private prevLook: { yaw: number; pitch: number } | null = null;
   onChange: () => void = () => {};
+  /** Rest position of the held view (the modelled hand sits higher, so the glove and grip are in frame). */
+  private base = new THREE.Vector3(0.26, -0.2, -0.42);
 
   constructor(camera: THREE.Camera) {
     camera.add(this.view);
@@ -78,6 +83,32 @@ export class Hotbar {
     }
     this.view.position.set(0.26, -0.2, -0.42);
     this.view.scale.setScalar(0.66); // the hand camera's 60° view shows it larger than the old 75°
+  }
+
+  /**
+   * Swap in the Blender viewmodels: the suited arm with its wrist lamp on every slot, an open glove for bare hands,
+   * a fist plus the tool otherwise. The fist is modelled around a vertical handle at GRIP; for the spear it turns
+   * at that point to follow the shaft.
+   */
+  setLooks(m: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
+    if (!m.Arm || !m.Hand_Grip || !m.Hand_Open) return;
+    this.base.set(0.22, -0.12, -0.4);
+    const make = (n: string) => { const o = new THREE.Mesh(m[n].geometry, m[n].material); o.frustumCulled = false; return o; };
+    const tool: Record<Slot, string | null> = { hands: null, stone_pick: 'Tool_Pick', stone_knife: 'Tool_Knife', spear: 'Tool_Spear' };
+    for (const [slot, g] of this.models) {
+      g.clear();
+      g.add(make('Arm'));
+      if (slot === 'hands') { g.add(make('Hand_Open')); continue; }
+      const fist = make('Hand_Grip');
+      if (slot === 'spear') {
+        const pivot = new THREE.Group();
+        pivot.position.set(...GRIP); pivot.rotation.x = -Math.PI / 2 + 0.25;
+        fist.position.set(-GRIP[0], -GRIP[1], -GRIP[2]);
+        pivot.add(fist); g.add(pivot);
+      } else g.add(fist);
+      const t = tool[slot];
+      if (t && m[t]) g.add(make(t));
+    }
   }
 
   /** Select a slot if you own its tool. */
@@ -116,7 +147,7 @@ export class Hotbar {
     const strike = t < 0.25 ? -0.35 * Math.sin((t / 0.25) * Math.PI / 2) : t < 0.42 ? -0.35 + 1.35 * ((t - 0.25) / 0.17) : 1 - (t - 0.42) / 0.58;
     const s = t >= 1 ? 0 : strike;
     const bob = moving ? 0.012 : 0.004;
-    const bx = 0.26 + Math.cos(this.bobT) * bob, by = -0.2 + Math.abs(Math.sin(this.bobT)) * bob, bz = -0.42;
+    const bx = this.base.x + Math.cos(this.bobT) * bob, by = this.base.y + Math.abs(Math.sin(this.bobT)) * bob, bz = this.base.z;
     switch (this.slot) {
       case 'spear': // straight stab
         this.view.position.set(bx, by - s * 0.02, bz - s * 0.3);

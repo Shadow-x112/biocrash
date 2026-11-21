@@ -13,7 +13,7 @@ import { RECIPES } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, setCreatureModels, type Creature } from './creatures';
 import { Wreck } from './wreck';
-import { loadProps, propGlow, loadCreatures } from './assets';
+import { loadProps, propGlow, loadCreatures, loadViewmodels } from './assets';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Packs } from './packs';
@@ -65,7 +65,7 @@ async function main() {
   const hands = { scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 10) };
   const handHemi = new THREE.HemisphereLight(), handSun = new THREE.DirectionalLight(), handFire = new THREE.PointLight(0xff9a4a, 0, 6, 1.6);
   const handLamp = new THREE.PointLight(0xdff4ff, 0, 2, 1);
-  handLamp.position.set(0.2, -0.1, -0.2);
+  handLamp.position.set(0.24, -0.17, -0.38); // at the wrist lamp
   hands.scene.add(hands.camera, handHemi, handSun, handSun.target, handFire, handLamp);
   const post = new Post(renderer, scene, camera, hands);
   const skyEnv = new SkyEnv(renderer, scene);
@@ -189,6 +189,7 @@ async function main() {
   wreck.onSeated = () => { flora.clearBlocked(); props.clearBlocked(); };
   // The Blender-built props replace the placeholder shapes as soon as they load.
   void loadProps().then((m) => { props.setLooks(m); flora.setLooks(m); campfires.setLooks(m); packs.setLook(m.Pack); });
+  void loadViewmodels().then((m) => hotbar.setLooks(m));
   void loadCreatures().then((m) => { setCreatureModels(m); if (m?.figure) horror.setFigure(m.figure); });
   for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
   scene.add(flora.group);
@@ -781,7 +782,7 @@ async function main() {
     for (const f of campfires.list) { const d = f.position.distanceTo(camera.position); if (f.lit && d < nd) { nd = d; near = f.position; str = f.heat.heatC / 62; } }
     handFire.intensity = near ? 7 * str * Math.max(0, 1 - nd / 14) : 0;
     if (near) handFire.position.copy(tv.copy(near).setY(near.y + 0.9).sub(camera.position)).applyQuaternion(camInv).normalize().multiplyScalar(1.5);
-    handLamp.intensity = lamp.intensity > 1 ? 0.6 : 0;
+    handLamp.intensity = lamp.intensity > 1 ? 0.14 : 0; // spill from the wrist lamp: just enough to read the tool
   };
 
   const MAX_FIRES = 40;

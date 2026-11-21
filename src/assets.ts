@@ -261,10 +261,9 @@ export function splatMaterial() {
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
 }
 
-let loading: Promise<PropMeshes> | null = null;
-export function loadProps(): Promise<PropMeshes> {
-  loading ??= new Promise((resolve) => {
-    new GLTFLoader().load('models/props.json', (gltf) => {
+function loadMeshes(url: string): Promise<PropMeshes> {
+  return new Promise((resolve) => {
+    new GLTFLoader().load(url, (gltf) => {
       const out: PropMeshes = {};
       const seen = new Set<THREE.Material>();
       gltf.scene.traverse((o) => {
@@ -280,8 +279,14 @@ export function loadProps(): Promise<PropMeshes> {
       resolve(out);
     }, undefined, () => resolve({})); // missing: keep the old shapes
   });
-  return loading;
 }
+
+let loading: Promise<PropMeshes> | null = null;
+export function loadProps(): Promise<PropMeshes> { return (loading ??= loadMeshes('models/props.json')); }
+
+let viewmodels: Promise<PropMeshes> | null = null;
+/** First-person arm, gloves and held tools (art/blender/bc_viewmodels.py). */
+export function loadViewmodels(): Promise<PropMeshes> { return (viewmodels ??= loadMeshes('models/viewmodels.json')); }
 
 export interface CreatureModels {
   rigs: Record<'tuko' | 'oomi', THREE.Object3D>;
