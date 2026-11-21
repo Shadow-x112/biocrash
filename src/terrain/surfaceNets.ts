@@ -92,17 +92,12 @@ export function meshSurfaceNets(d: Float32Array, worldX0: number, worldY0: numbe
 
   // 2. One quad per owned grid edge that changes sign.
   const vert = (i: number, j: number, k: number) => cellVert[i + j * CELLS + k * CELLS * CELLS];
-  const quad = (a: number, b: number, c: number, e: number) => {
+  // Winding comes from which side of the edge is rock, so every face points into the air. (It used to be chosen by
+  // comparing with the vertex normals, which are unreliable at sharp dug edges: faces flipped, got back-face culled,
+  // and showed as holes in the walls of anything you dug.)
+  const quad = (a: number, b: number, c: number, e: number, outward: boolean) => {
     if (a < 0 || b < 0 || c < 0 || e < 0) return;
-    // Pick the winding whose face normal agrees with the vertex normals.
-    const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
-    const ux = pos[b * 3] - ax, uy = pos[b * 3 + 1] - ay, uz = pos[b * 3 + 2] - az;
-    const vx = pos[c * 3] - ax, vy = pos[c * 3 + 1] - ay, vz = pos[c * 3 + 2] - az;
-    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
-    const nx = nrm[a * 3] + nrm[b * 3] + nrm[c * 3] + nrm[e * 3];
-    const ny = nrm[a * 3 + 1] + nrm[b * 3 + 1] + nrm[c * 3 + 1] + nrm[e * 3 + 1];
-    const nz = nrm[a * 3 + 2] + nrm[b * 3 + 2] + nrm[c * 3 + 2] + nrm[e * 3 + 2];
-    if (fx * nx + fy * ny + fz * nz >= 0) idx.push(a, b, c, a, c, e);
+    if (outward) idx.push(a, b, c, a, c, e);
     else idx.push(a, c, b, a, e, c);
   };
 
@@ -110,9 +105,10 @@ export function meshSurfaceNets(d: Float32Array, worldX0: number, worldY0: numbe
     for (let j = 1; j <= CHUNK; j++)
       for (let i = 1; i <= CHUNK; i++) {
         const v0 = d[S(i, j, k)] > 0;
-        if (v0 !== d[S(i + 1, j, k)] > 0) quad(vert(i, j - 1, k - 1), vert(i, j, k - 1), vert(i, j, k), vert(i, j - 1, k));
-        if (v0 !== d[S(i, j + 1, k)] > 0) quad(vert(i - 1, j, k - 1), vert(i, j, k - 1), vert(i, j, k), vert(i - 1, j, k));
-        if (v0 !== d[S(i, j, k + 1)] > 0) quad(vert(i - 1, j - 1, k), vert(i, j - 1, k), vert(i, j, k), vert(i - 1, j, k));
+        // a-b-c order faces +x for x edges, -y for y edges, +z for z edges; rock on the low side faces the + direction.
+        if (v0 !== d[S(i + 1, j, k)] > 0) quad(vert(i, j - 1, k - 1), vert(i, j, k - 1), vert(i, j, k), vert(i, j - 1, k), v0);
+        if (v0 !== d[S(i, j + 1, k)] > 0) quad(vert(i - 1, j, k - 1), vert(i, j, k - 1), vert(i, j, k), vert(i - 1, j, k), !v0);
+        if (v0 !== d[S(i, j, k + 1)] > 0) quad(vert(i - 1, j - 1, k), vert(i, j - 1, k), vert(i, j, k), vert(i - 1, j, k), v0);
       }
 
   return {
