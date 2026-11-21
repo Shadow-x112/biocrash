@@ -2,7 +2,7 @@
 // point. Solid (a trimesh from its collision mesh), with its red warning beacons and lit window throwing light.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { addGrounding, splatMaterial } from './assets';
+import { addDetail, addGrounding, splatMaterial } from './assets';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type RAPIER from '@dimforge/rapier3d';
 import { loadProps } from './assets';
@@ -118,7 +118,7 @@ export class Wreck {
   private async scatterDebris() {
     const m = await loadProps();
     const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean)
-      .map((k) => { const mat = k.material.clone(); addGrounding(mat, 0.03, 0.14, 0.55); return { geometry: k.geometry, material: mat }; });
+      .map((k) => { const mat = k.material.clone(); addDetail(mat, { scale: 1.6, normal: 0.35, moss: 0.3, wet: 0.3, macro: 0.4, rough: 0.4 }); addGrounding(mat, 0.15, 0.12, 0.4); return { geometry: k.geometry, material: mat }; });
     if (!kinds.length) return;
     const splatMat = splatMaterial(), quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     let seed = 7;
@@ -137,7 +137,12 @@ export class Wreck {
       piece.castShadow = piece.receiveShadow = true;
       // A scorched contact patch under the plate (a child: it goes when the plate is cleared).
       const sp = new THREE.Mesh(quad, splatMat);
-      sp.rotation.set(-piece.rotation.x, 0, -piece.rotation.z); sp.position.y = -0.02; sp.scale.set(1.9, 1, 1.4); sp.renderOrder = -1;
+      // Lie on the ground's own slope (a flat patch on a slope floats on one side and sinks on the other).
+      const hx = (this.ground(x + 0.6, z) ?? h) - (this.ground(x - 0.6, z) ?? h), hz = (this.ground(x, z + 0.6) ?? h) - (this.ground(x, z - 0.6) ?? h);
+      const gn = new THREE.Vector3(-hx / 1.2, 1, -hz / 1.2).normalize(), up = new THREE.Vector3(0, 1, 0);
+      const world = new THREE.Quaternion().setFromUnitVectors(up, gn).multiply(new THREE.Quaternion().setFromAxisAngle(up, piece.rotation.y));
+      sp.quaternion.copy(piece.quaternion).invert().multiply(world);
+      sp.position.set(0, -0.025, 0).applyQuaternion(piece.quaternion.clone().invert()); sp.scale.set(1.5, 1, 1.15); sp.renderOrder = -1;
       piece.add(sp);
       this.debris.add(piece);
     }
