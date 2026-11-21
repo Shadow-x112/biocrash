@@ -7,10 +7,12 @@ export type PropMeshes = Record<string, { geometry: THREE.BufferGeometry; materi
 /** Glow strength for organic props (bright vertex colours glow): dim by day, strong at night. */
 export const propGlow = { value: 0.6 };
 
-/** Organic props carry their colour in the vertex colours; the brightest of them (bulbs, sprout heads, fibre tips,
- *  the hazard stripe) glow. */
+/** Organic props carry their colour in the vertex colours; the brightest of them (fibre tips, v1 bulbs) glow.
+ *  Chains with other onBeforeCompile patches. */
 export function addColourGlow(mat: THREE.Material) {
-  mat.onBeforeCompile = (sh) => {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
     sh.uniforms.uPropGlow = propGlow;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uPropGlow;')
@@ -20,21 +22,35 @@ export function addColourGlow(mat: THREE.Material) {
             totalEmissiveRadiance += vColor.rgb * smoothstep(0.7, 1.0, m) * uPropGlow; }
         #endif`);
   };
-  mat.customProgramCacheKey = () => 'prop-glow';
+  mat.customProgramCacheKey = () => prevKey() + '|prop-glow';
   mat.needsUpdate = true;
 }
 
-/** Baked emission maps (creatures): scale the emissive glow with the night (propGlow) by k. */
+/** Baked emission maps: scale the emissive glow with the night (propGlow) by k. Chains. */
 export function addMapGlow(mat: THREE.MeshStandardMaterial, k: number) {
-  mat.onBeforeCompile = (sh) => {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
     sh.uniforms.uPropGlow = propGlow;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uPropGlow;')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance *= uPropGlow * ${k.toFixed(2)};`);
   };
-  mat.customProgramCacheKey = () => 'map-glow';
+  mat.customProgramCacheKey = () => prevKey() + `|map-glow${k}`;
   mat.needsUpdate = true;
+}
+
+/**
+ * The glow every Blender prop material needs, by kind: baked emission map (v2 props) or bright vertex colours.
+ * Call it on every copy: Material.clone() does not carry onBeforeCompile patches over.
+ */
+export function prepGlow(mat: THREE.Material, k = 1.6) {
+  const m = mat as THREE.MeshStandardMaterial;
+  if (m.emissiveMap) { m.emissive.setRGB(1, 1, 1); m.emissiveMap.colorSpace = THREE.SRGBColorSpace; addMapGlow(m, k); }
+  else if (m.vertexColors) addColourGlow(m);
+  if (m.map) m.map.anisotropy = 8;
+  return mat;
 }
 
 /**
@@ -257,8 +273,7 @@ export function loadProps(): Promise<PropMeshes> {
         const mat = m.material as THREE.MeshStandardMaterial;
         if (!seen.has(mat)) {
           seen.add(mat);
-          if (mat.vertexColors) addColourGlow(mat);
-          if (mat.map) mat.map.anisotropy = 8;
+          prepGlow(mat);
         }
         out[m.name] = { geometry: m.geometry, material: mat };
       });

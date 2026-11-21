@@ -5,7 +5,7 @@ import { addSway, fxUniforms } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
-import { addFade, addPulse, addWind } from './assets';
+import { addFade, addPulse, addWind, prepGlow } from './assets';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const STALK_HARVESTS = 4;   // uses per mushroom
@@ -351,14 +351,14 @@ export class Flora {
   /** Use the Blender-built sprout and bulb models once loaded. */
   setLooks(meshes: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
     if (meshes.Sprout) {
-      const mat = meshes.Sprout.material.clone(), g = meshes.Sprout.geometry;
+      const mat = prepGlow(meshes.Sprout.material.clone()), g = meshes.Sprout.geometry;
       g.computeBoundingBox();
       addWind(mat, fxUniforms.uFxTime, 0.12, Math.max(0.05, g.boundingBox!.max.y));
       addFade(mat, 50, 70);
       this.sprouts.setLook(g, mat);
     }
     if (meshes.Bulbs) {
-      const mat = meshes.Bulbs.material.clone();
+      const mat = prepGlow(meshes.Bulbs.material.clone(), 1.0);
       addPulse(mat, fxUniforms.uFxTime, 1.1, 0.5);
       const g = meshes.Bulbs.geometry; g.computeBoundingBox();
       addWind(mat, fxUniforms.uFxTime, 0.06, Math.max(0.05, g.boundingBox!.max.y)); // bulbs bob on their stems

@@ -57,7 +57,7 @@ const KINDS: PropKind[] = [
 ];
 
 import { InstancePool } from './pool';
-import { addDetail, addFade, addGrounding, addWind, splatMaterial } from './assets';
+import { addDetail, addFade, addGrounding, addWind, prepGlow, splatMaterial } from './assets';
 import { fxUniforms } from './fx';
 
 /** Local height of a model's top (wind bends from 0 to here). */
@@ -109,7 +109,7 @@ export class Props {
       const m = meshes[name], pool = this.pools.get(id as PropKind['id']);
       if (!m || !pool) continue;
       // Own material per kind: grounding depends on how far above the ground the kind sits.
-      const kind = KINDS.find((k) => k.id === id)!, mat = m.material.clone();
+      const kind = KINDS.find((k) => k.id === id)!, mat = prepGlow(m.material.clone());
       if (id === 'stone') addDetail(mat, { scale: 2.2, normal: 0.85, moss: 0.9, wet: 0.2, macro: 0.75 });
       if (id === 'stalkwood') addDetail(mat, { scale: 3.0, normal: 0.8, moss: 0.55, wet: 0.25, macro: 0.7 });
       if (id === 'fiber') { addDetail(mat, { scale: 4.0, normal: 0.2, macro: 0.8, rough: 0.3 }); addWind(mat, fxUniforms.uFxTime, 0.16, tipHeight(m.geometry)); }

@@ -2,7 +2,7 @@
 // point. Solid (a trimesh from its collision mesh), with its red warning beacons and lit window throwing light.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { addDetail, addGrounding, splatMaterial } from './assets';
+import { addDetail, addGrounding, prepGlow, splatMaterial } from './assets';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type RAPIER from '@dimforge/rapier3d';
 import { loadProps } from './assets';
@@ -118,7 +118,7 @@ export class Wreck {
   private async scatterDebris() {
     const m = await loadProps();
     const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean)
-      .map((k) => { const mat = k.material.clone(); addDetail(mat, { scale: 1.6, normal: 0.35, moss: 0.3, wet: 0.3, macro: 0.4, rough: 0.4 }); addGrounding(mat, 0.15, 0.12, 0.4); return { geometry: k.geometry, material: mat }; });
+      .map((k) => { const mat = prepGlow(k.material.clone()); addDetail(mat, { scale: 1.6, normal: 0.35, moss: 0.3, wet: 0.3, macro: 0.4, rough: 0.4 }); addGrounding(mat, 0.15, 0.12, 0.4); return { geometry: k.geometry, material: mat }; });
     if (!kinds.length) return;
     const splatMat = splatMaterial(), quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     let seed = 7;

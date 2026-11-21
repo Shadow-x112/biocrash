@@ -1,6 +1,6 @@
 // Campfires: the first heat source you build. They burn fuel, light the night and keep you warm.
 import * as THREE from 'three';
-import { addDetail } from './assets';
+import { addDetail, prepGlow } from './assets';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { HeatSource } from './survival';
 
@@ -189,7 +189,7 @@ export class Campfires {
     let st = meshes.Campfire_Stones, wd = meshes.Campfire_Wood; const sc = meshes.Campfire_Scrap;
     if (!st || !wd) return;
     // Own copies with the shared detail layer (the Blender materials are shared with other props).
-    const stoneMat = st.material.clone(), logMat = wd.material.clone();
+    const stoneMat = prepGlow(st.material.clone()), logMat = prepGlow(wd.material.clone(), 2.2); // embers
     addDetail(stoneMat, { scale: 2.4, normal: 0.5, macro: 0.4 }); addDetail(logMat, { scale: 3.5, normal: 0.55, macro: 0.5 });
     st = { geometry: st.geometry, material: stoneMat }; wd = { geometry: wd.geometry, material: logMat };
     this.parts.ring = st.geometry; this.parts.mats.stone = st.material;
