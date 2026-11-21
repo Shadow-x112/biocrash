@@ -1,4 +1,4 @@
-# Biocrash item / tool / status icons, rendered from the game's own models (props.glb, viewmodels.glb) plus small
+﻿# Biocrash item / tool / status icons, rendered from the game's own models (props.glb, viewmodels.glb) plus small
 # icon-only models for items that have no world model yet. Cycles, 128 px, transparent, dark-alien lighting
 # (cool key, teal rim). Aseprite then pixel-finishes them (art/aseprite/icons.lua): 64 px, shared palette, outline.
 # Run: blender -b --factory-startup -P bc_icons.py -- <repo_root>
@@ -163,6 +163,47 @@ for v in bm.verts:
     t = min(1.0, max(0.0, (v.co.z / 0.5 + 1) / 2))
     v.co.x *= max(0.05, 1 - t ** 1.6); v.co.y *= max(0.2, 1 - t)
 EXTRA["chitin_spearhead"] = obj("chitin_spearhead", bm, CHITM)
+# Fiber pouch: a small woven sack cinched at the neck with cordage.
+bm = lumpy(0.4, 1.0, 0.95, 0.9, 0.08, 11.0, 4)
+def _ss(t): t = min(1.0, max(0.0, t)); return t * t * (3 - 2 * t)
+for v in bm.verts:  # squeeze the top into a neck, then a ruffled mouth above the tie
+    if v.co.z > 0.0:
+        t = v.co.z / 0.36
+        if t < 0.8:
+            k = 1 - 0.68 * _ss(t / 0.8); v.co.z = t * 0.42
+        else:
+            k = 0.32 + (t - 0.8) * 1.6 + noise.noise(v.co * 9) * 0.06; v.co.z = 0.336 + (t - 0.8) * 0.9
+        v.co.x *= k; v.co.y *= k
+pouch = obj("fiber_pouch", bm, FIBERM)
+d = pouch.modifiers.new("d", "DISPLACE"); d.texture = bpy.data.textures.new("fp", "STUCCI"); d.texture.noise_scale = 0.05; d.strength = 0.03
+ring = []
+for i in range(40):
+    a0 = i / 40 * math.tau; a1 = (i + 1) / 40 * math.tau
+    ring.append(capsule(Vector((math.cos(a0) * 0.15, math.sin(a0) * 0.15, 0.33)), Vector((math.cos(a1) * 0.15, math.sin(a1) * 0.15, 0.33)), 0.035, 0.035, 8))
+ring.append(capsule(Vector((0.1, -0.12, 0.33)), Vector((0.3, -0.36, 0.0)), 0.03, 0.025, 8))
+cinch = obj("fiber_pouch_tie", merge(ring), mat("Tie", (0.42, 0.3, 0.14), 0.7, 0, 20, (0.25, 0.17, 0.08)))
+EXTRA["fiber_pouch"] = pouch; pouch["extra"] = "fiber_pouch_tie"
+# Hide pack: a stitched hide backpack: fold-over flap, a cord strap across it with a glowing chitin clasp.
+bm = bmesh.new(); bmesh.ops.create_cube(bm, size=1.0); bmesh.ops.scale(bm, vec=(0.72, 0.42, 0.86), verts=bm.verts)
+bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.12, segments=3, affect="EDGES")
+hpack = obj("hide_pack", bm, HIDEM)
+d = hpack.modifiers.new("d", "DISPLACE"); d.texture = bpy.data.textures.new("hp", "CLOUDS"); d.texture.noise_scale = 0.18; d.strength = 0.04
+fl = bmesh.new(); bmesh.ops.create_grid(fl, x_segments=16, y_segments=10, size=0.5)
+for v in fl.verts:  # the flap drapes over the top and down the front, with a ragged hem
+    u = (v.co.x / 0.5) * 0.4; w = (v.co.y / 0.5 + 1) / 2
+    if w < 0.45: v.co = Vector((u, -0.235, 0.44 - (0.45 - w) * 1.05 + noise.noise(Vector((u * 8, 0, 1))) * 0.03 * (w < 0.06)))
+    else: v.co = Vector((u, -0.235 + (w - 0.45) * 0.85, 0.44 + math.sin((w - 0.45) / 0.55 * math.pi) * 0.05 - (u / 0.4) ** 2 * 0.03))
+bmesh.ops.solidify(fl, geom=fl.faces[:], thickness=0.035); bmesh.ops.recalc_face_normals(fl, faces=fl.faces[:])
+flap = obj("hide_pack_flap", fl, mat("HideFlap", (0.1, 0.045, 0.02), 0.85, 0, 22, (0.2, 0.1, 0.04)))
+flap["keep_loc"] = 1
+straps = [capsule(Vector((-0.38, -0.27, 0.05)), Vector((0.38, -0.27, 0.05)), 0.03, 0.03, 8)]  # band across the flap
+for x in (-0.37, 0.37): straps.append(capsule(Vector((x, -0.23, 0.44)), Vector((x, -0.23, -0.3)), 0.03, 0.03, 8))  # side cords
+straps.append(lumpy(0.075, 1, 0.45, 1, 0.12, 13, 2)); bmesh.ops.translate(straps[-1], verts=straps[-1].verts, vec=(0, -0.3, 0.05))
+hs = obj("hide_pack_straps", merge(straps), FIBERM)
+hs.data.materials.append(GLOWM)
+for p in hs.data.polygons:
+    if p.center.y < -0.29 and abs(p.center.x) < 0.09: p.material_index = 1
+EXTRA["hide_pack"] = hpack; hpack["extra"] = "hide_pack_straps"; hpack["extra2"] = "hide_pack_flap"
 # Status icons: a glowing heart-organ (health), a flame (body heat), the wrist lamp (lamp).
 bm = lumpy(0.45, 1.0, 0.7, 1.05, 0.12, 2.0)
 for v in bm.verts:  # heart-ish: a cleft on top, tapered bottom
@@ -230,11 +271,12 @@ def shoot(name, objs, rot=(0, 0, 0), out=None, pad=1.12, zoom=1.0, shift=(0.0, 0
 
 
 def with_extra(o):
-    return [o] + ([bpy.data.objects[o["extra"]]] if o.get("extra") else [])
+    return [o] + [bpy.data.objects[o[k]] for k in ("extra", "extra2") if o.get(k)]
 
 
 for o in EXTRA.values():
-    if o.get("extra"): bpy.data.objects[o["extra"]]["keep_loc"] = 1
+    for k in ("extra", "extra2"):
+        if o.get(k): bpy.data.objects[o[k]]["keep_loc"] = 1
 
 # Items from the game's own models.
 shoot("stone", [PROPS["Stone"]], (0, 0, 20))
@@ -257,8 +299,8 @@ grip = sp.matrix_world @ Vector((0.0, 0.14, -0.09))  # the hand grip (viewmodel 
 tip = c1 if (c1 - grip).length > (c0 - grip).length else c0
 shoot("spear", [sp], (60, -38, 0), zoom=0.75, focus=tip)
 shoot("hands", [VM["Hand_Open"]], (0, 0, 0))
-for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "st_health", "st_heat", "st_lamp"):
+for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "fiber_pouch", "hide_pack", "st_health", "st_heat", "st_lamp"):
     rot = {"cordage": (20, 0, 0), "bone": (0, -35, 20), "bone_needle": (0, -45, 0), "chitin_spearhead": (0, -45, 0),
-           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20)}.get(k, (0, 0, 0))
+           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38)}.get(k, (0, 0, 0))
     shoot(k, with_extra(EXTRA[k]), rot)
 print("@@DONE@@", sorted(os.listdir(RAW)))

@@ -31,4 +31,12 @@ export const RECIPES: Recipe[] = [
     blurb: 'Hide cured over a fire, worn under the suit. You lose body heat 25% slower.' },
   { id: 'chitin_spearhead', makes: 'chitin_spearhead', amount: 1, unique: true, heat: true, cost: { chitin: 3, cordage: 1 }, needs: ['spear'],
     blurb: 'A Tuko shell plate, hardened in the fire and lashed to your spear: half again the damage.' },
+  { id: 'fiber_pouch', makes: 'fiber_pouch', amount: 1, unique: true, cost: { fiber: 10, cordage: 2 },
+    blurb: 'A woven sack for the belt: 4 more carry slots.' },
+  { id: 'hide_pack', makes: 'hide_pack', amount: 1, unique: true, cost: { hide: 3, cordage: 3, bone: 1 }, needs: ['bone_needle'],
+    blurb: 'A stitched hide backpack with a bone frame: 4 more carry slots.' },
 ];
+
+/** A recipe is learned once you have held every one of its parts (and the tools it needs). */
+export const knows = (r: Recipe, seen: ReadonlySet<ItemId>) =>
+  (Object.keys(r.cost) as ItemId[]).every((k) => seen.has(k)) && (r.needs ?? []).every((k) => seen.has(k));

@@ -134,6 +134,13 @@
       #goal { font-size: 12px; color: #ffd27a; margin-top: 4px; min-height: 1em; }
       #buffs { font-size: 11px; color: #ffd27a; min-height: 1em; margin-top: -4px; }
       #inv .row.gear { color: #9fd18b; }
+      #inv .row.head { font: 11px/1.6 var(--f-mono); color: #8fa3b3; letter-spacing: 0.04em; border-bottom: 1px solid var(--hud-line); margin-bottom: 3px; }
+      #inv .row.head.laden { color: #e8c37a; } #inv .row.head.heavy { color: #f0a050; } #inv .row.head.overloaded { color: #ff6a50; }
+      #inv .row.head.full span:first-child { color: #ff8a5a; }
+      #inv .row.stale { color: #c9b26a; } #inv .row.stale span:last-child::after { content: ' !'; color: #ff8a5a; }
+      .recipe.unknown { opacity: 0.55; } .recipe.unknown .rname { color: #8a96a3; font-style: italic; }
+      .recipe .ico.q { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px dashed #4a5662; border-radius: 4px; font: 700 13px var(--f-mono); color: #6f7d8a; font-style: normal; margin-right: 6px; }
+      #craftinv .load { font-family: var(--f-mono); color: #8fa3b3; } #craftinv .load.laden { color: #e8c37a; } #craftinv .load.heavy { color: #f0a050; } #craftinv .load.overloaded { color: #ff6a50; }
       #death { text-align: center; } #deathhint { margin-top: 10px; font: 400 15px system-ui, sans-serif; color: #b9c8d6; max-width: 520px; }
       #death .sub { margin-top: 14px; font: 400 12px system-ui, sans-serif; color: #7f8e9c; }
       #overlay.showsettings #settings { display: block; } #overlay.showsettings #mainmenu { display: none; }

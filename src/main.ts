@@ -14,8 +14,8 @@ import { Player } from './player';
 import { Sky, DAY_LENGTH } from './sky';
 import { Survival, TEMP } from './survival';
 import { Props } from './props';
-import { Inventory, ITEM_NAMES, MATERIALS, TOOLS, GEAR, type ItemId } from './inventory';
-import { RECIPES } from './crafting';
+import { Inventory, ITEM_NAMES, MATERIALS, TOOLS, GEAR, SHELF_LIFE, PERISHABLE, type ItemId, type Perishable } from './inventory';
+import { RECIPES, knows } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, setCreatureModels, type Creature } from './creatures';
 import { Wreck } from './wreck';
@@ -308,7 +308,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
-    inventory: { ...inventory.counts }, picked: [...props.picked], campfires: campfires.save(),
+    inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
@@ -513,7 +513,9 @@ async function main() {
   const invEl = $('inv'), recipesEl = $('recipes'), craftMsg = $('craftmsg');
   let invShowT = 0; // seconds the inventory list stays up after a change
   let craftableOnly = false;
+  let recipeCheck: (() => void) | null = null; // set once the save is loaded, so loading doesn't announce recipes
   /** Pixel icon for an item, tool or the bare-hands slot (public/icons). */
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const ico = (id: string) => `<img class="ico" src="icons/${id}.png" alt="">`;
   function renderHotbar() {
     $('hotbar').innerHTML = SLOTS.map((s, i) => {
@@ -523,10 +525,18 @@ async function main() {
     }).join('');
   }
   function renderCraft() {
-    $('craftinv').innerHTML = 'Carrying: ' + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `${ico(k)}<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
+    const ld = inventory.load_();
+    $('craftinv').innerHTML = `<span class="load ${ld.name.toLowerCase()}">${inventory.usedSlots()}/${inventory.slots()} slots \u00b7 ${inventory.weight().toFixed(1)} kg \u00b7 ${ld.name}</span> \u00b7 Carrying: ` + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `${ico(k)}<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
     $('craftfilter').textContent = craftableOnly ? 'Craftable (F)' : 'All (F)';
     $('craftfilter').classList.toggle('on', craftableOnly);
     recipesEl.innerHTML = RECIPES.map((r, i) => {
+      if (!known.has(r.id)) {
+        if (craftableOnly) return '';
+        const parts = [...Object.keys(r.cost), ...(r.needs ?? [])] as ItemId[];
+        const found = parts.filter((k) => inventory.seen.has(k)).length;
+        return `<div class="recipe unknown"><div><div class="rname"><span class="key">${i + 1}</span><span class="ico q">?</span>Unknown recipe</div>
+          <div class="rblurb">Pick up its materials to work it out \u00b7 ${found}/${parts.length} found</div></div><span class="hint">locked</span></div>`;
+      }
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
         return `<span class="${have >= need ? 'ok' : 'no'}">${have >= need ? '\u2713' : '\u2717'} ${ico(k)}${ITEM_NAMES[k]} <b>${Math.min(have, 999)}/${need}</b></span>`;
@@ -556,10 +566,14 @@ async function main() {
   };
   inventory.onChange = () => {
     invShowT = 5;
-    invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
+    const ld = inventory.load_(), used = inventory.usedSlots(), cap = inventory.slots();
+    invEl.innerHTML = `<div class="row head ${ld.name.toLowerCase()}${used >= cap ? ' full' : ''}"><span title="carry slots">\u25A6 ${used}/${cap}</span><span title="${ld.name}">${inventory.weight().toFixed(1)} kg</span></div>`
+      + MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
       const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
       lastCounts[k] = inventory.counts[k];
-      return `<div class="row${got ? ' got' : ''}"><span>${ico(k)}${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
+      const f = PERISHABLE.includes(k as Perishable) ? inventory.freshness(k as Perishable) : null;
+      const stale = f !== null && f < (SHELF_LIFE[k] ?? 0) * 0.25;
+      return `<div class="row${got ? ' got' : ''}${stale ? ' stale' : ''}"${stale ? ` title="spoils in ${fmtTime(f!)}"` : ''}><span>${ico(k)}${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
     }).join('') + GEAR.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="row gear"><span>${ico(k)}${ITEM_NAMES[k]}</span><span>${k === 'hide_wrap' ? 'worn' : k === 'chitin_spearhead' ? 'fitted' : '✓'}</span></div>`).join('');
     survival.wrapped = inventory.counts.hide_wrap > 0;
     if (inventory.counts.raw_meat > 0) tutorial.milestone('raw_meat');
@@ -572,6 +586,7 @@ async function main() {
     for (const k of [...MATERIALS, ...GEAR]) popPrev[k] = inventory.counts[k];
     renderHotbar();
     if (state === 'craft') renderCraft();
+    recipeCheck?.();
   };
   // Switching tools flashes the item's name over the hotbar for a moment.
   const itemNameEl = $('itemname'); let itemNameTimer = 0, lastSlot = hotbar.slot;
@@ -583,7 +598,29 @@ async function main() {
     itemNameEl.classList.add('show'); clearTimeout(itemNameTimer);
     itemNameTimer = window.setTimeout(() => itemNameEl.classList.remove('show'), 1200);
   };
-  inventory.load(meta?.inventory);
+  inventory.load(meta?.inventory, meta?.fresh, meta?.seen);
+  // Recipes you've worked out: learning one (holding all its parts for the first time) is announced once.
+  const known = new Set(RECIPES.filter((r) => knows(r, inventory.seen)).map((r) => r.id));
+  recipeCheck = () => {
+    for (const r of RECIPES) if (!known.has(r.id) && knows(r, inventory.seen)) {
+      known.add(r.id);
+      flash(`New recipe: ${ITEM_NAMES[r.makes]}  \u00b7  ${K('craft')} to craft`);
+      audio.play('ui_2', { bus: 'ui', gain: 0.4, rate: 1.4 });
+    }
+  };
+  /** Puts items in your pack; whatever doesn't fit is set down at your feet in a pack you can come back for. */
+  const give = (id: ItemId, n: number, age = 0) => {
+    const got = inventory.add(id, n, age);
+    if (got < n) {
+      const feet = player.position.clone().setY(player.position.y - 0.9);
+      const g = world.groundAt(feet.x, feet.z);
+      if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
+      packs.add(feet, { [id]: n - got });
+      flash(`Pack full: left ${n - got} ${ITEM_NAMES[id].toLowerCase()} on the ground.`);
+    }
+    return got;
+  };
+  const packFull = (id: ItemId) => { audio.deny(); flash(`No room for ${ITEM_NAMES[id].toLowerCase()}: your carry slots are full (${inventory.usedSlots()}/${inventory.slots()}). Craft a bag or drop things at camp.`); };
   let craftMsgTimer = 0;
   const craftNote = (msg: string) => {
     craftMsg.textContent = msg;
@@ -592,6 +629,7 @@ async function main() {
   };
   /** Crafts recipe `r` up to `times` times; reports what was made or what's missing. */
   const craft = (r: (typeof RECIPES)[number], times: number) => {
+    if (!known.has(r.id)) { audio.deny(); craftNote('You haven\u2019t worked that one out yet: pick up its materials first.'); return; }
     if (r.unique && inventory.counts[r.makes] > 0) { craftNote(`You already have a ${ITEM_NAMES[r.makes].toLowerCase()}.`); return; }
     const missing = (r.needs ?? []).filter((k) => inventory.counts[k] <= 0);
     if (missing.length) { audio.deny(); craftNote(`You need a ${missing.map((k) => ITEM_NAMES[k].toLowerCase()).join(' and a ')} for this.`); return; }
@@ -599,7 +637,8 @@ async function main() {
     if (r.unique) times = 1;
     let made = 0;
     const first = inventory.counts[r.makes] === 0;
-    while (made < times && inventory.take(r.cost)) { inventory.add(r.makes, r.amount); made++; }
+    if (inventory.room(r.makes) < r.amount && !r.tool && !r.unique) { packFull(r.makes); return; }
+    while (made < times && inventory.room(r.makes) >= r.amount && inventory.take(r.cost)) { give(r.makes, r.amount); made++; }
     if (!made) {
       const short = (Object.keys(r.cost) as ItemId[]).filter((k) => inventory.counts[k] < (r.cost[k] ?? 0))
         .map((k) => `${(r.cost[k] ?? 0) - inventory.counts[k]} more ${ITEM_NAMES[k].toLowerCase()}`);
@@ -638,7 +677,6 @@ async function main() {
     if (s) return { kind: 'stalk', s };
     return null;
   };
-  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const promptFor = (t: Target) => {
     if (!t) return '';
     switch (t.kind) {
@@ -682,16 +720,17 @@ async function main() {
       if (inventory.counts.stone_knife <= 0) { flash('You need a stone knife to harvest.'); return; }
       t.c.strip();
       const got: string[] = [];
-      for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { inventory.add(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
+      for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { give(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
       if (audio.has('tear')) { audio.play('tear', { pos: t.c.position, offset: Math.random() * 9, dur: 1.4, gain: 0.9 }); audio.play('crunch', { pos: t.c.position, gain: 0.6, delay: 0.25 }); }
       else audio.chop(t.c.position);
       particles.burst(t.c.hitCentre(), 10, 0x7a3a3a, { speed: 2 });
       flash(`Harvested ${got.join(', ')}.`);
     } else if (t.kind === 'prop') {
+      if (inventory.room(t.p.kind) < 1) { packFull(t.p.kind); return; }
       props.pick(t.p);
       audio.pickup(t.p.kind);
-      inventory.add(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
+      give(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
       hotbar.swing();
     } else if (t.kind === 'fire') {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
@@ -699,15 +738,22 @@ async function main() {
       else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
     } else if (t.kind === 'pack') {
       const got: string[] = [];
-      for (const [k, n] of Object.entries(t.pk.items)) if (Object.hasOwn(inventory.counts, k) && n > 0) { inventory.add(k as ItemId, n); got.push(`${n} ${ITEM_NAMES[k as ItemId].toLowerCase()}`); }
-      packs.remove(t.pk);
-      audio.pickup('fiber');
-      flash(got.length ? `Recovered ${got.join(', ')}.` : 'The pack was empty.');
+      // Take what fits; the rest stays in the pack. Meat that sat out comes back half-spoiled.
+      for (const [k, n] of Object.entries(t.pk.items)) if (Object.hasOwn(inventory.counts, k) && n > 0) {
+        const id = k as ItemId, took = inventory.add(id, n, (SHELF_LIFE[id] ?? 0) * 0.5);
+        if (took) got.push(`${took} ${ITEM_NAMES[id].toLowerCase()}`);
+        if (took >= n) delete t.pk.items[k]; else t.pk.items[k] = n - took;
+      }
+      const left = Object.keys(t.pk.items).length > 0;
+      if (!left) packs.remove(t.pk);
+      if (got.length) audio.pickup('fiber'); else audio.deny();
+      flash(got.length ? `Recovered ${got.join(', ')}.${left ? ' Your slots are full: the rest is still in the pack.' : ''}` : left ? 'No room: your carry slots are full.' : 'The pack was empty.');
     } else if (t.kind === 'stalk') {
       if (inventory.counts.stone_knife <= 0 && inventory.counts.stone_pick <= 0) { flash('Cut stalkwood with a stone knife or pick.'); return; }
+      if (inventory.room('stalkwood') < 1) { packFull('stalkwood'); return; }
       const got = flora.harvest(t.s);
       if (got) {
-        inventory.add('stalkwood', got); hotbar.swing();
+        give('stalkwood', got); hotbar.swing();
         audio.chop(t.s.base);
         particles.burst(t.s.base.clone().setY(t.s.base.y + 1.2), 8, 0xd9cfb8, { speed: 2.5 });
         if (flora.toppled(t.s)) { // the last cut: it comes down in a puff of spores
@@ -758,7 +804,7 @@ async function main() {
     flash(inventory.counts.raw_meat > 0 ? `Cook raw meat first: look at a lit fire and press ${K('eat')}.` : 'Nothing to eat. Hunt, then cook the meat at a fire.');
   };
   campfires.onCooked = (f) => {
-    inventory.add('cooked_meat');
+    give('cooked_meat', 1);
     tutorial.milestone('cooked');
     if (f.position.distanceTo(player.position) < 12) { audio.pickup('fiber'); flash('Meat cooked.'); }
   };
@@ -981,7 +1027,7 @@ async function main() {
     // Inventory list: only for a few seconds after something changes (or always, with the setting on).
     invShowT = Math.max(0, invShowT - dtv);
     if (invEl.classList.contains('faded') === (settings.fullHud || invShowT > 0)) invEl.classList.toggle('faded');
-    const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ` (${K('lamp')})`}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
+    const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ` (${K('lamp')})`}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : '', inventory.load_().name !== 'Light' ? inventory.load_().name : ''].filter(Boolean).join('  \u00b7  ');
     // The sky is the only other clock: a readout of time until dark, or until dawn.
     const until = (to: number) => fmtTime((((to - sky.time) % 1) + 1) % 1 * DAY_LENGTH);
     const clock = sky.time > 0.55 && sky.time < 0.75 ? `Dark in ${until(0.75)}` : isNightTime() ? `Dawn in ${until(0.27)}` : '';
@@ -1030,6 +1076,8 @@ async function main() {
       ${survival.fed > 0 ? `<div class="kv"><span>${corrupt('Fed')}</span><b>${fmtTime(survival.fed)}</b></div>` : ''}
       ${survival.wrapped ? `<div class="kv"><span>${corrupt('Hide wrap')}</span><b>worn</b></div>` : ''}
       ${goal ? `<div class="sec goal">\u25B8 ${goal}</div>` : ''}
+      <div class="kv"><span>${corrupt('Load')}</span><b>${inventory.usedSlots()}/${inventory.slots()} slots \u00b7 ${inventory.weight().toFixed(1)} kg \u00b7 ${inventory.load_().name}</b></div>
+      ${PERISHABLE.map((k) => { const f = inventory.freshness(k); return f === null ? '' : `<div class="kv"><span>${corrupt(ITEM_NAMES[k])}</span><b>next spoils in ${fmtTime(f)}</b></div>`; }).join('')}
       <div class="sec"><div class="kv"><span>${corrupt('CARRIED')}</span><span>${K('craft')}: craft</span></div>
         <div class="grid">${carried.map((k) => `<span>${ico(k)}${inventory.counts[k] > 1 || MATERIALS.includes(k) ? inventory.counts[k] : '\u2713'}</span>`).join('') || '<span>nothing</span>'}</div></div>`;
   }
@@ -1190,7 +1238,8 @@ async function main() {
       if (live && !player.frozen) {
         survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40),
           ground: (x, z) => world.groundAt(x, z) });
-        player.speedMul = survival.moveFactor();
+        player.speedMul = survival.moveFactor() * inventory.load_().speed;
+        for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
         if (survival.dead) {
           setState('dead');
           audio.death();

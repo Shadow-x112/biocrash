@@ -32,6 +32,10 @@ export interface SaveMeta {
   horror?: { figureSeen: boolean; figureNight: number; played?: string[]; last?: string | null };
   /** Wrist-lamp charge 0..100. */
   lamp?: number;
+  /** Age in seconds of each carried piece of meat. */
+  fresh?: Record<string, number[]>;
+  /** Items ever held (recipe discovery). Missing on older saves, which then know every recipe. */
+  seen?: string[];
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -118,6 +122,12 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     played: Array.isArray(h.played) ? h.played.filter((x): x is string => typeof x === 'string').slice(0, 10) : [],
     last: typeof h.last === 'string' ? h.last.slice(0, 20) : null,
   };
+  if (m.fresh && typeof m.fresh === 'object') {
+    out.fresh = {};
+    for (const [k, a] of Object.entries(m.fresh as Record<string, unknown>))
+      if (Array.isArray(a)) out.fresh[k.slice(0, 32)] = a.map((x) => num(x, 0, 1e6)).filter((x): x is number => x !== undefined).slice(0, 1000);
+  }
+  if (Array.isArray(m.seen)) out.seen = m.seen.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 100);
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);
   return out;
