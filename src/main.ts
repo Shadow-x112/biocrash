@@ -504,19 +504,21 @@ async function main() {
 
   // --- Inventory, hotbar and crafting UI -----------------------------------------------------------
   const invEl = $('inv'), recipesEl = $('recipes'), craftMsg = $('craftmsg');
+  /** Pixel icon for an item, tool or the bare-hands slot (public/icons). */
+  const ico = (id: string) => `<img class="ico" src="icons/${id}.png" alt="">`;
   function renderHotbar() {
     $('hotbar').innerHTML = SLOTS.map((s, i) => {
       const owned = s === 'hands' || inventory.counts[s] > 0;
       const n = s === 'hands' ? 0 : inventory.counts[s];
-      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}"><b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}</div>`;
+      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}">${ico(s)}<b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}</div>`;
     }).join('');
   }
   function renderCraft() {
-    $('craftinv').innerHTML = 'Carrying: ' + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
+    $('craftinv').innerHTML = 'Carrying: ' + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `${ico(k)}<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
     recipesEl.innerHTML = RECIPES.map((r, i) => {
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
-        return `<span class="${have >= need ? 'ok' : 'no'}">${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
+        return `<span class="${have >= need ? 'ok' : 'no'}">${ico(k)}${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
       }).join(' · ');
       const warm = fireNearPlayer() > 0.5;
       const needs = [...(r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">needs ${ITEM_NAMES[k].toLowerCase()}</span>`),
@@ -526,7 +528,7 @@ async function main() {
       const done = r.unique && have > 0;
       const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
       const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>Craft</button>`;
-      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
+      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
@@ -544,8 +546,8 @@ async function main() {
     invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
       const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
       lastCounts[k] = inventory.counts[k];
-      return `<div class="row${got ? ' got' : ''}"><span>${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
-    }).join('') + GEAR.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="row gear"><span>${ITEM_NAMES[k]}</span><span>${k === 'hide_wrap' ? 'worn' : k === 'chitin_spearhead' ? 'fitted' : '✓'}</span></div>`).join('');
+      return `<div class="row${got ? ' got' : ''}"><span>${ico(k)}${ITEM_NAMES[k]}</span><span>${inventory.counts[k]}</span></div>`;
+    }).join('') + GEAR.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="row gear"><span>${ico(k)}${ITEM_NAMES[k]}</span><span>${k === 'hide_wrap' ? 'worn' : k === 'chitin_spearhead' ? 'fitted' : '✓'}</span></div>`).join('');
     survival.wrapped = inventory.counts.hide_wrap > 0;
     if (inventory.counts.raw_meat > 0) tutorial.milestone('raw_meat');
     if (inventory.counts.hide > 0 && !inventory.counts.hide_wrap) tutorial.milestone('hide');

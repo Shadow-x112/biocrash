@@ -59,7 +59,17 @@
       #hurt { position: fixed; inset: 0; pointer-events: none; opacity: 0;
               background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(150,10,10,0.6) 100%); }
       #inv .row.got { color: #ffd27a; transition: none; }
-      #inv .row { transition: color 0.8s; }
+      #inv .row { transition: color 0.8s; align-items: center; }
+      /* Pixel icons (Blender renders finished in Aseprite: art/aseprite/icons.lua). */
+      .ico { image-rendering: pixelated; vertical-align: middle; pointer-events: none; }
+      #inv .ico { width: 22px; height: 22px; margin: -3px 6px -3px -2px; }
+      #inv .row > span:first-child { display: flex; align-items: center; }
+      #hotbar .slot .ico { display: block; width: 40px; height: 40px; margin: 0 auto 1px; }
+      #hotbar .slot.locked .ico { filter: grayscale(1) brightness(0.6); }
+      #vitals .ico { width: 18px; height: 18px; margin: -3px 5px -2px 0; }
+      #vitals .row > span:first-child { display: flex; align-items: center; }
+      .rcost .ico, #craft .have .ico { width: 16px; height: 16px; margin: -3px 2px 0 0; }
+      .rname .ico { width: 26px; height: 26px; margin: -6px 6px -4px 0; }
       #unease { position: fixed; inset: 0; pointer-events: none; opacity: 0;
                 background: radial-gradient(ellipse at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%); }
       #static { position: fixed; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: screen;
@@ -134,9 +144,9 @@
     <div id="hud"></div>
     <div id="frost"></div><div id="hurt"></div><div id="unease"></div><div id="static"></div>
     <div id="vitals">
-      <div class="row"><span>Health</span><span id="hpv"></span></div>
+      <div class="row"><span><img class="ico" src="icons/st_health.png" alt="">Health</span><span id="hpv"></span></div>
       <div class="bar" id="hp"><div></div></div>
-      <div class="row"><span id="heatlabel">Body heat</span><span id="tempv"></span></div>
+      <div class="row"><span><img class="ico" src="icons/st_heat.png" alt=""><span id="heatlabel">Body heat</span></span><span id="tempv"></span></div>
       <div class="bar" id="heat"><div></div></div>
       <div id="buffs"></div>
       <div id="goal"></div>
