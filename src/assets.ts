@@ -153,6 +153,32 @@ export function addDetail(mat: THREE.Material, o: DetailOpts) {
   mat.needsUpdate = true;
 }
 
+/**
+ * Per-instance glow pulse: emission swells and fades on each instance's own seeded phase (chains with other
+ * patches; applied after all emission is summed).
+ */
+export function addPulse(mat: THREE.Material, time: { value: number }, speed = 1.2, depth = 0.45) {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
+    sh.uniforms.uPulseT = time;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vPulseSeed;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        { vec3 po = vec3(0.0);
+          #ifdef USE_INSTANCING
+            po = instanceMatrix[3].xyz;
+          #endif
+          po = (modelMatrix * vec4(po, 1.0)).xyz; vPulseSeed = fract(sin(dot(po.xz, vec2(41.31, 17.77))) * 9341.7); }`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vPulseSeed; uniform float uPulseT;')
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        totalEmissiveRadiance *= 1.0 - ${depth.toFixed(2)} * (0.5 + 0.5 * sin(uPulseT * ${speed.toFixed(2)} * (0.7 + vPulseSeed * 0.6) + vPulseSeed * 6.283));`);
+  };
+  mat.customProgramCacheKey = () => prevKey() + `|pulse${speed}:${depth}`;
+  mat.needsUpdate = true;
+}
+
 /** Soft dark contact patch drawn on the ground under props (a radial alpha gradient). */
 let splatTex: THREE.Texture | null = null;
 export function splatMaterial() {

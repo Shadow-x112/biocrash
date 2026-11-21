@@ -5,6 +5,7 @@ import { addSway, fxUniforms } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
+import { addPulse } from './assets';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const STALK_HARVESTS = 4;   // uses per mushroom
@@ -18,10 +19,12 @@ interface Shroom {
   alive: boolean;
   /** Placement, kept so harvesting can rebuild the instances (shorter stalk, toppled at the end). */
   q: THREE.Quaternion; capR: number; color: number; spin: number;
+  /** Glow patch on the ground under the cap (-1: none, e.g. once felled), and the ground normal there. */
+  card: number; n: THREE.Vector3;
 }
 interface ChunkFlora {
   shrooms: Shroom[];
-  sprouts: { slot: number; source: number; bulb: boolean }[];
+  sprouts: { slot: number; source: number; bulb: boolean; card: number }[];
 }
 
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
@@ -134,13 +137,13 @@ const glowU = { value: 0.6 };
 BODY.onBeforeCompile = (sh) => {
   Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU });
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; uniform float uFxTime; uniform float uBreath;')
-    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb;')
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb;\n  vSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);')
     .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb;')
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>
-      varying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; uniform float uGlow; uniform vec3 uRim; uniform float uFxTime;
+      varying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; uniform float uGlow; uniform vec3 uRim; uniform float uFxTime;
       vec3 h3(vec3 p) { p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
       // Distance to the nearest cell edge (F2 - F1): thin glowing veins along the cell borders.
       float veinEdge(vec3 p) {
@@ -152,18 +155,25 @@ BODY.onBeforeCompile = (sh) => {
         return sqrt(d2) - sqrt(d1);
       }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      // Each fungus breathes on its own slow cycle (seeded by where it stands), so a grove never pulses in step.
+      float breathe = 0.72 + 0.28 * sin(uFxTime * (0.18 + vSeed * 0.14) + vSeed * 40.0);
+      float rimF = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
       if (vTint > 1.5) {
-        totalEmissiveRadiance += vVein * uGlow * (0.15 + vTend * 0.7); // tendrils, brightest at the tips
+        float flick = 0.8 + 0.2 * sin(uFxTime * 2.3 + vSeed * 17.0 + vLocal.x * 11.0);
+        totalEmissiveRadiance += vVein * uGlow * (0.15 + vTend * 0.7) * breathe * flick; // tendrils, brightest at the tips
       } else if (vTint > 0.5) {
         vec3 q = vLocal * 5.5 + sin(vLocal.zxy * 7.0) * 0.22;
-        float vein = 1.0 - smoothstep(0.012, 0.05, veinEdge(q));
-        float pulse = 0.55 + 0.45 * sin(uFxTime * 0.9 + vLocal.y * 6.0 + vLocal.x * 3.0);
-        totalEmissiveRadiance += vVein * vein * uGlow * (0.6 + pulse * 0.8);
+        float e = veinEdge(q);
+        float vein = 1.0 - smoothstep(0.012, 0.05, e);
+        // Light travelling outward from each vein through the flesh: a wide soft halo (fake subsurface scattering).
+        float halo = 1.0 - smoothstep(0.03, 0.32, e);
+        float pulse = 0.55 + 0.45 * sin(uFxTime * (0.6 + vSeed * 0.7) + vSeed * 6.28 + vLocal.y * 6.0 + vLocal.x * 3.0);
+        totalEmissiveRadiance += vVein * uGlow * breathe * (vein * (0.6 + pulse * 0.8) + halo * halo * 0.16 * (0.7 + pulse * 0.3));
+        totalEmissiveRadiance += vVein * rimF * 0.22 * uGlow * breathe; // thin edges glow through, in the cap's colour
       } else if (vGlow < 0.0) {
-        totalEmissiveRadiance += vVein * 0.06 * uGlow * -vGlow; // the lining glows faintly from the veins above
+        totalEmissiveRadiance += vVein * 0.08 * uGlow * -vGlow * breathe; // the lining glows faintly from the veins above
       }
-      { float rimF = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
-        totalEmissiveRadiance += uRim * rimF; }`);
+      totalEmissiveRadiance += uRim * rimF;`);
 };
 BODY.side = THREE.DoubleSide;
 BODY.customProgramCacheKey = () => 'fungus-body';
@@ -188,6 +198,18 @@ const sproutGeo = (() => {
   return out;
 })();
 
+/** Real lights lent to the nearest glowing fungi (a fixed pool: no shader recompiles). */
+const GLOW_LIGHTS = 4;
+const BULB_GLOW = new THREE.Color(0x4fe8c8).multiplyScalar(0.55);
+const CARD = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d')!, grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,0.8)'); grd.addColorStop(0.25, 'rgba(255,255,255,0.4)'); grd.addColorStop(0.6, 'rgba(255,255,255,0.1)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    fog: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, color: 0x000000 });
+})();
+
 export class Flora {
   readonly group = new THREE.Group();
   /** How many times each mushroom has been harvested (saved). */
@@ -198,6 +220,9 @@ export class Flora {
   private bodies: InstancePool;
   private sprouts: InstancePool;
   private bulbs: InstancePool;
+  private cards: InstancePool;
+  private lights: THREE.PointLight[] = [];
+  private lightTimer = 0;
   private spores: THREE.Points;
   private sporeVel: Float32Array;
   // Scratch objects for look-ups (no per-call allocation).
@@ -211,6 +236,15 @@ export class Flora {
     this.bodies = new InstancePool(bodyGeo, BODY, this.group, 1024, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
     this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
     this.bulbs = new InstancePool(sproutGeo, SPROUT, this.group, 1024);
+    // Glow cast on the ground: additive patches in each cap's colour (cheap stand-ins for real light), plus a few
+    // real shadowless lights handed to the nearest glowing fungi at night.
+    const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    this.cards = new InstancePool(quad, CARD, this.group, 1024, true);
+    this.cards.mesh.renderOrder = 1;
+    for (let i = 0; i < GLOW_LIGHTS; i++) {
+      const l = new THREE.PointLight(0x3dffc8, 0, 11, 1.7);
+      this.lights.push(l); this.group.add(l);
+    }
     const n = 260;
     const pos = new Float32Array(n * 3);
     this.sporeVel = new Float32Array(n * 3);
@@ -237,13 +271,13 @@ export class Flora {
     const c = this.chunks.get(key);
     if (!c) return;
     for (const s of c.shrooms) this.removeShroom(s);
-    for (const sp of c.sprouts) (sp.bulb ? this.bulbs : this.sprouts).release(sp.slot);
+    for (const sp of c.sprouts) this.releaseSprout(sp);
     this.chunks.delete(key);
   }
 
   private spawn(key: string, deco: DecoData) {
     const c: ChunkFlora = { shrooms: [], sprouts: [] };
-    type Placed = { p: THREE.Vector3; h: number; r: number; cap: number; tilt: number; spin: number; color: number; id: string; source: number; kind: 'giant' | 'small' };
+    type Placed = { p: THREE.Vector3; n: THREE.Vector3; h: number; r: number; cap: number; tilt: number; spin: number; color: number; id: string; source: number; kind: 'giant' | 'small' };
     const placed: Placed[] = [];
     for (const kind of ['giant', 'small'] as const) {
       const d = deco[kind];
@@ -257,7 +291,7 @@ export class Flora {
         const h = hMin + d[o + 4] * (hMax - hMin);
         const capR = h * (kind === 'giant' ? 0.32 : 0.4);
         if (placed.some((q) => q.p.distanceTo(p) < (q.cap + capR) * 0.8)) continue; // no overlapping caps
-        placed.push({ p, h, r: h * (kind === 'giant' ? 0.06 : 0.09), cap: capR, tilt: (d[o + 5] - 0.5) * 0.25,
+        placed.push({ p, n: new THREE.Vector3(d[o + 9], d[o + 3], d[o + 10]).normalize(), h, r: h * (kind === 'giant' ? 0.06 : 0.09), cap: capR, tilt: (d[o + 5] - 0.5) * 0.25,
           spin: d[o + 6] * Math.PI * 2, color: Math.floor(d[o + 7] * CAP_COLORS.length) % CAP_COLORS.length, id: `${key}:${kind}:${i}`, source: i, kind });
       }
     }
@@ -269,9 +303,10 @@ export class Flora {
       const slot = this.bodies.alloc(m.compose(o.p, q, one), CAP_COLORS[o.color]);
       this.bodies.setExtra(slot, o.r, o.h, o.cap);
       const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
-        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin };
+        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n };
       c.shrooms.push(s);
       this.shape(s); // physics, and the harvested state if it was already cut
+      if (this.usesLeft(s) > 0) s.card = this.cards.alloc(this.cardMatrix(s, m), CAP_COLORS[o.color]);
     }
 
     // Glowing sprouts.
@@ -283,7 +318,10 @@ export class Flora {
       // One in nine is a cluster of glowing bulbs instead of a single sprout.
       const bulb = i % 9 === 0;
       m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(bulb ? 1.2 + sd[o + 4] * 1.6 : 0.6 + sd[o + 4] * 0.9));
-      c.sprouts.push({ slot: (bulb ? this.bulbs : this.sprouts).alloc(m), source: i, bulb });
+      const slot = (bulb ? this.bulbs : this.sprouts).alloc(m);
+      // Bulb clusters throw a small teal glow on the ground.
+      const card = bulb ? this.cards.alloc(m.compose(p.set(sd[o], sd[o + 1] + 0.04, sd[o + 2]), q.identity(), sc.set(1.6 + sd[o + 4], 1, 1.6 + sd[o + 4])), BULB_GLOW) : -1;
+      c.sprouts.push({ slot, source: i, bulb, card });
     }
     this.chunks.set(key, c);
   }
@@ -293,12 +331,31 @@ export class Flora {
     s.alive = false;
     this.clearBody(s);
     this.bodies.release(s.slot);
+    this.dropCard(s);
+  }
+
+  private releaseSprout(sp: ChunkFlora['sprouts'][number]) {
+    (sp.bulb ? this.bulbs : this.sprouts).release(sp.slot);
+    if (sp.card >= 0) this.cards.release(sp.card);
+  }
+
+  private dropCard(s: Shroom) { if (s.card >= 0) { this.cards.release(s.card); s.card = -1; } }
+
+  /** The ground glow patch: flat on the slope under the cap, a little wider than the cap. */
+  private cardMatrix(s: Shroom, m: THREE.Matrix4) {
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), s.n);
+    const w = s.capR * 2.7;
+    return m.compose(s.base.clone().addScaledVector(s.n, 0.05), q, new THREE.Vector3(w, 1, w));
   }
 
   /** Use the Blender-built sprout and bulb models once loaded. */
   setLooks(meshes: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
     if (meshes.Sprout) this.sprouts.setLook(meshes.Sprout.geometry, meshes.Sprout.material);
-    if (meshes.Bulbs) this.bulbs.setLook(meshes.Bulbs.geometry, meshes.Bulbs.material);
+    if (meshes.Bulbs) {
+      const mat = meshes.Bulbs.material.clone();
+      addPulse(mat, fxUniforms.uFxTime, 1.1, 0.5);
+      this.bulbs.setLook(meshes.Bulbs.geometry, mat);
+    }
   }
 
   /** Removes mushrooms already grown on ground that's now blocked (the wreck settled after they loaded). */
@@ -312,7 +369,7 @@ export class Flora {
     for (const s of c.shrooms) if (s.alive && !deco[s.kind][s.source * STRIDE + 8]) this.removeShroom(s);
     c.sprouts = c.sprouts.filter((sp) => {
       if (deco.sprout[sp.source * STRIDE + 8]) return true;
-      (sp.bulb ? this.bulbs : this.sprouts).release(sp.slot);
+      this.releaseSprout(sp);
       return false;
     });
   }
@@ -336,6 +393,27 @@ export class Flora {
       }
     }
     return best;
+  }
+
+  /** The nearest standing fungi within 35 m get the real lights (giants count double in reach). */
+  private assignLights(viewer: THREE.Vector3) {
+    const near: { s: Shroom; d: number }[] = [];
+    for (const c of this.chunks.values()) for (const s of c.shrooms) {
+      if (!s.alive || s.card < 0) continue;
+      const d = s.base.distanceToSquared(viewer) / (s.kind === 'giant' ? 4 : 1);
+      if (d < 35 * 35) near.push({ s, d });
+    }
+    near.sort((a, b) => a.d - b.d);
+    this.lights.forEach((l, i) => {
+      const x = near[i]?.s;
+      l.userData.s = x ?? null;
+      if (!x) { l.intensity = 0; return; }
+      const h = x.height * (1 - 0.18 * Math.min(STALK_HARVESTS, this.harvested.get(x.id) ?? 0));
+      l.position.copy(x.base).y += h * 0.8;           // under the cap, lighting the stalk and ground
+      l.distance = Math.max(8, x.capR * 3.2);
+      l.color.copy(CAP_COLORS[x.color]);
+      l.userData.ph = x.base.x * 0.37 + x.base.z;
+    });
   }
 
   usesLeft(s: Shroom) { return STALK_HARVESTS - (this.harvested.get(s.id) ?? 0); }
@@ -379,6 +457,7 @@ export class Flora {
     const m = new THREE.Matrix4(), pos = s.base.clone(), one = new THREE.Vector3(1, 1, 1);
     let rot = s.q, h = s.height * (1 - 0.18 * n);
     if (n >= STALK_HARVESTS) {
+      this.dropCard(s); // felled: its cap no longer hangs over the ground
       h = s.height * (1 - 0.18 * (STALK_HARVESTS - 1)); // cut at the base: the whole remaining trunk comes down
       const lean = Math.min(Math.PI / 2 - 0.08, Math.max(0.9, Math.PI / 2 - Math.atan2(s.capR - s.radius, h)));
       rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), lean);
@@ -393,6 +472,9 @@ export class Flora {
     const glow = 0.25 + night * 1.9;
     glowU.value = 0.45 + night * 1.6; // the fungi glow by day too (the days are dim); far more at night
     SPROUT.emissiveIntensity = glow * 1.1;
+    CARD.color.setScalar(0.015 + night * 0.11);
+    if ((this.lightTimer -= dt) <= 0) { this.lightTimer = 0.5; this.assignLights(viewer); }
+    for (const l of this.lights) if (l.userData.s) l.intensity = (0.4 + night * 5.5) * (0.8 + 0.2 * Math.sin(performance.now() * 0.0007 + l.userData.ph));
     const pos = this.spores.geometry.getAttribute('position') as THREE.BufferAttribute;
     if (night > 0.02) {
       const a = pos.array as Float32Array;
