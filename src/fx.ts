@@ -3,8 +3,12 @@
 import * as THREE from 'three';
 import {
   EffectComposer, RenderPass, EffectPass, BloomEffect, VignetteEffect, NoiseEffect, ChromaticAberrationEffect,
-  ToneMappingEffect, ToneMappingMode, BlendFunction, Effect,
+  ToneMappingEffect, ToneMappingMode, BlendFunction, Effect, SMAAEffect, SMAAPreset,
 } from 'postprocessing';
+import { N8AOPostPass } from 'n8ao';
+
+/** Tone curve. AgX was tried (truer glow hues) but lifts the blacks and greys the world out; ACES keeps it dark. */
+export const TONE_MODE = ToneMappingMode.ACES_FILMIC;
 
 /** Colour grade, before tone mapping: saturation, then a gain (tint of the highlights) and a lift (tint of the shadows). */
 class GradeEffect extends Effect {
@@ -41,14 +45,27 @@ export class Post {
   private noise: NoiseEffect;
   private ca: ChromaticAberrationEffect;
   private grade = new GradeEffect();
+  /** Screen-space ambient occlusion (contact darkening under and between props). */
+  readonly ao: N8AOPostPass;
   enabled = true;
   /** Reduce flashing: no colour split or grain spikes. */
   reduceFlash = false;
 
   constructor(private renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, hands?: { scene: THREE.Scene; camera: THREE.Camera }) {
     // Half-float buffers: 8-bit ones band badly in near-black night scenes.
-    this.composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: Math.min(4, renderer.capabilities.maxSamples) });
+    // No hardware MSAA: it breaks the AO's depth; SMAA (last pass) antialiases instead.
+    this.composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: 0 });
     this.composer.addPass(new RenderPass(scene, camera));
+    // AO on the world only (before the held tool is drawn). Radius in metres; a dark, slightly teal-brown tint
+    // instead of pure black so it reads as soil and shadow, not a dirty screen.
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.ao = new N8AOPostPass(scene, camera, size.x, size.y);
+    Object.assign(this.ao.configuration, {
+      aoRadius: 0.9, distanceFalloff: 0.6, intensity: 3.2, color: new THREE.Color(0x05080a),
+      halfRes: false, gammaCorrection: false, transparencyAware: false,
+    });
+    this.ao.setQualityMode('Medium');
+    this.composer.addPass(this.ao);
     // The held tool: drawn after the world into the same image, with the depth cleared first so it never clips into
     // terrain, and still under the same bloom, grade and tone mapping.
     if (hands) {
@@ -66,9 +83,10 @@ export class Post {
     // is merged into one pass: a disabled last pass would leave nothing drawn to the screen.
     this.ca = new ChromaticAberrationEffect({ offset: new THREE.Vector2(0, 0), radialModulation: true, modulationOffset: 0.2 });
     // Colour split first, so it splits the bloomed image (after bloom it gave green halos), then grade before tone mapping.
-    const pass = new EffectPass(camera, this.ca, this.bloom, this.grade, this.vignette, this.noise, new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
+    const pass = new EffectPass(camera, this.ca, this.bloom, this.grade, this.vignette, this.noise, new ToneMappingEffect({ mode: TONE_MODE }));
     pass.dithering = true; // the final 8-bit image otherwise bands in near-black night gradients
     this.composer.addPass(pass);
+    this.composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.HIGH })));
   }
 
   setEnabled(on: boolean) {
@@ -80,7 +98,12 @@ export class Post {
   setSize(w: number, h: number) { this.composer.setSize(w, h); }
 
   /** MSAA samples (0 on Low quality). */
-  setSamples(n: number) { this.composer.multisampling = Math.min(n, this.renderer.capabilities.maxSamples); }
+  /** Quality: 0 = no AO; 1 = half-resolution AO; 2+ = full-resolution AO. */
+  setQuality(q: number) {
+    this.ao.enabled = q >= 1;
+    this.ao.configuration.halfRes = q < 2;
+    this.ao.setQualityMode(q >= 2 ? 'Medium' : 'Low');
+  }
 
   /** Per frame: unease darkens the edges and thickens the grain; glitches and static flashes split the colours. */
   update(unease: number, glitch: number, staticFlash: number, daylight = 1, night = 0) {
@@ -243,4 +266,40 @@ export function addSway(mat: THREE.Material, amp: number, bend = false, rim = tr
   // or two materials with different sway (spots vs sprouts) share whichever program compiled first.
   mat.customProgramCacheKey = () => `sway:${amp}:${bend}:${rim}`;
   mat.needsUpdate = true;
+}
+
+/**
+ * A dim reflection environment tinted by the current sky (sky colour above, ground colour below), rebuilt every
+ * few seconds. Without one, metal and wet surfaces render flat black in the dark.
+ */
+export class SkyEnv {
+  private scene = new THREE.Scene();
+  private top = new THREE.Uniform(new THREE.Color());
+  private bottom = new THREE.Uniform(new THREE.Color());
+  private pmrem: THREE.PMREMGenerator;
+  private rt: THREE.WebGLRenderTarget | null = null;
+  private timer = 0;
+
+  constructor(renderer: THREE.WebGLRenderer, private target: THREE.Scene, private intensity = 0.4) {
+    this.pmrem = new THREE.PMREMGenerator(renderer);
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false, uniforms: { top: this.top, bottom: this.bottom },
+      vertexShader: 'varying vec3 vDir; void main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform vec3 top; uniform vec3 bottom; varying vec3 vDir;
+        void main() { float y = normalize(vDir).y; gl_FragColor = vec4(mix(bottom, top, smoothstep(-0.25, 0.35, y)), 1.0); }`,
+    });
+    this.scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 24, 12), mat));
+  }
+
+  update(dt: number, hemi: THREE.HemisphereLight) {
+    if ((this.timer -= dt) > 0 && this.rt) return;
+    this.timer = 3;
+    this.top.value.copy(hemi.color).multiplyScalar(hemi.intensity);
+    this.bottom.value.copy(hemi.groundColor).multiplyScalar(hemi.intensity * 0.6);
+    const old = this.rt;
+    this.rt = this.pmrem.fromScene(this.scene, 0, 0.1, 100, { size: 64 });
+    this.target.environment = this.rt.texture;
+    this.target.environmentIntensity = this.intensity;
+    old?.dispose();
+  }
 }

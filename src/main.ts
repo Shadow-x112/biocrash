@@ -17,7 +17,7 @@ import { loadProps, propGlow, loadCreatures } from './assets';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Packs } from './packs';
-import { Post, fxUniforms, addTerrainSurface } from './fx';
+import { Post, SkyEnv, fxUniforms, addTerrainSurface } from './fx';
 import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
@@ -68,9 +68,10 @@ async function main() {
   handLamp.position.set(0.2, -0.1, -0.2);
   hands.scene.add(hands.camera, handHemi, handSun, handSun.target, handFire, handLamp);
   const post = new Post(renderer, scene, camera, hands);
+  const skyEnv = new SkyEnv(renderer, scene);
   // Graphics quality. Low: no shadows, no MSAA. Medium: one 1024 sun/moon shadow (stalks, caps and creatures only cast).
   // High: a 2048 shadow. The shadow follows the player over +-25 m and is redrawn every third frame.
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap; // soft since r182 (PCFSoftShadowMap was removed in r186)
   renderer.shadowMap.autoUpdate = false;
   let shadowTick = 0;
   const applyQuality = () => {
@@ -82,7 +83,7 @@ async function main() {
     const cam = sky.sun.shadow.camera;
     cam.left = cam.bottom = -25; cam.right = cam.top = 25; cam.near = 1; cam.far = 120; cam.updateProjectionMatrix();
     sky.sun.shadow.bias = -0.0004; sky.sun.shadow.normalBias = 0.04;
-    post.setSamples(q >= 1 ? 4 : 0);
+    post.setQuality(q);
     // Shaders compiled while the shadow map didn't exist yet keep a stale shadow sampler, which ANGLE (Chrome on
     // Windows) rejects on every draw: the whole world vanished. Draw the shadow map now, then recompile once it exists.
     renderer.shadowMap.needsUpdate = true;
@@ -1108,6 +1109,7 @@ async function main() {
       flora.update(wdt, camera.position, sky.night);
       wreck.update(wdt);
       propGlow.value = 0.35 + sky.night * 0.75;
+      skyEnv.update(dt, sky.hemi);
       const simDt = hitStop > 0 ? dt * 0.05 : dt;
       hitStop = Math.max(0, hitStop - dt);
       for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }

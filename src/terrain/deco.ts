@@ -7,8 +7,8 @@ import { CHUNK, PAD } from '../config';
 export type DecoKind = 'stone' | 'stalkwood' | 'fiber' | 'giant' | 'small' | 'sprout';
 export const DECO_KINDS: DecoKind[] = ['stone', 'stalkwood', 'fiber', 'giant', 'small', 'sprout'];
 
-/** Floats per candidate: x, y, z (world), ny (surface normal y), r0..r3 (seeded randoms), valid (0/1). */
-export const STRIDE = 9;
+/** Floats per candidate: x, y, z (world), ny (surface normal y), r0..r3 (seeded randoms), valid (0/1), nx, nz. */
+export const STRIDE = 11;
 export type DecoData = Record<DecoKind, Float32Array>;
 
 interface KindRule { minNy: number; openSky: boolean; count: (grove: number) => number; cluster?: number; }
@@ -55,7 +55,7 @@ function surfaceAt(d: Float32Array, lx: number, lz: number) {
   const y = (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
   const dx = ((h10 - h00) * (1 - fz) + (h11 - h01) * fz), dz = ((h01 - h00) * (1 - fx) + (h11 - h10) * fx);
   const ny = 1 / Math.hypot(dx, 1, dz);
-  return { y, ny };
+  return { y, ny, nx: -dx * ny, nz: -dz * ny };
 }
 
 export function computeDeco(
@@ -85,7 +85,7 @@ export function computeDeco(
         if (rule.openSky && wy < openSkyHeight(wx, wz) - 3.5) continue; // no forests in caves
         let valid = 1;
         if (edited) valid = sampleDensity(edited, lx, s.y - 0.45, lz) > 0 && sampleDensity(edited, lx, s.y + 0.7, lz) <= 0 ? 1 : 0;
-        buf.push(wx, wy, wz, s.ny, r0, r1, r2, r3, valid);
+        buf.push(wx, wy, wz, s.ny, r0, r1, r2, r3, valid, s.nx, s.nz);
       }
     }
     out[kind] = new Float32Array(buf);

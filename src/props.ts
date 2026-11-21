@@ -13,9 +13,11 @@ interface PropKind {
   lying: boolean; // rotate to lie flat on the ground
 }
 
+type Entry = { kind: PropKind; slot: number; splat: number; id: string; source: number; x: number; z: number };
+
 interface ChunkProps {
   /** Live instances: pool slot and prop id per kind. */
-  slots: { kind: PropKind; slot: number; id: string; source: number; x: number; z: number }[];
+  slots: Entry[];
 }
 
 function fiberGeometry() {
@@ -55,6 +57,10 @@ const KINDS: PropKind[] = [
 ];
 
 import { InstancePool } from './pool';
+import { addGrounding, splatMaterial } from './assets';
+
+/** Contact patch size per kind (x, z in the prop's ground frame, times its scale). */
+const SPLAT: Record<string, [number, number]> = { stone: [0.62, 0.62], stalkwood: [0.42, 1.55], fiber: [0.5, 0.5] };
 
 export class Props {
   /** Ground nothing may lie on (the wreck). */
@@ -76,7 +82,15 @@ export class Props {
   private up = new THREE.Vector3(0, 1, 0);
   private centre = new THREE.Vector2(0, 0);
 
+  /** Dark contact patches under every prop (not raycast). */
+  private splats: InstancePool;
+  private gq = new THREE.Quaternion();
+  private gs = new THREE.Vector3();
+
   constructor() {
+    const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    this.splats = new InstancePool(quad, splatMaterial(), this.group, 4096);
+    this.splats.mesh.renderOrder = -1;
     this.pools = new Map(KINDS.map((k) => {
       const pool = new InstancePool(k.geometry, k.material, this.group, 2048);
       pool.mesh.userData.kind = k.id;
@@ -89,7 +103,12 @@ export class Props {
     const map: Record<string, string> = { stone: 'Stone', stalkwood: 'Stalkwood', fiber: 'Fiber' };
     for (const [id, name] of Object.entries(map)) {
       const m = meshes[name], pool = this.pools.get(id as PropKind['id']);
-      if (m && pool) { pool.setLook(m.geometry, m.material); pool.mesh.castShadow = id !== 'fiber'; }
+      if (!m || !pool) continue;
+      // Own material per kind: grounding depends on how far above the ground the kind sits.
+      const kind = KINDS.find((k) => k.id === id)!, mat = m.material.clone();
+      addGrounding(mat, kind.yOffset + (kind.lying ? 0.03 : 0.02), id === 'fiber' ? 0.22 : 0.16, id === 'fiber' ? 0.5 : 0.62);
+      pool.setLook(m.geometry, mat);
+      pool.mesh.castShadow = id === 'stalkwood'; // stones and tufts are too small for the shadow map; AO grounds them
     }
     this.rebuildOwners();
   }
@@ -104,7 +123,7 @@ export class Props {
   onChunkUnload(key: string) {
     const c = this.chunks.get(key);
     if (!c) return;
-    for (const e of c.slots) this.releaseSlot(e.kind, e.slot);
+    for (const e of c.slots) this.releaseEntry(e);
     this.chunks.delete(key);
   }
 
@@ -115,9 +134,10 @@ export class Props {
     return map;
   }
 
-  private releaseSlot(kind: PropKind, slot: number) {
-    this.ownerMap(kind).delete(slot);
-    this.pools.get(kind.id)!.release(slot);
+  private releaseEntry(e: Entry) {
+    this.ownerMap(e.kind).delete(e.slot);
+    this.pools.get(e.kind.id)!.release(e.slot);
+    this.splats.release(e.splat);
   }
 
   private spawn(key: string, deco: DecoData) {
@@ -133,9 +153,8 @@ export class Props {
         if (this.picked.has(id)) continue;
         if (this.blocked?.(d[o], d[o + 2])) continue; // not inside the wreck
         const sc = kind.scale[0] + d[o + 5] * (kind.scale[1] - kind.scale[0]);
-        // Tilt to the slope: approximate the normal from ny with a seeded lean direction.
-        const lean = Math.acos(Math.min(1, d[o + 3])), dir = d[o + 6] * Math.PI * 2;
-        this.n.set(Math.sin(lean) * Math.cos(dir), d[o + 3], Math.sin(lean) * Math.sin(dir)).normalize();
+        // Lie with the slope (the true surface normal).
+        this.n.set(d[o + 9], d[o + 3], d[o + 10]).normalize();
         this.q.setFromUnitVectors(this.up, this.n);
         this.spin.setFromAxisAngle(this.up, d[o + 4] * Math.PI * 2);
         if (kind.lying) this.spin.multiply(this.lie);
@@ -143,7 +162,13 @@ export class Props {
         this.p.set(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, kind.yOffset * sc);
         this.m.compose(this.p, this.q, this.s.setScalar(sc));
         const slot = pool.alloc(this.m);
-        c.slots.push({ kind, slot, id, source: i, x: d[o], z: d[o + 2] });
+        // Contact patch: on the ground plane under it, turned with the prop (logs get a long one).
+        this.gq.setFromUnitVectors(this.up, this.n).multiply(this.spin.setFromAxisAngle(this.up, d[o + 4] * Math.PI * 2));
+        const [sx, sz] = SPLAT[kind.id];
+        this.p.set(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, 0.015);
+        this.m.compose(this.p, this.gq, this.gs.set(sx * sc, 1, sz * sc));
+        const splat = this.splats.alloc(this.m);
+        c.slots.push({ kind, slot, splat, id, source: i, x: d[o], z: d[o + 2] });
       }
     }
     this.chunks.set(key, c);
@@ -163,7 +188,7 @@ export class Props {
     if (!this.blocked) return;
     for (const c of this.chunks.values()) c.slots = c.slots.filter((e) => {
       if (!this.blocked!(e.x, e.z)) return true;
-      this.releaseSlot(e.kind, e.slot);
+      this.releaseEntry(e);
       return false;
     });
   }
@@ -172,7 +197,7 @@ export class Props {
   private applyValidity(_key: string, c: ChunkProps, deco: DecoData) {
     c.slots = c.slots.filter((e) => {
       if (deco[e.kind.id][e.source * STRIDE + 8]) return true;
-      this.releaseSlot(e.kind, e.slot);
+      this.releaseEntry(e);
       return false;
     });
   }
@@ -182,7 +207,7 @@ export class Props {
     for (const pool of this.pools.values()) pool.prepareRaycast();
     this.ray.setFromCamera(this.centre, camera);
     this.ray.far = reach;
-    const hit = this.ray.intersectObjects(this.group.children, false)[0];
+    const hit = this.ray.intersectObjects([...this.pools.values()].map((p) => p.mesh), false)[0];
     if (!hit || hit.instanceId === undefined) return null;
     const mesh = hit.object as THREE.InstancedMesh;
     const owner = this.owners.get(mesh)?.get(hit.instanceId);
@@ -196,8 +221,9 @@ export class Props {
     if (!owner) return;
     const c = this.chunks.get(owner.key);
     const kind = KINDS.find((k) => k.id === target.mesh.userData.kind)!;
-    if (c) c.slots = c.slots.filter((e) => !(e.kind === kind && e.slot === target.index));
-    this.releaseSlot(kind, target.index);
+    const e = c?.slots.find((x) => x.kind === kind && x.slot === target.index);
+    if (c && e) { c.slots = c.slots.filter((x) => x !== e); this.releaseEntry(e); }
+    else { this.ownerMap(kind).delete(target.index); this.pools.get(kind.id)!.release(target.index); }
   }
 
   /** Live prop count (debug overlay). */

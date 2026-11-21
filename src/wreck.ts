@@ -2,6 +2,7 @@
 // point. Solid (a trimesh from its collision mesh), with its red warning beacons and lit window throwing light.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { addGrounding, splatMaterial } from './assets';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type RAPIER from '@dimforge/rapier3d';
 import { loadProps } from './assets';
@@ -116,8 +117,10 @@ export class Wreck {
 
   private async scatterDebris() {
     const m = await loadProps();
-    const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean);
+    const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean)
+      .map((k) => { const mat = k.material.clone(); addGrounding(mat, 0.03, 0.14, 0.55); return { geometry: k.geometry, material: mat }; });
     if (!kinds.length) return;
+    const splatMat = splatMaterial(), quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     let seed = 7;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (let i = 0; i < 22; i++) {
@@ -132,6 +135,10 @@ export class Wreck {
       piece.rotation.set((rnd() - 0.5) * 0.5, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.5, 'YXZ');
       piece.scale.setScalar(0.7 + rnd() * 0.7);
       piece.castShadow = piece.receiveShadow = true;
+      // A scorched contact patch under the plate (a child: it goes when the plate is cleared).
+      const sp = new THREE.Mesh(quad, splatMat);
+      sp.rotation.set(-piece.rotation.x, 0, -piece.rotation.z); sp.position.y = -0.02; sp.scale.set(1.9, 1, 1.4); sp.renderOrder = -1;
+      piece.add(sp);
       this.debris.add(piece);
     }
   }
