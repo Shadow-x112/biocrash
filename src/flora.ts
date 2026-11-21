@@ -5,10 +5,10 @@ import { addSway, fxUniforms } from './fx';
 import type RAPIER from '@dimforge/rapier3d';
 import { STRIDE, type DecoData } from './terrain/deco';
 import { InstancePool } from './pool';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const STALK_HARVESTS = 4;   // uses per mushroom
 export const STALK_YIELD = 2;      // stalkwood per use
-const SPOTS_PER = 7;
 
 interface Shroom {
   id: string; source: number; kind: 'giant' | 'small';
@@ -26,60 +26,93 @@ interface ChunkFlora {
 
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
 addSway(SPROUT, 0.1, true);
-const CAP_COLORS = [0x9a5a8c, 0x6f63a8, 0xb06a5a, 0x5f8f8a].map((c) => new THREE.Color(c));
+// Vein colours, one per fungus: teal, cold blue, blood magenta, acid green.
+const CAP_COLORS = [0x3dffc8, 0x5aa0ff, 0xff3d78, 0x9dff3a].map((c) => new THREE.Color(c));
 
-// Unit geometries, scaled per instance: 1 m tall stalk, 1 m radius cap.
-const capGeo = new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.42);
-capGeo.scale(1, 0.55, 1);
-// The dome's rim sits CAP_RIM above its centre: lower it so the rim meets the gills (it used to float ~0.7 m above them).
-const CAP_RIM = Math.cos(Math.PI * 0.42) * 0.55;
-// ...and the rim's radius: the gills fill it exactly (same 14 corners), so no ring of sky shows between them.
-const CAP_RIM_R = Math.sin(Math.PI * 0.42);
-capGeo.translate(0, -CAP_RIM, 0);
-// Unit cap outline for its physics shape (a convex hull, scaled per mushroom): the cap is solid, you can stand on it.
-const CAP_HULL = (() => {
-  const p = capGeo.getAttribute('position'), seen = new Set<string>(), out: number[] = [];
-  for (let i = 0; i < p.count; i++) {
-    const k = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    if (!seen.has(k)) { seen.add(k); out.push(p.getX(i), p.getY(i), p.getZ(i)); }
-  }
-  return out;
-})();
-
-// --- One mushroom = one object -------------------------------------------------------------------
-// Trunk, cap, gills and spots are merged into a single mesh, so the parts can never drift apart. Each vertex says
-// which part it belongs to (aPart 0 = trunk, 1 = crown), whether it takes the mushroom's cap colour (aTint) and how
-// much it glows (aGlow). Per mushroom (iDims): trunk radius, trunk length, cap radius. The shader stretches only the
-// trunk and seats the crown on top of it, so cutting shortens the trunk and the cap sinks with it, still attached.
-const STALK_COL = new THREE.Color(0xd8ccb4), GILL_COL = new THREE.Color(0x8c6f86), SPOT_COL = new THREE.Color(0x20302c);
+// --- One fungus = one object ---------------------------------------------------------------------------
+// Alien bell fungi: a twisted, ridged trunk with a flared foot; a drooping bell cap (outer skin plus a dark inner
+// lining), and luminous tendrils hanging from the rim. All merged into one mesh, so nothing can drift apart. Per
+// vertex: aPart (0 trunk, 1 crown), aTint (1 = cap skin, carries the glowing veins), aGlow (<0: dim self-light of
+// the lining), aTend (0 at a tendril's root .. 1 at its tip; sways most at the tip). Per fungus (iDims): trunk radius,
+// trunk length, cap radius. The shader stretches only the trunk and seats the crown on top.
+const BODY_COL = new THREE.Color(0x15121a), LINING_COL = new THREE.Color(0x2a1430), TRUNK_COL = new THREE.Color(0x1d1a1e);
+const BELL_STEPS = 14, SEG = 32, PHI_END = Math.PI * 0.62;
+const bell = (s: number, a: number, inner: boolean) => {
+  // Profile from the crown (s = 0) to the lobed rim (s = 1).
+  const phi = s * PHI_END, lobe = 1 + 0.08 * Math.sin(a * 7) * s * s;
+  const k = inner ? 0.95 : 1;
+  return new THREE.Vector3(Math.cos(a) * Math.sin(phi) * lobe * k, (Math.cos(phi) * 0.75 - 0.12) * (inner ? 0.97 : 1) - (inner ? 0.03 : 0), Math.sin(a) * Math.sin(phi) * lobe * k);
+};
 const bodyGeo = (() => {
-  const parts: { g: THREE.BufferGeometry; part: number; tint: number; glow: number; col: THREE.Color }[] = [
-    { g: new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0), part: 0, tint: 0, glow: 0, col: STALK_COL },
-    { g: capGeo, part: 1, tint: 1, glow: 0, col: new THREE.Color(1, 1, 1) },
-    // Gills face the ground, so no sun reaches them: a faint glow of their own colour keeps them from going black.
-    { g: new THREE.CircleGeometry(CAP_RIM_R, 14).rotateX(Math.PI / 2).translate(0, 0.004, 0), part: 1, tint: 0, glow: -0.45, col: GILL_COL },
-  ];
-  for (let k = 0; k < SPOTS_PER; k++) {
-    const a = k * 2.4, rr = 0.35 + (k % 3) * 0.2;
-    parts.push({ g: new THREE.IcosahedronGeometry(0.081, 0).translate(Math.cos(a) * rr, Math.sqrt(1 - rr * rr) * 0.55 - CAP_RIM, Math.sin(a) * rr), part: 1, tint: 0, glow: 1, col: SPOT_COL });
+  const pos: number[] = [], col: number[] = [], part: number[] = [], tint: number[] = [], glow: number[] = [], tend: number[] = [];
+  const push = (v: THREE.Vector3, c: THREE.Color, p: number, t: number, g: number, td: number) => {
+    pos.push(v.x, v.y, v.z); col.push(c.r, c.g, c.b); part.push(p); tint.push(t); glow.push(g); tend.push(td);
+  };
+  const quad = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, ...rest: [THREE.Color, number, number, number, number[]]) => {
+    const [cl, p, t, g, td] = rest;
+    push(a, cl, p, t, g, td[0]); push(b, cl, p, t, g, td[1]); push(c, cl, p, t, g, td[2]);
+    push(a, cl, p, t, g, td[0]); push(c, cl, p, t, g, td[2]); push(d, cl, p, t, g, td[3]);
+  };
+  const z4 = [0, 0, 0, 0];
+  // Trunk: 1 unit tall, unit radius (stretched per fungus), twisted ridges, flared foot.
+  const TR = 16, TS = 18;
+  const trunk = (j: number, i: number) => {
+    const t = j / TS, a = i / TR * Math.PI * 2 + t * 2.2;
+    const r = (1 + 0.95 * Math.exp(-((t / 0.09) ** 2)) - 0.3 * t + 0.06 * Math.sin(t * 17)) * (1 + 0.1 * Math.sin(a * 5 + t * 6));
+    return new THREE.Vector3(Math.cos(a) * r * 0.75, t, Math.sin(a) * r * 0.75);
+  };
+  for (let j = 0; j < TS; j++) for (let i = 0; i < TR; i++)
+    quad(trunk(j, i), trunk(j + 1, i), trunk(j + 1, i + 1), trunk(j, i + 1), TRUNK_COL, 0, 0, 0, z4);
+  // Bell: outer skin (veined) and inner lining (wound the other way so it faces down/in).
+  for (let j = 0; j < BELL_STEPS; j++) for (let i = 0; i < SEG; i++) {
+    const a0 = i / SEG * Math.PI * 2, a1 = (i + 1) / SEG * Math.PI * 2, s0 = j / BELL_STEPS, s1 = (j + 1) / BELL_STEPS;
+    quad(bell(s0, a0, false), bell(s0, a1, false), bell(s1, a1, false), bell(s1, a0, false), BODY_COL, 1, 1, 0, z4);
+    quad(bell(s0, a0, true), bell(s1, a0, true), bell(s1, a1, true), bell(s0, a1, true), LINING_COL, 1, 0, -0.35, z4);
   }
-  const pos: number[] = [], nrm: number[] = [], col: number[] = [], part: number[] = [], tint: number[] = [], glow: number[] = [];
-  for (const p of parts) {
-    const g = p.g.index ? p.g.toNonIndexed() : p.g;
-    const n = g.getAttribute('position').count;
-    pos.push(...(g.getAttribute('position').array as Float32Array)); nrm.push(...(g.getAttribute('normal').array as Float32Array));
-    for (let i = 0; i < n; i++) { col.push(p.col.r, p.col.g, p.col.b); part.push(p.part); tint.push(p.tint); glow.push(p.glow); }
+  // Rim band joining skin and lining.
+  for (let i = 0; i < SEG; i++) {
+    const a0 = i / SEG * Math.PI * 2, a1 = (i + 1) / SEG * Math.PI * 2;
+    quad(bell(1, a0, false), bell(1, a1, false), bell(1, a1, true), bell(1, a0, true), BODY_COL, 1, 1, 0, z4);
+  }
+  // Tendrils: thin four-sided tubes hanging from just inside the rim, tapering, curling a little.
+  const TN = 16, TSEG = 7;
+  for (let n = 0; n < TN; n++) {
+    const a = n / TN * Math.PI * 2 + Math.sin(n * 12.9) * 0.15;
+    const root = bell(0.93, a, true);
+    const len = 0.7 + ((Math.sin(n * 78.2) * 43758.5) % 1 + 1) % 1 * 0.9;
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= TSEG; k++) {
+      const t = k / TSEG;
+      pts.push(root.clone().add(new THREE.Vector3(Math.sin(t * 3 + n) * 0.05 * t, -len * t, Math.cos(t * 2.5 + n) * 0.05 * t)));
+    }
+    for (let k = 0; k < TSEG; k++) {
+      const r0 = 0.011 * (1 - (k / TSEG) * 0.75), r1 = 0.011 * (1 - ((k + 1) / TSEG) * 0.75);
+      for (let side = 0; side < 4; side++) {
+        const b0 = side / 4 * Math.PI * 2, b1 = (side + 1) / 4 * Math.PI * 2;
+        const off = (r: number, b: number) => new THREE.Vector3(Math.cos(b) * r, 0, Math.sin(b) * r);
+        const t0 = k / TSEG, t1 = (k + 1) / TSEG;
+        quad(pts[k].clone().add(off(r0, b0)), pts[k + 1].clone().add(off(r1, b0)), pts[k + 1].clone().add(off(r1, b1)), pts[k].clone().add(off(r0, b1)),
+          BODY_COL, 1, 2, 0, [t0, t1, t1, t0]);
+      }
+    }
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   out.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
   out.setAttribute('aTint', new THREE.Float32BufferAttribute(tint, 1));
   out.setAttribute('aGlow', new THREE.Float32BufferAttribute(glow, 1));
+  out.setAttribute('aTend', new THREE.Float32BufferAttribute(tend, 1));
+  const merged = mergeVertices(out, 1e-4); // shared vertices -> smooth shading (seams stay where attributes differ)
+  merged.computeVertexNormals();
+  return merged;
+})();
+// Unit bell outline for its physics shape (convex hull, scaled per fungus): the cap is solid, you can stand on it.
+const CAP_HULL = (() => {
+  const out: number[] = [];
+  for (let j = 0; j <= BELL_STEPS; j += 2) for (let i = 0; i < SEG; i += 2) { const v = bell(j / BELL_STEPS, i / SEG * Math.PI * 2, false); out.push(v.x, v.y, v.z); }
   return out;
 })();
-// The trunk reaches this far below its base point, so on a slope its downhill side still meets the ground.
 const BODY_VERT = `
   float SINK = 0.4 + iDims.x * 1.5;
   vec3 transformed = aPart < 0.5
@@ -91,34 +124,57 @@ const SWAY = `
     float ph = base.x * 0.15 + base.z * 0.11, speed = mix(1.0, 0.45, uBreath);
     vec3 sway = vec3(sin(uFxTime * 0.7 * speed + ph), sin(uFxTime * 0.4 + ph * 2.0) * uBreath * 0.6, cos(uFxTime * 0.53 * speed + ph * 1.3)) * 0.07 * (1.0 + uBreath);
     sway *= clamp(transformed.y / max(iDims.y, 0.5), 0.0, 1.0); // rooted: the trunk bends, the crown moves most
+    // Tendrils trail and swing on their own, most at the tips.
+    sway += vec3(sin(uFxTime * 1.3 + ph * 3.0 + position.x * 9.0), 0.0, cos(uFxTime * 1.1 + ph * 2.0 + position.z * 9.0)) * aTend * aTend * 0.12 * iDims.z;
     mvPosition.xyz += (viewMatrix * vec4(sway, 0.0)).xyz;
     gl_Position = projectionMatrix * mvPosition;
   }`;
-const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
-const glowU = { value: 0.25 };
+const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.0 });
+const glowU = { value: 0.6 };
 BODY.onBeforeCompile = (sh) => {
   Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU });
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute vec3 iDims;\nvarying float vGlow; uniform float uFxTime; uniform float uBreath;')
-    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow;')
-    .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb * mix(vec3(1.0), instanceColor.rgb, aTint);')
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb;')
+    .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb;')
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying float vGlow; uniform float uGlow; uniform vec3 uRim;')
+    .replace('#include <common>', `#include <common>
+      varying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; uniform float uGlow; uniform vec3 uRim; uniform float uFxTime;
+      vec3 h3(vec3 p) { p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
+      // Distance to the nearest cell edge (F2 - F1): thin glowing veins along the cell borders.
+      float veinEdge(vec3 p) {
+        vec3 i = floor(p), f = fract(p); float d1 = 8.0, d2 = 8.0;
+        for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
+          vec3 g = vec3(float(x), float(y), float(z)); vec3 r = g + h3(i + g) - f; float d = dot(r, r);
+          if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+        }
+        return sqrt(d2) - sqrt(d1);
+      }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      totalEmissiveRadiance += vGlow > 0.0 ? vec3(0.435, 0.941, 0.847) * vGlow * uGlow : diffuseColor.rgb * -vGlow;
+      if (vTint > 1.5) {
+        totalEmissiveRadiance += vVein * uGlow * (0.15 + vTend * 0.7); // tendrils, brightest at the tips
+      } else if (vTint > 0.5) {
+        vec3 q = vLocal * 5.5 + sin(vLocal.zxy * 7.0) * 0.22;
+        float vein = 1.0 - smoothstep(0.012, 0.05, veinEdge(q));
+        float pulse = 0.55 + 0.45 * sin(uFxTime * 0.9 + vLocal.y * 6.0 + vLocal.x * 3.0);
+        totalEmissiveRadiance += vVein * vein * uGlow * (0.6 + pulse * 0.8);
+      } else if (vGlow < 0.0) {
+        totalEmissiveRadiance += vVein * 0.06 * uGlow * -vGlow; // the lining glows faintly from the veins above
+      }
       { float rimF = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
         totalEmissiveRadiance += uRim * rimF; }`);
 };
-BODY.customProgramCacheKey = () => 'shroom-body';
-// Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit mushroom.
+BODY.side = THREE.DoubleSide;
+BODY.customProgramCacheKey = () => 'fungus-body';
+// Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit fungus.
 const BODY_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 BODY_DEPTH.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', '#include <common>\nattribute float aPart; attribute vec3 iDims;')
     .replace('#include <begin_vertex>', BODY_VERT);
 };
-BODY_DEPTH.customProgramCacheKey = () => 'shroom-depth';
+BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth';
 const sproutGeo = (() => {
   const parts = [new THREE.ConeGeometry(0.05, 0.35, 5).translate(0, 0.17, 0), new THREE.SphereGeometry(0.06, 6, 4).translate(0, 0.37, 0)];
   const pos: number[] = [], nrm: number[] = [];
@@ -197,7 +253,7 @@ export class Flora {
         if (Math.hypot(p.x - this.avoid.x, p.z - this.avoid.z) < 9) continue; // keep the crash site clear
         if (this.blocked?.(p.x, p.z)) continue; // not through the wreck
         const h = hMin + d[o + 4] * (hMax - hMin);
-        const capR = h * (kind === 'giant' ? 0.42 : 0.5);
+        const capR = h * (kind === 'giant' ? 0.32 : 0.4);
         if (placed.some((q) => q.p.distanceTo(p) < (q.cap + capR) * 0.8)) continue; // no overlapping caps
         placed.push({ p, h, r: h * (kind === 'giant' ? 0.06 : 0.09), cap: capR, tilt: (d[o + 5] - 0.5) * 0.25,
           spin: d[o + 6] * Math.PI * 2, color: Math.floor(d[o + 7] * CAP_COLORS.length) % CAP_COLORS.length, id: `${key}:${kind}:${i}`, source: i, kind });
@@ -325,7 +381,7 @@ export class Flora {
 
   update(dt: number, viewer: THREE.Vector3, night: number) {
     const glow = 0.25 + night * 1.9;
-    glowU.value = glow;
+    glowU.value = 0.45 + night * 1.6; // the fungi glow by day too (the days are dim); far more at night
     SPROUT.emissiveIntensity = glow * 1.1;
     const pos = this.spores.geometry.getAttribute('position') as THREE.BufferAttribute;
     if (night > 0.02) {

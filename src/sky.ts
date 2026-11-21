@@ -8,9 +8,11 @@ interface Palette { zenith: THREE.Color; horizon: THREE.Color; hemiSky: THREE.Co
 const pal = (z: number, h: number, hs: number, hg: number, hemi: number): Palette => ({
   zenith: new THREE.Color(z), horizon: new THREE.Color(h), hemiSky: new THREE.Color(hs), hemiGround: new THREE.Color(hg), hemi,
 });
-const NIGHT = pal(0x020409, 0x070b14, 0x1c2840, 0x050508, 0.1); // dark nights: firelight matters
-const DUSK = pal(0x27305a, 0xd9825a, 0xb49aa8, 0x3a2c22, 0.75);
-const DAY = pal(0x4f86c2, 0xb8d2e5, 0xcfe3f2, 0x2a241e, 0.7);
+// Dark and alien all day: a dim, sickly green-teal haze by day, a rust band at dusk, near-black nights where the
+// fungi and fires are most of the light.
+const NIGHT = pal(0x010203, 0x05100c, 0x0e1c24, 0x030304, 0.08);
+const DUSK = pal(0x10162a, 0x5c3428, 0x55606a, 0x1a1210, 0.38);
+const DAY = pal(0x14221f, 0x4c6a56, 0x7f9a8c, 0x1a1416, 0.55);
 
 const vert = /* glsl */ `
   varying vec3 vDir;
@@ -20,7 +22,7 @@ const vert = /* glsl */ `
   }`;
 
 const frag = /* glsl */ `
-  uniform vec3 zenith, horizon, sunDir, moonDir, moon2Dir;
+  uniform vec3 zenith, horizon, sunDir, moonDir, moon2Dir, planetDir;
   uniform float night;
   varying vec3 vDir;
   float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -29,9 +31,27 @@ const frag = /* glsl */ `
     float h = clamp(d.y, -0.2, 1.0);
     vec3 col = mix(horizon, zenith, pow(max(h, 0.0), 0.55));
     col = mix(col, horizon * 0.6, smoothstep(0.0, -0.2, d.y)); // below the horizon
-    // Sun: disc plus warm glow.
+    // A sickly glow hugging the horizon.
+    col += vec3(0.05, 0.12, 0.08) * exp(-abs(d.y) * 14.0) * (1.0 - night * 0.6);
+    // Sun: a small, hard, pale-amber star with a thin halo.
     float s = max(dot(d, sunDir), 0.0);
-    col += vec3(1.0, 0.82, 0.55) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.25) * (1.0 - night * 0.9);
+    col += vec3(1.0, 0.86, 0.62) * (pow(s, 1800.0) * 9.0 + pow(s, 40.0) * 0.12) * (1.0 - night * 0.95);
+    // The gas giant: a huge banded disc, lit on the sun's side, always up there.
+    float pd = dot(d, planetDir);
+    if (pd > 0.982) {
+      vec3 up = normalize(cross(planetDir, vec3(0.3, 0.0, 1.0)));
+      vec3 rt = cross(up, planetDir);
+      vec2 q = vec2(dot(d, rt), dot(d, up)) / sqrt(1.0 - 0.982 * 0.982);
+      float r2 = dot(q, q);
+      if (r2 < 1.0) {
+        vec3 n = normalize(rt * q.x + up * q.y + planetDir * -sqrt(1.0 - r2));
+        float band = sin(q.y * 26.0 + sin(q.x * 3.0 + q.y * 7.0) * 1.6) * 0.5 + 0.5;
+        vec3 pc = mix(vec3(0.16, 0.13, 0.17), vec3(0.42, 0.5, 0.36), band);
+        float lit = clamp(dot(-n, sunDir) * 0.9 + 0.12, 0.05, 1.0);
+        float edge = smoothstep(1.0, 0.94, r2);
+        col = mix(col, pc * lit, edge * 0.92);
+      }
+    }
     // Moons: a large pale one and a small rust-coloured one.
     float m1 = smoothstep(0.9994, 0.9996, dot(d, moonDir));
     float m2 = smoothstep(0.99985, 0.9999, dot(d, moon2Dir));
@@ -40,7 +60,7 @@ const frag = /* glsl */ `
     // Stars, only at night and away from the horizon.
     vec3 cell = floor(d * 260.0);
     float st = step(0.9965, hash(cell)) * hash(cell + 7.0);
-    col += vec3(st) * night * smoothstep(0.02, 0.25, d.y) * (1.0 - m1);
+    col += vec3(st) * (0.12 + night * 0.88) * smoothstep(0.02, 0.25, d.y) * (1.0 - m1); // faint even by day
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -65,6 +85,7 @@ export class Sky {
   private uniforms = {
     zenith: { value: new THREE.Color() }, horizon: { value: new THREE.Color() },
     sunDir: { value: new THREE.Vector3() }, moonDir: { value: new THREE.Vector3() }, moon2Dir: { value: new THREE.Vector3() },
+    planetDir: { value: new THREE.Vector3(-0.45, 0.32, -0.83).normalize() },
     night: { value: 0 },
   };
   private tmp = new THREE.Color();
@@ -115,8 +136,8 @@ export class Sky {
 
     // Sun light warms and fades near the horizon; the big moon takes over at night.
     const sunUp = THREE.MathUtils.smoothstep(elev, -0.08, 0.1);
-    const sunI = 3.2 * sunUp;
-    this.sun.color.copy(this.tmp.setRGB(1, 0.62, 0.38)).lerp(new THREE.Color(1, 0.95, 0.86), dayW);
+    const sunI = 2.0 * sunUp; // a dim, distant sun
+    this.sun.color.copy(this.tmp.setRGB(1, 0.5, 0.32)).lerp(new THREE.Color(0.95, 0.9, 0.72), dayW);
     const moonDir = this.uniforms.moonDir.value.copy(this.sunDir).multiplyScalar(-1).add(new THREE.Vector3(0.3, 0.25, -0.2)).normalize();
     this.uniforms.moon2Dir.value.copy(moonDir).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.9).add(new THREE.Vector3(0, -0.15, 0)).normalize();
     const moonI = 0.32 * nightW * THREE.MathUtils.smoothstep(moonDir.y, -0.05, 0.15);

@@ -85,9 +85,9 @@ export function meshSurfaceNets(d: Float32Array, worldX0: number, worldY0: numbe
         mr *= 1 + fleck * 0.06; mg *= 1 + fleck * 0.06; mb *= 1 + fleck * 0.06;
         // Rock: soft mauve-grey.
         const rr = 0.44, rg = 0.39, rb = 0.43;
-        let r = rr + (mr - rr) * flat, g = rg + (mg - rg) * flat, b = rb + (mb - rb) * flat;
-        r *= 1 - deep * 0.6; g *= 1 - deep * 0.6; b *= 1 - deep * 0.5;
-        col.push(r, g, b);
+        // The ground shader's blend weights (not a colour): flatness, depth, patch pattern.
+        void [rr, rg, rb, mr, mg, mb];
+        col.push(flat, deep, patch * 0.5 + 0.5);
       }
 
   // 2. One quad per owned grid edge that changes sign.

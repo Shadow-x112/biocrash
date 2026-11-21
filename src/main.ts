@@ -16,7 +16,7 @@ import { Wreck } from './wreck';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Packs } from './packs';
-import { Post, fxUniforms, addTerrainMist } from './fx';
+import { Post, fxUniforms, addTerrainSurface } from './fx';
 import { Audio } from './audio';
 import { Particles } from './particles';
 import { Horror } from './horror';
@@ -118,7 +118,7 @@ async function main() {
   const physics = new RAPIER.World({ x: 0, y: -22, z: 0 });
   const world = new World(seed, RAPIER, physics);
   scene.add(world.group);
-  addTerrainMist(world.material);
+  addTerrainSurface(world.material, renderer.capabilities.getMaxAnisotropy());
   if (loaded) for (const [k, v] of loaded.edits) world.edits.set(k, v);
 
   const input = new Input(canvas);
@@ -1157,8 +1157,9 @@ async function main() {
     fxUniforms.uRim.value.setRGB(0.05 * sky.daylight, 0.04 * sky.daylight + 0.07 * sky.night, 0.03 * sky.daylight + 0.065 * sky.night);
     post.update(horror.level, horror.glitch, horror.staticT, sky.daylight, sky.night);
     const fog = scene.fog as THREE.Fog;
-    fog.far = CHUNK * VIEW_RADIUS * (1 - sky.night * 0.4 - horror.level * 0.15);
-    fog.near = fog.far * (0.55 - sky.night * 0.25);
+    // Hazy even by day (the air here is thick), closing in at night.
+    fog.far = CHUNK * VIEW_RADIUS * (0.8 - sky.night * 0.3 - horror.level * 0.15);
+    fog.near = fog.far * (0.35 - sky.night * 0.2);
     // Don't draw what the fog hides: the far plane follows the fog (at night ~70% of the loaded area is fogged out).
     const far = Math.min(CHUNK * (VIEW_RADIUS + 1), fog.far + CHUNK * 0.5);
     if (Math.abs(camera.far - far) > 2) { camera.far = far; camera.updateProjectionMatrix(); sky.setRadius(far * 0.9); }

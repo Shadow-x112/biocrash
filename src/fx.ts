@@ -27,9 +27,9 @@ class GradeEffect extends Effect {
 
 // Grades by time of day: day slightly warm and lively, dusk golden, night cool with teal in the shadows.
 const GRADES = {
-  day: { gain: new THREE.Vector3(1.03, 1.0, 0.96), lift: new THREE.Vector3(0, 0, 0), sat: 1.06 },
-  dusk: { gain: new THREE.Vector3(1.1, 0.96, 0.84), lift: new THREE.Vector3(0.004, 0.0, 0.0), sat: 1.0 },
-  night: { gain: new THREE.Vector3(0.86, 0.96, 1.1), lift: new THREE.Vector3(0.0, 0.004, 0.007), sat: 0.82 },
+  day: { gain: new THREE.Vector3(0.94, 1.02, 0.97), lift: new THREE.Vector3(0.0, 0.004, 0.002), sat: 0.82 },
+  dusk: { gain: new THREE.Vector3(1.06, 0.94, 0.86), lift: new THREE.Vector3(0.004, 0.0, 0.0), sat: 0.85 },
+  night: { gain: new THREE.Vector3(0.82, 0.97, 1.04), lift: new THREE.Vector3(0.0, 0.003, 0.004), sat: 0.75 },
 };
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -134,39 +134,84 @@ export function addRim(mat: THREE.Material) {
   mat.needsUpdate = true;
 }
 
-/** Ground mist on the terrain: pools below eye height and in hollows, drifts slowly, fades in past a few metres. */
-export function addTerrainMist(mat: THREE.Material) {
+/** The ground: three photographed CC0 surfaces (alien soil, ash, dark rock; Poly Haven) projected from three sides
+ *  (triplanar, so cliffs and dug walls don't stretch), blended by slope and patch with their height maps, plus normal
+ *  and roughness detail. The mesher's vertex colour carries the weights: r = flatness, g = depth, b = patch.
+ *  Also the drifting ground mist that pools below eye height. */
+export function addTerrainSurface(mat: THREE.Material, aniso: number) {
+  const load = (n: string, srgb: boolean) => {
+    const t = new THREE.TextureLoader().load(`textures/${n}.webp`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const tex = {
+    tSoilC: { value: load('mud_forest_col', true) }, tSoilN: { value: load('mud_forest_nrm', false) },
+    tAshC: { value: load('burned_ground_01_col', true) }, tAshN: { value: load('burned_ground_01_nrm', false) },
+    tRockC: { value: load('dark_rock_02_col', true) }, tRockN: { value: load('dark_rock_02_nrm', false) },
+  };
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, fxUniforms);
+    Object.assign(sh.uniforms, fxUniforms, tex);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vMistWorld;')
-      .replace('#include <fog_vertex>', '#include <fog_vertex>\nvMistWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vMistWorld; varying vec3 vWN;')
+      .replace('#include <fog_vertex>', '#include <fog_vertex>\nvMistWorld = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal);');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vMistWorld;
+        varying vec3 vMistWorld; varying vec3 vWN;
         uniform float uFxTime; uniform float uMist; uniform float uMistTop;
+        uniform sampler2D tSoilC, tSoilN, tAshC, tAshN, tRockC, tRockN;
         float fxHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-        float fxNoise(vec3 x) { // value noise
+        float fxNoise(vec3 x) {
           vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(mix(fxHash(i), fxHash(i + vec3(1,0,0)), f.x), mix(fxHash(i + vec3(0,1,0)), fxHash(i + vec3(1,1,0)), f.x), f.y),
                      mix(mix(fxHash(i + vec3(0,0,1)), fxHash(i + vec3(1,0,1)), f.x), mix(fxHash(i + vec3(0,1,1)), fxHash(i + vec3(1,1,1)), f.x), f.y), f.z);
-        }`)
-      // Surface detail without textures: two octaves of world-space noise (~0.5 m and ~4 m) vary the colour by about
-      // +-10%, hollows are a little darker and damper, high ground a little paler (spore dust).
+        }
+        vec3 triW(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w.x + w.y + w.z); }
+        vec4 triC(sampler2D t, vec3 p, vec3 w) {
+          return texture2D(t, p.zy) * w.x + texture2D(t, p.xz) * w.y + texture2D(t, p.xy) * w.z;
+        }
+        // Triplanar normal (whiteout blend) -> world space; .w = roughness.
+        vec4 triN(sampler2D t, vec3 p, vec3 w, vec3 n) {
+          vec3 a = texture2D(t, p.zy).rgb, b = texture2D(t, p.xz).rgb, c = texture2D(t, p.xy).rgb;
+          vec2 ax = a.rg * 2.0 - 1.0, bx = b.rg * 2.0 - 1.0, cx = c.rg * 2.0 - 1.0;
+          vec3 nx = vec3(ax + n.zy, abs(sqrt(max(0.0, 1.0 - dot(ax, ax)))) * n.x);
+          vec3 ny = vec3(bx + n.xz, abs(sqrt(max(0.0, 1.0 - dot(bx, bx)))) * n.y);
+          vec3 nz = vec3(cx + n.xy, abs(sqrt(max(0.0, 1.0 - dot(cx, cx)))) * n.z);
+          vec3 wn = normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
+          return vec4(wn, a.b * w.x + b.b * w.y + c.b * w.z);
+        }
+        vec3 gN; float gRough;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        float fxN = (fxNoise(vMistWorld * 2.0) - 0.5) * 0.12 + (fxNoise(vMistWorld * 0.25) - 0.5) * 0.18;
-        diffuseColor.rgb *= 1.0 + fxN;
-        diffuseColor.rgb *= mix(0.88, 1.0, smoothstep(2.0, 12.0, vMistWorld.y));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.84, 0.8), smoothstep(34.0, 52.0, vMistWorld.y) * 0.25);`)
+        {
+          vec3 n = normalize(vWN), w = triW(n), p = vMistWorld;
+          float gFlat = vColor.r, gDeep = vColor.g, gPatch = vColor.b;
+          // Macro variation so the tiling doesn't show from a distance.
+          float macro = fxNoise(p * 0.07) * 0.6 + fxNoise(p * 0.21) * 0.4;
+          vec4 cS = triC(tSoilC, p * 0.26, w), cA = triC(tAshC, p * 0.3, w), cR = triC(tRockC, p * 0.19, w);
+          // Slope and patch weights, sharpened by each surface's height map (ash fills the soil's hollows, rock pokes through).
+          float wR = 1.0 - gFlat, wA = gFlat * smoothstep(0.45, 0.75, gPatch + (macro - 0.5) * 0.5), wS = max(0.0, gFlat - wA);
+          vec3 hw = vec3(wS * (cS.a + 0.4), wA * (cA.a + 0.4), wR * (cR.a + 0.4));
+          float mx = max(hw.x, max(hw.y, hw.z));
+          hw = max(hw - mx + 0.25, 0.0); hw /= (hw.x + hw.y + hw.z + 1e-4);
+          vec3 alb = cS.rgb * vec3(0.52, 0.58, 0.6) * hw.x + cA.rgb * vec3(0.62, 0.56, 0.62) * hw.y + cR.rgb * vec3(0.55, 0.55, 0.62) * hw.z;
+          alb *= mix(0.8, 1.1, macro);
+          alb *= 1.0 - gDeep * 0.55;
+          diffuseColor.rgb = alb;
+          vec4 nS = triN(tSoilN, p * 0.26, w, n), nA = triN(tAshN, p * 0.3, w, n), nR = triN(tRockN, p * 0.19, w, n);
+          vec4 nn = nS * hw.x + nA * hw.y + nR * hw.z;
+          gN = normalize(nn.xyz); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
+        }`)
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = gRough;')
+      .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(gN, 0.0)).xyz);')
       .replace('#include <fog_fragment>', `#include <fog_fragment>
       #ifdef USE_FOG
-        float mistH = 1.0 - smoothstep(uMistTop - 7.0, uMistTop, vMistWorld.y); // (reversed edges are undefined in GLSL)
+        float mistH = 1.0 - smoothstep(uMistTop - 7.0, uMistTop, vMistWorld.y);
         float drift = sin(vMistWorld.x * 0.09 + uFxTime * 0.13) * sin(vMistWorld.z * 0.11 - uFxTime * 0.09) * 0.5 + 0.5;
         float mistD = smoothstep(4.0, 38.0, vFogDepth);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, clamp(uMist * mistH * mistD * (0.5 + 0.5 * drift), 0.0, 0.85));
       #endif`);
   };
-  mat.customProgramCacheKey = () => 'mist2';
+  mat.customProgramCacheKey = () => 'ground3';
   mat.needsUpdate = true;
 }
 
