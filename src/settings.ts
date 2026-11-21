@@ -20,12 +20,15 @@ export interface Settings {
   runToggle: boolean;  // press run once instead of holding it
   sneakToggle: boolean;
   compass: boolean;
-  fullHud: boolean;    // always show vitals and inventory (instead of only when they change)
+  fullHud: boolean;
+  hudDistortion: boolean; // the HUD misbehaves as unease rises (drifting compass, false readings)
+  captionSize: number;  // 0.8..1.8 caption text size
+  pauseCraft: boolean;  // pause the world while the crafting panel is open (off: it keeps running)    // always show vitals and inventory (instead of only when they change)
   tutorial: boolean;   // station-core objectives panel
 }
 
 export const DEFAULTS: Settings = {
-  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, fullHud: false, tutorial: true,
+  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, fullHud: false, hudDistortion: true, captionSize: 1, pauseCraft: false, tutorial: true,
 };
 
 const KEY = 'biocrash-settings';
@@ -74,6 +77,7 @@ const ROWS: { group: string; rows: Row[] }[] = [
   { group: 'Accessibility', rows: [
     { key: 'uiScale', label: 'Interface size', kind: 'range', min: 0.8, max: 1.6, step: 0.05, fmt: pct },
     { key: 'captions', label: 'Sound captions', kind: 'check' },
+    { key: 'captionSize', label: 'Caption size', kind: 'range', min: 0.8, max: 1.8, step: 0.1, fmt: pct },
     { key: 'horrorAmt', label: 'Horror intensity', kind: 'range', min: 0.5, max: 1.5, step: 0.05, fmt: pct },
     { key: 'reduceFlash', label: 'Reduce flashing', kind: 'check' },
   ] },
@@ -87,6 +91,8 @@ const ROWS: { group: string; rows: Row[] }[] = [
     { key: 'shakeAmt', label: 'Camera shake', kind: 'range', min: 0, max: 1, step: 0.05, fmt: pct },
     { key: 'compass', label: 'Compass', kind: 'check' },
     { key: 'fullHud', label: 'Always show vitals and inventory', kind: 'check' },
+    { key: 'hudDistortion', label: 'HUD distortion with unease', kind: 'check' },
+    { key: 'pauseCraft', label: 'Pause while crafting', kind: 'check' },
     { key: 'tutorial', label: 'Station core objectives', kind: 'check' },
   ] },
 ];

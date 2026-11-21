@@ -14,7 +14,7 @@ import { Player } from './player';
 import { Sky, DAY_LENGTH } from './sky';
 import { Survival, TEMP } from './survival';
 import { Props } from './props';
-import { Inventory, ITEM_NAMES, MATERIALS, GEAR, type ItemId } from './inventory';
+import { Inventory, ITEM_NAMES, MATERIALS, TOOLS, GEAR, type ItemId } from './inventory';
 import { RECIPES } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, setCreatureModels, type Creature } from './creatures';
@@ -269,6 +269,7 @@ async function main() {
     if (settings.runToggle) input.toggles.add('run');
     if (settings.sneakToggle) input.toggles.add('sneak');
     document.documentElement.style.setProperty('--ui', String(settings.uiScale));
+    document.documentElement.style.setProperty('--cap', String(settings.captionSize));
     horror.intensity = settings.horrorAmt;
     horror.reduceFlash = settings.reduceFlash;
     post.reduceFlash = settings.reduceFlash;
@@ -572,7 +573,16 @@ async function main() {
     renderHotbar();
     if (state === 'craft') renderCraft();
   };
-  hotbar.onChange = renderHotbar;
+  // Switching tools flashes the item's name over the hotbar for a moment.
+  const itemNameEl = $('itemname'); let itemNameTimer = 0, lastSlot = hotbar.slot;
+  hotbar.onChange = () => {
+    renderHotbar();
+    if (hotbar.slot === lastSlot) return;
+    lastSlot = hotbar.slot;
+    itemNameEl.textContent = SLOT_NAMES[hotbar.slot];
+    itemNameEl.classList.add('show'); clearTimeout(itemNameTimer);
+    itemNameTimer = window.setTimeout(() => itemNameEl.classList.remove('show'), 1200);
+  };
   inventory.load(meta?.inventory);
   let craftMsgTimer = 0;
   const craftNote = (msg: string) => {
@@ -988,6 +998,75 @@ async function main() {
     }
   };
 
+  // --- Wrist link: exact readouts, the objective and everything you carry, on the arm screen ------------------
+  // Hold I to peek, tap it to pin. The world keeps running while you read it.
+  const wristEl = $('wrist'), wristBody = $('wristbody'), dimmerEl = $('dimmer'), vitalsEl = $('vitals');
+  let wristOpen = false, wristPinned = false, wristDown = 0, wristTimer = 0;
+  const setWrist = (on: boolean) => {
+    if (on === wristOpen) return;
+    wristOpen = on;
+    wristEl.classList.toggle('open', on); dimmerEl.classList.toggle('on', on); vitalsEl.classList.toggle('under-wrist', on);
+    audio.play('ui_2', { bus: 'ui', gain: 0.25, rate: on ? 1.25 : 0.9 });
+    if (on) renderWrist();
+  };
+  /** At high unease the screen corrupts a few characters (the HUD distortion setting; never the numbers you act on). */
+  const corrupt = (t: string) => {
+    const u = settings.hudDistortion && !settings.reduceFlash ? Math.max(0, horror.level - 0.45) * 0.12 : 0;
+    if (u <= 0 && horror.glitch <= 0) return t;
+    const p = horror.glitch > 0 ? 0.25 : u;
+    return t.replace(/[A-Za-z]/g, (c) => (Math.random() < p ? '\u2591\u2592\u2593#%'[Math.floor(Math.random() * 5)] : c));
+  };
+  const meter = (cls: string, v: number) => `<div class="meter ${cls}"><i style="transform:scaleX(${Math.max(0, Math.min(1, v)).toFixed(3)})"></i></div>`;
+  function renderWrist() {
+    const until = (to: number) => fmtTime((((to - sky.time) % 1) + 1) % 1 * DAY_LENGTH);
+    const clock = isNightTime() ? `dawn in ${until(0.25)}` : `dark in ${until(0.7)}`;
+    const carried = [...MATERIALS, ...TOOLS, ...GEAR].filter((k) => inventory.counts[k] > 0);
+    const goal = tutorial.currentGoal();
+    wristBody.innerHTML = `
+      <div class="kv"><span>${corrupt('VITALS')}</span><span>${clock} \u00b7 ${nights} night${nights === 1 ? '' : 's'} survived</span></div>
+      <div class="kv"><span>${corrupt('Health')}</span><b>${Math.ceil(survival.health)} / 100</b></div>${meter('hp', survival.health / 100)}
+      <div class="kv"><span>${corrupt('Body heat')}</span><b>${Math.round(survival.warmth)}% \u00b7 air ${fmtTemp(survival.ambientC)}</b></div>${meter('heat', survival.warmth / 100)}
+      <div class="kv"><span>${corrupt('Lamp charge')}</span><b>${Math.round(lampCharge)}%${lampOn ? ' \u00b7 on' : ''}</b></div>${meter('', lampCharge / 100)}
+      ${survival.fed > 0 ? `<div class="kv"><span>${corrupt('Fed')}</span><b>${fmtTime(survival.fed)}</b></div>` : ''}
+      ${survival.wrapped ? `<div class="kv"><span>${corrupt('Hide wrap')}</span><b>worn</b></div>` : ''}
+      ${goal ? `<div class="sec goal">\u25B8 ${goal}</div>` : ''}
+      <div class="sec"><div class="kv"><span>${corrupt('CARRIED')}</span><span>${K('craft')}: craft</span></div>
+        <div class="grid">${carried.map((k) => `<span>${ico(k)}${inventory.counts[k] > 1 || MATERIALS.includes(k) ? inventory.counts[k] : '\u2713'}</span>`).join('') || '<span>nothing</span>'}</div></div>`;
+  }
+  window.addEventListener('keydown', (e) => {
+    if (!input.is(e.code, 'wrist') || e.repeat) return;
+    if (state !== 'playing') return;
+    wristDown = performance.now();
+    setWrist(true);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (!input.is(e.code, 'wrist') || !wristDown) return;
+    const tap = performance.now() - wristDown < 250;
+    wristDown = 0;
+    if (tap) { wristPinned = !wristPinned; setWrist(wristPinned); } // a tap pins it open (or closes it)
+    else if (!wristPinned) setWrist(false);
+  });
+  const updateWrist = (dt: number) => {
+    if (state !== 'playing' && wristOpen) { wristPinned = false; setWrist(false); }
+    if (wristOpen && (wristTimer -= dt) <= 0) { wristTimer = 0.25; renderWrist(); }
+  };
+
+  // --- Unease leaks into the HUD: rare false readings (HUD distortion setting; never during real danger) -------
+  let falseTimer = 120 + Math.random() * 120;
+  const FALSE_READINGS = ['Life signs: 2', 'Motion detected \u00b7 behind', 'Signal lost', 'Hull integrity: \u2591\u2591\u2591', 'Proximity alert', 'Life signs: 0', 'Unknown transmission'];
+  const updateFalseReadings = (dt: number) => {
+    if (!settings.hudDistortion || state !== 'playing' || horror.level < 0.55) return;
+    if (survival.health < 40 || survival.cold) return; // the readouts that matter stay honest
+    if ((falseTimer -= dt * (0.5 + horror.level)) > 0) return;
+    falseTimer = 150 + Math.random() * 200;
+    flash(FALSE_READINGS[Math.floor(Math.random() * FALSE_READINGS.length)]);
+    if (!settings.reduceFlash) { // the health readout stutters for a beat
+      const el = $('hpv'), real = el.textContent;
+      showGroup(hpGroup, true); el.textContent = String(Math.floor(Math.random() * 99));
+      setTimeout(() => { el.textContent = real; }, 180);
+    }
+  };
+
   // --- Sounds the world makes on its own: fires, creatures, your body when it's in trouble ---------
   let fireTimer = 0, callTimer = 1, bodyTimer = 0, lastCallCaption = 0;
   const hurtEl = $('hurt');
@@ -1048,7 +1127,9 @@ async function main() {
   };
   const bearingTo = (p: THREE.Vector3) => Math.atan2(p.x - player.position.x, -(p.z - player.position.z)) * 180 / Math.PI;
   const updateCompass = () => {
-    const jitter = horror.glitch > 0 ? (Math.random() - 0.5) * 60 : 0; // the readout drifts when the core glitches
+    // The readout drifts when the core glitches, and slowly wanders as unease rises (HUD distortion setting).
+    const wander = settings.hudDistortion ? Math.sin(performance.now() * 0.0004) * Math.sin(performance.now() * 0.00023) * Math.max(0, horror.level - 0.3) * 40 : 0;
+    const jitter = (horror.glitch > 0 ? (Math.random() - 0.5) * 60 : 0) + wander;
     const heading = -player.yaw * 180 / Math.PI + jitter;
     TICKS.forEach(([d], i) => place(tickEls[i], d, heading));
     const wreck = tickEls[TICKS.length], fire = tickEls[TICKS.length + 1];
@@ -1084,7 +1165,11 @@ async function main() {
     timer.update();
     const dt = Math.min(timer.getDelta(), 0.05);
     const t0 = performance.now();
-    const simulating = state === 'playing' || state === 'dead';
+    // The crafting panel doesn't stop the world (unless the setting asks it to): the cold, the night and whatever is
+    // out there keep coming while you work.
+    const live = state === 'playing' || (state === 'craft' && !settings.pauseCraft);
+    updateWrist(dt);
+    const simulating = live || state === 'dead';
 
     let tm = performance.now();
     world.update(player.position);
@@ -1102,7 +1187,7 @@ async function main() {
 
       const wdt = resting ? dt * 6 : dt; // world time while resting
       sky.update(wdt, camera);
-      if (state === 'playing' && !player.frozen) {
+      if (live && !player.frozen) {
         survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40),
           ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor();
@@ -1158,7 +1243,7 @@ async function main() {
       updateLamp(dt, fireNearPlayer());
       horror.lampDir = lampOn && lamp.intensity > 1 ? camera.getWorldDirection(new THREE.Vector3()) : null;
       worldSounds(dt);
-      if (state === 'playing') {
+      if (live) {
         let fireNear = 0;
         for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
         const g = world.groundAt(camera.position.x, camera.position.z);
@@ -1244,6 +1329,7 @@ async function main() {
         if (crossEl.className !== cls) crossEl.className = cls;
       }
       updateVitals();
+      updateFalseReadings(0.1);
       if (hud.style.display !== 'none') {
         const p = player.position;
         hud.textContent =

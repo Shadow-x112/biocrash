@@ -172,11 +172,40 @@
         font: 600 11px var(--f-label); letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; }
       #craftfilter.on { border-color: var(--hud-accent); color: var(--hud-accent); }
       #prompt { font-family: var(--f-label); font-size: 15px; letter-spacing: 0.04em; }
+      #captions div { font-size: calc(15px * var(--cap, 1)); }
+      /* Item name over the hotbar for a moment after switching (as in Minecraft). */
+      #itemname { position: fixed; left: 50%; bottom: 104px; transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity 0.5s;
+        font: 600 15px var(--f-label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--hud-text); text-shadow: 0 1px 3px #000; zoom: var(--ui); }
+      #itemname.show { opacity: 1; transition: none; }
+      /* The wrist link: the suit's arm screen, raised with I (hold to peek, tap to pin). The world keeps running. */
+      #wrist { position: fixed; left: 16px; bottom: 16px; width: 330px; padding: 10px 14px 12px; pointer-events: none; zoom: var(--ui);
+        font: 13px/1.45 var(--f-mono); color: #bff3ea; background:
+          repeating-linear-gradient(0deg, rgba(95,211,196,0.05) 0 1px, transparent 1px 3px),
+          linear-gradient(180deg, rgba(6,22,22,0.94), rgba(3,10,12,0.94));
+        border: 1px solid rgba(95,211,196,0.45); box-shadow: 0 0 24px rgba(95,211,196,0.12), inset 0 0 18px rgba(95,211,196,0.08);
+        clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+        transform: translateY(40px) rotateX(18deg); transform-origin: bottom left; opacity: 0; transition: opacity 0.18s, transform 0.22s ease-out; contain: layout style; }
+      #wrist.open { opacity: 1; transform: none; }
+      #wrist .wr-h { font-size: 11px; letter-spacing: 0.14em; color: var(--hud-core); margin-bottom: 6px; display: flex; justify-content: space-between; }
+      #wrist .sec { margin-top: 8px; padding-top: 6px; border-top: 1px dashed rgba(95,211,196,0.25); }
+      #wrist .kv { display: flex; justify-content: space-between; gap: 8px; }
+      #wrist .kv b { color: #fff; font-weight: 400; }
+      #wrist .meter { height: 4px; background: rgba(95,211,196,0.12); margin: 2px 0 5px; }
+      #wrist .meter i { display: block; height: 100%; background: var(--hud-core); transform-origin: left; }
+      #wrist .meter.hp i { background: var(--hud-danger); } #wrist .meter.heat i { background: #e0a050; }
+      #wrist .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 8px; }
+      #wrist .grid span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+      #wrist .ico { width: 20px; height: 20px; }
+      #wrist .goal { color: #ffd27a; }
+      #vitals.under-wrist { opacity: 0; }
+      #dimmer { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.25s;
+        background: radial-gradient(ellipse at 30% 85%, rgba(0,0,0,0) 15%, rgba(0,0,0,0.45) 70%); }
+      #dimmer.on { opacity: 1; }
     </style>
   </head>
   <body>
     <div id="hud"></div>
-    <div id="frost"></div><div id="hurt"></div><div id="unease"></div><div id="static"></div>
+    <div id="dimmer"></div><div id="frost"></div><div id="hurt"></div><div id="unease"></div><div id="static"></div>
     <div id="vitals">
       <div id="hpgroup" class="vgroup"><div class="row"><span><img class="ico" src="icons/st_health.png" alt="">Health</span><span id="hpv"></span></div>
       <div class="bar" id="hp"><div></div></div></div>
@@ -191,6 +220,8 @@
     <div id="rest"><div>Resting by the fire&hellip;<div class="sub">The night passes faster. Any key to get up.</div></div></div>
     <div id="inv"></div>
     <div id="hotbar"></div>
+    <div id="itemname"></div>
+    <div id="wrist"><div class="wr-h">WRIST LINK · SUIT 07</div><div id="wristbody"></div></div>
     <div id="craft"><div class="panel"><h2>Crafting <button id="craftfilter" title="F: show only what you can craft now"></button></h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
     <div id="death"><div><div id="deathtext">You froze.</div><div id="deathhint"></div><div class="sub">Recovering at the crash site…</div></div></div>
     <div id="crosshair"></div><div id="hitmark"></div>
