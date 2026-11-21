@@ -15,9 +15,11 @@ export class Wreck {
   private t = 0;
 
   private placed = false;
+  /** Called once it's in place (clear whatever grew where it now lies). */
+  onSeated?: () => void;
   private pending: THREE.Mesh | null = null;
 
-  constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, renderer: THREE.WebGLRenderer, spawn: THREE.Vector3,
+  constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, renderer: THREE.WebGLRenderer, private spawn: THREE.Vector3,
     private ground: (x: number, z: number) => number | null) {
     // Beside the spawn, nose torn open and pointing away from it. It's seated once the ground under it exists.
     this.yaw = 0.55;
@@ -65,21 +67,42 @@ export class Wreck {
     return Math.abs(along) < HALF_LEN + margin && Math.abs(side) < HALF_WIDTH + margin;
   }
 
-  /** Seats the wreck on the real ground (physics rays), once the terrain colliders under it exist. */
+  /** Picks the flattest spot near the spawn (physics rays over each candidate footprint) and seats the wreck there,
+   *  once the terrain colliders exist. Rolled and pitched to the ground, a third of the hull below it. */
   private seat() {
-    const ax = Math.cos(this.yaw), az = -Math.sin(this.yaw);
-    const hTail = this.ground(this.center.x - ax * HALF_LEN, this.center.z - az * HALF_LEN);
-    const hNose = this.ground(this.center.x + ax * HALF_LEN, this.center.z + az * HALF_LEN);
-    const hMid = this.ground(this.center.x, this.center.z);
-    if (hTail === null || hNose === null || hMid === null || !this.pending) return;
-    this.center.y = Math.min(hMid, (hTail + hNose) / 2) + 0.5; // about a third of the hull below ground
-    const pitch = Math.atan2(hNose - hTail, HALF_LEN * 2) - 0.06; // follows the slope, nose dug in a little
+    if (!this.pending) return;
+    let best: { x: number; z: number; yaw: number; mean: number; pitch: number; roll: number; score: number } | null = null;
+    const sp = this.spawn;
+    for (const r of [9, 12, 15]) for (let k = 0; k < 12; k++) for (const yaw of [0.2, 0.95, 1.7, 2.45]) {
+      const a = k / 12 * Math.PI * 2, x = sp.x + Math.cos(a) * r, z = sp.z + Math.sin(a) * r;
+      const ax = Math.cos(yaw), az = -Math.sin(yaw), sx = -az, sz = ax;
+      const dsx = sp.x - x, dsz = sp.z - z; // keep the spawn point clear of the hull
+      if (Math.abs(dsx * ax + dsz * az) < HALF_LEN + 3 && Math.abs(dsx * sx + dsz * sz) < HALF_WIDTH + 3) continue;
+      const hs: number[] = [];
+      let sumAlong = 0, sumSide = 0, n = 0, ok = true;
+      for (const u of [-1, -0.5, 0, 0.5, 1]) for (const v of [-1, 0, 1]) {
+        const h = this.ground(x + ax * u * HALF_LEN + sx * v * HALF_WIDTH, z + az * u * HALF_LEN + sz * v * HALF_WIDTH);
+        if (h === null) { ok = false; break; }
+        hs.push(h); sumAlong += u * h; sumSide += v * h; n++;
+      }
+      if (!ok) { if (r === 9) return; continue; } // ground not built yet around the spawn: try again next frame
+      const mean = hs.reduce((p, q) => p + q, 0) / n;
+      const varc = hs.reduce((p, q) => p + (q - mean) ** 2, 0) / n;
+      // Least-squares tilt along and across the hull.
+      const gA = sumAlong / (n / 5 * (1 + 0.25 + 0 + 0.25 + 1)) / HALF_LEN, gS = sumSide / (n / 3 * 2) / HALF_WIDTH;
+      const score = varc + Math.abs(r - 11) * 0.02; // flattest, not too close or far
+      if (!best || score < best.score) best = { x, z, yaw, mean, pitch: Math.atan(gA), roll: Math.atan(gS), score };
+    }
+    if (!best) return;
+    this.yaw = best.yaw;
+    this.center.set(best.x, best.mean + 0.6, best.z);
     this.group.position.copy(this.center);
-    this.group.rotation.set(0.12, this.yaw, pitch, 'YXZ');
+    this.group.rotation.set(-best.roll * 0.9 + 0.08, this.yaw, best.pitch * 0.9 - 0.05, 'YXZ');
     this.group.updateMatrixWorld(true);
     this.collider(this.pending);
     this.group.visible = true;
     this.placed = true;
+    this.onSeated?.();
   }
 
   update(dt: number) {

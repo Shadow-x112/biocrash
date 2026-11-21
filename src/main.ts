@@ -183,6 +183,7 @@ async function main() {
   scene.add(props.group);
   const flora = new Flora(RAPIER, physics, spawnPoint);
   flora.blocked = (x, z) => wreck.covers(x, z, 3);
+  wreck.onSeated = () => { flora.clearBlocked(); props.clearBlocked(); };
   for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
   scene.add(flora.group);
   world.onChunkMesh = (key, _mesh, deco) => { props.onChunkMesh(key, deco); flora.onChunkMesh(key, deco); };

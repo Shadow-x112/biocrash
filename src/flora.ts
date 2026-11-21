@@ -235,6 +235,12 @@ export class Flora {
     this.bodies.release(s.slot);
   }
 
+  /** Removes mushrooms already grown on ground that's now blocked (the wreck settled after they loaded). */
+  clearBlocked() {
+    if (!this.blocked) return;
+    for (const c of this.chunks.values()) for (const s of c.shrooms) if (s.alive && this.blocked(s.base.x, s.base.z)) this.removeShroom(s);
+  }
+
   /** After digging or filling: mushrooms and sprouts whose ground changed are removed (with their colliders). */
   private applyValidity(c: ChunkFlora, deco: DecoData) {
     for (const s of c.shrooms) if (s.alive && !deco[s.kind][s.source * STRIDE + 8]) this.removeShroom(s);

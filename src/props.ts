@@ -15,7 +15,7 @@ interface PropKind {
 
 interface ChunkProps {
   /** Live instances: pool slot and prop id per kind. */
-  slots: { kind: PropKind; slot: number; id: string; source: number }[];
+  slots: { kind: PropKind; slot: number; id: string; source: number; x: number; z: number }[];
 }
 
 function fiberGeometry() {
@@ -133,7 +133,7 @@ export class Props {
         this.p.set(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, kind.yOffset * sc);
         this.m.compose(this.p, this.q, this.s.setScalar(sc));
         const slot = pool.alloc(this.m);
-        c.slots.push({ kind, slot, id, source: i });
+        c.slots.push({ kind, slot, id, source: i, x: d[o], z: d[o + 2] });
       }
     }
     this.chunks.set(key, c);
@@ -146,6 +146,16 @@ export class Props {
   private rebuildOwners() {
     this.owners.clear();
     for (const [key, c] of this.chunks) for (const e of c.slots) this.ownerMap(e.kind).set(e.slot, { key, id: e.id });
+  }
+
+  /** Removes props already placed on ground that's now blocked (the wreck settled after they loaded). */
+  clearBlocked() {
+    if (!this.blocked) return;
+    for (const c of this.chunks.values()) c.slots = c.slots.filter((e) => {
+      if (!this.blocked!(e.x, e.z)) return true;
+      this.releaseSlot(e.kind, e.slot);
+      return false;
+    });
   }
 
   /** After digging or filling: props whose ground changed disappear (not marked as picked). */
