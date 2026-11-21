@@ -104,7 +104,8 @@ async function main() {
     post.setSize(innerWidth, innerHeight);
   });
   // Wrist lamp: the AI core's emergency light. A narrow cone, no shadows, on a charge that refills at fires and in daylight.
-  const lamp = new THREE.SpotLight(0xdff4ff, 0, 32, 0.42, 0.55, 1.2);
+  // The wrist lamp: wide and strong (the nights here are black).
+  const lamp = new THREE.SpotLight(0xdff4ff, 0, 42, 0.5, 0.6, 1.1);
   lamp.position.set(0.15, -0.12, 0);
   lamp.target.position.set(0, -0.05, -1);
   camera.add(lamp, lamp.target);
@@ -697,13 +698,13 @@ async function main() {
     for (const f of campfires.list) if (f.lit) n = Math.max(n, 1 - f.position.distanceTo(player.position) / 12);
     return n;
   };
-  /** Drains in 2.5 minutes, so trips away from the fire need planning; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
+  /** Drains in 5 minutes, so trips away from the fire need planning; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
   const updateLamp = (dt: number, fireNear: number) => {
-    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 150)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
+    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 300)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
     else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0));
     let k = lampOn ? 1 : 0;
     if (lampOn && !settings.reduceFlash && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
-    lamp.intensity = 18 * k * (lampCharge < 15 ? 0.6 : 1);
+    lamp.intensity = 34 * k * (lampCharge < 15 ? 0.6 : 1);
   };
 
   /** Q: cook raw meat on the fire you're looking at, otherwise eat cooked meat. */
@@ -853,12 +854,14 @@ async function main() {
     const col = hit.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
     if (!fill) {
       world.brush(hit.point, power.radius, power.strength, -1);
+      wreck.clearDebrisNear(hit.point, power.radius);
       audio.dig(hit.point, hotbar.slot === 'stone_pick');
       particles.burst(hit.point, hotbar.slot === 'stone_pick' ? 12 : 8, col, { up: hit.normal.clone(), speed: 3 });
     } else {
       const p = hit.point.clone().addScaledVector(hit.normal, 0.6);
       if (p.distanceTo(player.position) < power.radius + 0.9) return; // don't bury yourself
       world.brush(p, power.radius, power.strength, +1);
+      wreck.clearDebrisNear(p, power.radius);
       audio.fill(p);
       particles.burst(p, 5, col, { speed: 1.5, life: 0.5 });
     }

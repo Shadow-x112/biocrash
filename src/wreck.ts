@@ -109,6 +109,11 @@ export class Wreck {
     void this.scatterDebris();
   }
 
+  /** Digging or filling under a hull plate: it goes (it would float, or sink into the fill). */
+  clearDebrisNear(p: THREE.Vector3, r: number) {
+    for (const d of [...this.debris.children]) if (d.position.distanceTo(p) < r + 0.8) this.debris.remove(d);
+  }
+
   private async scatterDebris() {
     const m = await loadProps();
     const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean);
