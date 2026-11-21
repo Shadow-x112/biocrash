@@ -179,6 +179,58 @@ export function addPulse(mat: THREE.Material, time: { value: number }, speed = 1
   mat.needsUpdate = true;
 }
 
+/**
+ * Wind for small plants (chains with other patches): the blade bends from its root, most at the tip, pushed by gusts
+ * that roll across the ground in one direction, with a quick per-instance flutter on top. Height is the local
+ * height of the plant's tip (before instance scale).
+ */
+export function addWind(mat: THREE.Material, time: { value: number }, amp: number, height: number) {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
+    sh.uniforms.uWindT = time;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindT;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        {
+          vec3 wb = vec3(0.0);
+          #ifdef USE_INSTANCING
+            wb = instanceMatrix[3].xyz;
+          #endif
+          wb = (modelMatrix * vec4(wb, 1.0)).xyz;
+          vec2 wd = normalize(vec2(1.0, 0.35));
+          float gust = 0.5 + 0.5 * sin(dot(wb.xz, wd) * 0.22 - uWindT * 1.5);
+          gust *= 0.6 + 0.4 * sin(uWindT * 0.37 + wb.x * 0.05 + wb.z * 0.03);
+          float ph = fract(sin(dot(wb.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.283;
+          float bend = clamp(transformed.y / ${height.toFixed(3)}, 0.0, 1.0); bend *= bend;
+          vec2 flutter = vec2(sin(uWindT * 3.1 + ph + transformed.x * 23.0), cos(uWindT * 2.7 + ph * 1.7 + transformed.z * 19.0)) * 0.3;
+          vec2 push = (wd * (0.25 + gust) + flutter) * ${amp.toFixed(3)} * bend;
+          vec3 sway = vec3(push.x, -dot(push, push) * 0.5, push.y); // tips dip a little as they lean
+          mvPosition.xyz += (viewMatrix * vec4(sway, 0.0)).xyz;
+          gl_Position = projectionMatrix * mvPosition;
+        }`);
+  };
+  mat.customProgramCacheKey = () => prevKey() + `|wind${amp}:${height}`;
+  mat.needsUpdate = true;
+}
+
+/**
+ * Distance fade for small props (chains): a screen-space dither dissolves them between near and far metres, so they
+ * melt in and out at the edge of view instead of popping with the terrain chunks.
+ */
+export function addFade(mat: THREE.Material, near: number, far: number) {
+  const prev = mat.onBeforeCompile, prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev.call(mat, sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+      { float fd = smoothstep(${near.toFixed(1)}, ${far.toFixed(1)}, length(vViewPosition));
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        if (fd > ign) discard; }`);
+  };
+  mat.customProgramCacheKey = () => prevKey() + `|fade${near}:${far}`;
+  mat.needsUpdate = true;
+}
+
 /** Soft dark contact patch drawn on the ground under props (a radial alpha gradient). */
 let splatTex: THREE.Texture | null = null;
 export function splatMaterial() {

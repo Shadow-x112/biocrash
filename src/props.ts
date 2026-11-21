@@ -57,7 +57,11 @@ const KINDS: PropKind[] = [
 ];
 
 import { InstancePool } from './pool';
-import { addDetail, addGrounding, splatMaterial } from './assets';
+import { addDetail, addFade, addGrounding, addWind, splatMaterial } from './assets';
+import { fxUniforms } from './fx';
+
+/** Local height of a model's top (wind bends from 0 to here). */
+function tipHeight(g: THREE.BufferGeometry) { g.computeBoundingBox(); return Math.max(0.05, g.boundingBox!.max.y); }
 
 /** Contact patch size per kind (x, z in the prop's ground frame, times its scale). */
 const SPLAT: Record<string, [number, number]> = { stone: [0.62, 0.62], stalkwood: [0.42, 1.55], fiber: [0.5, 0.5] };
@@ -108,7 +112,8 @@ export class Props {
       const kind = KINDS.find((k) => k.id === id)!, mat = m.material.clone();
       if (id === 'stone') addDetail(mat, { scale: 2.2, normal: 0.85, moss: 0.9, wet: 0.2, macro: 0.75 });
       if (id === 'stalkwood') addDetail(mat, { scale: 3.0, normal: 0.8, moss: 0.55, wet: 0.25, macro: 0.7 });
-      if (id === 'fiber') addDetail(mat, { scale: 4.0, normal: 0.2, macro: 0.8, rough: 0.3 });
+      if (id === 'fiber') { addDetail(mat, { scale: 4.0, normal: 0.2, macro: 0.8, rough: 0.3 }); addWind(mat, fxUniforms.uFxTime, 0.16, tipHeight(m.geometry)); }
+      if (id !== 'stalkwood') addFade(mat, 55, 75); // small things dissolve at range instead of popping
       addGrounding(mat, kind.yOffset + (kind.lying ? 0.03 : 0.02), id === 'fiber' ? 0.22 : 0.16, id === 'fiber' ? 0.5 : 0.62);
       pool.setLook(m.geometry, mat);
       pool.mesh.castShadow = id === 'stalkwood'; // stones and tufts are too small for the shadow map; AO grounds them
