@@ -36,20 +36,35 @@ class Campfire {
   /** Light jitter, so lit surfaces crawl. */
   readonly jitter = new THREE.Vector3();
 
-  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material> }) {
+  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material>; scrap?: { geometry: THREE.BufferGeometry; material: THREE.Material } }) {
     this.group.position.copy(position);
     // The stone ring and log pile are pre-merged (shared by every fire): 2 draw calls instead of 11.
-    this.group.add(new THREE.Mesh(parts.ring, parts.mats.stone), new THREE.Mesh(parts.logs, parts.mats.log));
+    this.ringMesh = new THREE.Mesh(parts.ring, parts.mats.stone);
+    this.logMesh = new THREE.Mesh(parts.logs, parts.mats.log);
+    this.group.add(this.ringMesh, this.logMesh);
+    if (parts.scrap) this.setScrap(parts.scrap);
     this.flame = new THREE.Mesh(parts.flame, parts.mats.flame);
-    this.flame.position.y = 0.45;
+    this.flame.position.y = 0.12;
     this.inner = new THREE.Mesh(parts.flame, parts.mats.flameCore);
-    this.inner.position.y = 0.38;
+    this.inner.position.y = 0.1;
     this.inner.scale.setScalar(0.55);
     this.meat = new THREE.Mesh(parts.meat, parts.mats.meat.clone());
     this.meat.position.y = 0.95;
     this.meat.visible = false;
     this.group.add(this.flame, this.inner, this.meat);
     this.heat = { position: position.clone().add(new THREE.Vector3(0, 0.6, 0)), radius: HEAT_RADIUS, heatC: 0 };
+  }
+
+  readonly ringMesh: THREE.Mesh;
+  readonly logMesh: THREE.Mesh;
+  private scrapMesh: THREE.Mesh | null = null;
+  /** The scrap-metal windbreak (part of the Blender-built look). */
+  setScrap(s: { geometry: THREE.BufferGeometry; material: THREE.Material }) {
+    if (this.scrapMesh) return;
+    this.scrapMesh = new THREE.Mesh(s.geometry, s.material);
+    this.scrapMesh.rotation.y = Math.random() * Math.PI * 2;
+    this.scrapMesh.castShadow = true;
+    this.group.add(this.scrapMesh);
   }
 
   get lit() { return this.fuel > 0; }
@@ -91,6 +106,38 @@ class Campfire {
   }
 }
 
+/** Flames: three crossed planes (they read from every side) with a scrolling-noise fire shader. */
+function flameGeometry() {
+  const parts = [0, 1, 2].map((i) => new THREE.PlaneGeometry(0.62, 1.0, 1, 1).translate(0, 0.42, 0).rotateY(i * Math.PI / 3));
+  return mergeGeometries(parts);
+}
+export const flameTime = { value: 0 };
+function flameMaterial(hot: THREE.Color, edge: THREE.Color, speed: number) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uTime: flameTime, uHot: { value: hot }, uEdge: { value: edge }, uSpeed: { value: speed } },
+    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `
+      uniform float uTime, uSpeed; uniform vec3 uHot, uEdge; varying vec2 vUv;
+      float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float n(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
+      float fbm(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * n(p); p *= 2.03; a *= 0.5; } return s; }
+      void main() {
+        vec2 uv = vUv; float t = uTime * uSpeed;
+        // Teardrop: wide at the base, licking to a point; the noise eats into the edges and rises.
+        float x = (uv.x - 0.5) * 2.0;
+        float width = mix(0.85, 0.05, pow(uv.y, 0.8));
+        float body = 1.0 - smoothstep(width * 0.55, width, abs(x + (fbm(vec2(uv.y * 3.0, t * 1.3)) - 0.5) * 0.35 * uv.y));
+        float lick = fbm(vec2(x * 2.2, uv.y * 3.2 - t * 2.4));
+        float a = body * smoothstep(0.0, 0.08, uv.y) * (1.0 - smoothstep(0.55, 1.0, uv.y + (lick - 0.5) * 0.6));
+        a *= 0.55 + lick * 0.9;
+        vec3 c = mix(uEdge, uHot, smoothstep(0.25, 0.85, a));
+        gl_FragColor = vec4(c * a, a);
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+}
+
 /** Eight stones in a ring, baked into one geometry. */
 function ringGeometry() {
   const stone = new THREE.DodecahedronGeometry(0.16, 0), m = new THREE.Object3D(), parts: THREE.BufferGeometry[] = [];
@@ -121,20 +168,34 @@ export class Campfires {
   readonly group = new THREE.Group();
   readonly list: Campfire[] = [];
   private lights: THREE.PointLight[] = [];
-  private parts = {
+  private parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material>; scrap?: { geometry: THREE.BufferGeometry; material: THREE.Material } } = {
     ring: ringGeometry(),
     logs: logsGeometry(),
-    flame: new THREE.ConeGeometry(0.28, 0.9, 7, 1, true).translate(0, 0.1, 0),
+    flame: flameGeometry(),
     meat: new THREE.DodecahedronGeometry(0.13, 0).scale(1.3, 0.8, 1),
     mats: {
       stone: new THREE.MeshStandardMaterial({ color: 0x7c776f, roughness: 1, flatShading: true }),
       meat: new THREE.MeshStandardMaterial({ color: 0xbf5249, roughness: 0.7, flatShading: true }),
       log: new THREE.MeshStandardMaterial({ color: 0x5a4636, roughness: 1, flatShading: true }),
       // Brighter than white on purpose (HDR): the bloom pass picks the flames out.
-      flame: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.9, 0.28), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-      flameCore: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 1.9, 0.8), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      flame: flameMaterial(new THREE.Color(2.4, 0.85, 0.22), new THREE.Color(0.9, 0.12, 0.02), 1.0),
+      flameCore: flameMaterial(new THREE.Color(3.0, 2.2, 1.0), new THREE.Color(2.2, 0.8, 0.2), 1.6),
     } as Record<string, THREE.Material>,
   };
+
+  /** Use the Blender-built fire (dark stone ring, scrap windbreak, broken fungal wood) once loaded, for every fire. */
+  setLooks(meshes: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
+    const st = meshes.Campfire_Stones, wd = meshes.Campfire_Wood, sc = meshes.Campfire_Scrap;
+    if (!st || !wd) return;
+    this.parts.ring = st.geometry; this.parts.mats.stone = st.material;
+    this.parts.logs = wd.geometry; this.parts.mats.log = wd.material;
+    if (sc) this.parts.scrap = sc;
+    for (const f of this.list) {
+      f.ringMesh.geometry = st.geometry; f.ringMesh.material = st.material;
+      f.logMesh.geometry = wd.geometry; f.logMesh.material = wd.material;
+      if (sc) f.setScrap(sc);
+    }
+  }
 
   constructor(private heatSources: HeatSource[]) {
     // A fixed pool of lights, handed to the nearest fires, so adding fires never forces shader recompiles.
@@ -196,6 +257,7 @@ export class Campfires {
   onCooked: (f: Campfire) => void = () => {};
 
   update(dt: number, viewer: THREE.Vector3) {
+    flameTime.value += dt;
     const strengths = this.list.map((f) => f.update(dt, () => this.onCooked(f)));
     const lit = this.list.map((f, i) => ({ f, s: strengths[i], d: f.position.distanceToSquared(viewer) }))
       .filter((x) => x.s > 0).sort((a, b) => a.d - b.d);

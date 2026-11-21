@@ -84,6 +84,16 @@ export class Props {
     }));
   }
 
+  /** Use the Blender-built models once loaded. */
+  setLooks(meshes: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
+    const map: Record<string, string> = { stone: 'Stone', stalkwood: 'Stalkwood', fiber: 'Fiber' };
+    for (const [id, name] of Object.entries(map)) {
+      const m = meshes[name], pool = this.pools.get(id as PropKind['id']);
+      if (m && pool) { pool.setLook(m.geometry, m.material); pool.mesh.castShadow = id !== 'fiber'; }
+    }
+    this.rebuildOwners();
+  }
+
   /** Called by the world whenever a chunk gets new data. */
   onChunkMesh(key: string, deco: DecoData) {
     const existing = this.chunks.get(key);

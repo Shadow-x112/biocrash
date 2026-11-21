@@ -76,6 +76,13 @@ export class InstancePool {
     this.dirtyBounds = true;
   }
 
+  /** Swap the shape and material (when a better model finishes loading); every instance keeps its place. */
+  setLook(geometry: THREE.BufferGeometry, material: THREE.Material) {
+    this.geometry = geometry; this.material = material;
+    this.mesh.geometry = geometry; this.mesh.material = material;
+    this.dirtyBounds = true;
+  }
+
   /** Per-instance values for the extra attribute. */
   setExtra(i: number, ...v: number[]) {
     const a = this.geometry.getAttribute(this.extra!.name) as THREE.InstancedBufferAttribute;

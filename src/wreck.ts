@@ -4,11 +4,14 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type RAPIER from '@dimforge/rapier3d';
+import { loadProps } from './assets';
 
 const HALF_LEN = 8.6, HALF_WIDTH = 3.6;
 
 export class Wreck {
   readonly group = new THREE.Group();
+  /** Torn hull plates strewn around the crash (world space, not part of the tilted wreck). */
+  readonly debris = new THREE.Group();
   readonly center = new THREE.Vector3();
   private yaw: number;
   private beacons: THREE.PointLight[] = [];
@@ -103,6 +106,29 @@ export class Wreck {
     this.group.visible = true;
     this.placed = true;
     this.onSeated?.();
+    void this.scatterDebris();
+  }
+
+  private async scatterDebris() {
+    const m = await loadProps();
+    const kinds = ['Debris_1', 'Debris_2', 'Debris_3'].map((n) => m[n]).filter(Boolean);
+    if (!kinds.length) return;
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 22; i++) {
+      const a = rnd() * Math.PI * 2, d = 4 + rnd() * 14;
+      const x = this.center.x + Math.cos(a) * d * 1.3, z = this.center.z + Math.sin(a) * d;
+      if (this.covers(x, z, 0.3)) continue;
+      const h = this.ground(x, z);
+      if (h === null) continue;
+      const k = kinds[i % kinds.length];
+      const piece = new THREE.Mesh(k.geometry, k.material);
+      piece.position.set(x, h + 0.03, z);
+      piece.rotation.set((rnd() - 0.5) * 0.5, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.5, 'YXZ');
+      piece.scale.setScalar(0.7 + rnd() * 0.7);
+      piece.castShadow = piece.receiveShadow = true;
+      this.debris.add(piece);
+    }
   }
 
   update(dt: number) {

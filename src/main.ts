@@ -13,6 +13,7 @@ import { RECIPES } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, type Creature } from './creatures';
 import { Wreck } from './wreck';
+import { loadProps, propGlow } from './assets';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Packs } from './packs';
@@ -176,7 +177,7 @@ async function main() {
     const hit = world.raycast(groundRay.set(x, spawnPoint.y + 40, z), down, 120);
     return hit ? hit.point.y : null;
   });
-  scene.add(wreck.group);
+  scene.add(wreck.group, wreck.debris);
   const props = new Props();
   props.blocked = (x, z) => wreck.covers(x, z);
   for (const id of meta?.picked ?? []) props.picked.add(id);
@@ -184,6 +185,8 @@ async function main() {
   const flora = new Flora(RAPIER, physics, spawnPoint);
   flora.blocked = (x, z) => wreck.covers(x, z, 3);
   wreck.onSeated = () => { flora.clearBlocked(); props.clearBlocked(); };
+  // The Blender-built props replace the placeholder shapes as soon as they load.
+  void loadProps().then((m) => { props.setLooks(m); flora.setLooks(m); campfires.setLooks(m); packs.setLook(m.Pack); });
   for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
   scene.add(flora.group);
   world.onChunkMesh = (key, _mesh, deco) => { props.onChunkMesh(key, deco); flora.onChunkMesh(key, deco); };
@@ -1100,6 +1103,7 @@ async function main() {
       packs.update(dt);
       flora.update(wdt, camera.position, sky.night);
       wreck.update(wdt);
+      propGlow.value = 0.35 + sky.night * 0.75;
       const simDt = hitStop > 0 ? dt * 0.05 : dt;
       hitStop = Math.max(0, hitStop - dt);
       for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }

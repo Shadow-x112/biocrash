@@ -21,7 +21,7 @@ interface Shroom {
 }
 interface ChunkFlora {
   shrooms: Shroom[];
-  sprouts: { slot: number; source: number }[];
+  sprouts: { slot: number; source: number; bulb: boolean }[];
 }
 
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
@@ -197,6 +197,7 @@ export class Flora {
   private chunks = new Map<string, ChunkFlora>();
   private bodies: InstancePool;
   private sprouts: InstancePool;
+  private bulbs: InstancePool;
   private spores: THREE.Points;
   private sporeVel: Float32Array;
   // Scratch objects for look-ups (no per-call allocation).
@@ -209,6 +210,7 @@ export class Flora {
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, private avoid: THREE.Vector3) {
     this.bodies = new InstancePool(bodyGeo, BODY, this.group, 1024, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
     this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
+    this.bulbs = new InstancePool(sproutGeo, SPROUT, this.group, 1024);
     const n = 260;
     const pos = new Float32Array(n * 3);
     this.sporeVel = new Float32Array(n * 3);
@@ -235,7 +237,7 @@ export class Flora {
     const c = this.chunks.get(key);
     if (!c) return;
     for (const s of c.shrooms) this.removeShroom(s);
-    for (const sp of c.sprouts) this.sprouts.release(sp.slot);
+    for (const sp of c.sprouts) (sp.bulb ? this.bulbs : this.sprouts).release(sp.slot);
     this.chunks.delete(key);
   }
 
@@ -278,8 +280,10 @@ export class Flora {
     for (let i = 0; i < sd.length / STRIDE; i++) {
       const o = i * STRIDE;
       if (!sd[o + 8]) continue;
-      m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(0.6 + sd[o + 4] * 0.9));
-      c.sprouts.push({ slot: this.sprouts.alloc(m), source: i });
+      // One in nine is a cluster of glowing bulbs instead of a single sprout.
+      const bulb = i % 9 === 0;
+      m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(bulb ? 1.2 + sd[o + 4] * 1.6 : 0.6 + sd[o + 4] * 0.9));
+      c.sprouts.push({ slot: (bulb ? this.bulbs : this.sprouts).alloc(m), source: i, bulb });
     }
     this.chunks.set(key, c);
   }
@@ -289,6 +293,12 @@ export class Flora {
     s.alive = false;
     this.clearBody(s);
     this.bodies.release(s.slot);
+  }
+
+  /** Use the Blender-built sprout and bulb models once loaded. */
+  setLooks(meshes: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
+    if (meshes.Sprout) this.sprouts.setLook(meshes.Sprout.geometry, meshes.Sprout.material);
+    if (meshes.Bulbs) this.bulbs.setLook(meshes.Bulbs.geometry, meshes.Bulbs.material);
   }
 
   /** Removes mushrooms already grown on ground that's now blocked (the wreck settled after they loaded). */
@@ -302,7 +312,7 @@ export class Flora {
     for (const s of c.shrooms) if (s.alive && !deco[s.kind][s.source * STRIDE + 8]) this.removeShroom(s);
     c.sprouts = c.sprouts.filter((sp) => {
       if (deco.sprout[sp.source * STRIDE + 8]) return true;
-      this.sprouts.release(sp.slot);
+      (sp.bulb ? this.bulbs : this.sprouts).release(sp.slot);
       return false;
     });
   }
