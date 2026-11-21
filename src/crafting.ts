@@ -12,6 +12,8 @@ export interface Recipe {
   needs?: ItemId[];
   /** One is all you'll ever need (gear). */
   unique?: boolean;
+  /** Built in the world rather than carried: crafting starts placement, the cost is paid when it's placed. */
+  place?: boolean;
   /** Needs a lit fire close by (curing hide, hardening chitin): night work at the camp. */
   heat?: boolean;
   blurb: string;
@@ -35,6 +37,8 @@ export const RECIPES: Recipe[] = [
     blurb: 'A woven sack for the belt: 4 more carry slots.' },
   { id: 'hide_pack', makes: 'hide_pack', amount: 1, unique: true, cost: { hide: 3, cordage: 3, bone: 1 }, needs: ['bone_needle'],
     blurb: 'A stitched hide backpack with a bone frame: 4 more carry slots.' },
+  { id: 'crate', makes: 'crate', amount: 1, place: true, cost: { stalkwood: 6, cordage: 3, stone: 2 },
+    blurb: 'Lashed stalkwood under a hull-plate lid: 16 slots of storage at camp, and meat keeps twice as long.' },
 ];
 
 /** A recipe is learned once you have held every one of its parts (and the tools it needs). */

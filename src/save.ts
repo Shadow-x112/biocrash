@@ -3,6 +3,7 @@
 // imports are fully validated before anything is replaced, and reset/import suppress further saves.
 import { CHUNK, GEN_VERSION, SAVE_VERSION } from './config';
 import type { CampfireSave } from './campfire';
+import type { CrateSave } from './crate';
 
 export interface SaveMeta {
   saveVersion: number;
@@ -36,6 +37,8 @@ export interface SaveMeta {
   fresh?: Record<string, number[]>;
   /** Items ever held (recipe discovery). Missing on older saves, which then know every recipe. */
   seen?: string[];
+  /** Storage crates built at camp, with what's in them. */
+  crates?: CrateSave[];
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -126,6 +129,20 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     out.fresh = {};
     for (const [k, a] of Object.entries(m.fresh as Record<string, unknown>))
       if (Array.isArray(a)) out.fresh[k.slice(0, 32)] = a.map((x) => num(x, 0, 1e6)).filter((x): x is number => x !== undefined).slice(0, 1000);
+  }
+  if (Array.isArray(m.crates)) {
+    out.crates = [];
+    for (const c of m.crates as Record<string, unknown>[]) {
+      if (!c || typeof c !== 'object') continue;
+      const [x, y, z] = [num(c.x, -1e6, 1e6), num(c.y, -1e4, 1e4), num(c.z, -1e6, 1e6)];
+      const items: Record<string, number> = {};
+      if (c.items && typeof c.items === 'object') for (const [k, n] of Object.entries(c.items as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v) items[k.slice(0, 32)] = Math.floor(v); }
+      const fresh: Record<string, number[]> = {};
+      if (c.fresh && typeof c.fresh === 'object') for (const [k, a] of Object.entries(c.fresh as Record<string, unknown>))
+        if (Array.isArray(a)) fresh[k.slice(0, 32)] = a.map((v) => num(v, 0, 1e6)).filter((v): v is number => v !== undefined).slice(0, 500);
+      if (x !== undefined && y !== undefined && z !== undefined) out.crates.push({ x, y, z, rot: num(c.rot, -10, 10) ?? 0, items, fresh });
+    }
+    out.crates = out.crates.slice(0, 60);
   }
   if (Array.isArray(m.seen)) out.seen = m.seen.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 100);
   const step = num(m.tutorialStep, 0, 1000);

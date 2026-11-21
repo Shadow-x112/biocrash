@@ -138,6 +138,26 @@
       #inv .row.head.laden { color: #e8c37a; } #inv .row.head.heavy { color: #f0a050; } #inv .row.head.overloaded { color: #ff6a50; }
       #inv .row.head.full span:first-child { color: #ff8a5a; }
       #inv .row.stale { color: #c9b26a; } #inv .row.stale span:last-child::after { content: ' !'; color: #ff8a5a; }
+      #craft .panel:has(#storeview:not([hidden])) { width: 620px; }
+      .stcols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .stcol { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: #10141a; border: 1px solid #262d36; }
+      .sth { display: flex; justify-content: space-between; font: 600 12px var(--f-label); letter-spacing: 0.06em; text-transform: uppercase; color: #9fb3c2; }
+      .sth .load { font-family: var(--f-mono); letter-spacing: 0; text-transform: none; }
+      .sth .load.laden { color: #e8c37a; } .sth .load.heavy { color: #f0a050; } .sth .load.overloaded { color: #ff6a50; }
+      .stgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; min-height: 120px; align-content: start; }
+      .stgrid .cell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px 4px; background: #1a2029; border: 1px solid #2c3540; color: #e8edf2; cursor: pointer; font: 11px var(--f-body); }
+      .stgrid .cell:hover { border-color: #5fd4c0; background: #1e2833; }
+      .stgrid .cell .ico { width: 32px; height: 32px; image-rendering: pixelated; }
+      .stgrid .cell b { position: absolute; top: 3px; right: 5px; font: 600 11px var(--f-mono); }
+      .stgrid .cell i { font-style: normal; color: #8a96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      .stgrid .cell.stale { border-color: #8a6a2a; } .stgrid .cell.stale b { color: #ffb060; }
+      .stempty { grid-column: 1 / -1; color: #5d6a77; font-size: 12px; padding: 30px 0; text-align: center; }
+      .stall, .stdis { padding: 7px 10px; border: 0; background: #2b3440; color: #dfe6ec; cursor: pointer; font: 600 12px var(--f-body); }
+      .stall:hover { background: #e07a2f; color: #111; }
+      .stfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+      .stdis:disabled { opacity: 0.4; cursor: default; }
+      .stfoot .hint { font-size: 12px; color: #6f7d8a; }
+      #storemsg { min-height: 18px; margin-top: 6px; font-size: 12px; color: #ffb060; }
       .recipe.unknown { opacity: 0.55; } .recipe.unknown .rname { color: #8a96a3; font-style: italic; }
       .recipe .ico.q { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px dashed #4a5662; border-radius: 4px; font: 700 13px var(--f-mono); color: #6f7d8a; font-style: normal; margin-right: 6px; }
       #craftinv .load { font-family: var(--f-mono); color: #8fa3b3; } #craftinv .load.laden { color: #e8c37a; } #craftinv .load.heavy { color: #f0a050; } #craftinv .load.overloaded { color: #ff6a50; }
@@ -229,7 +249,7 @@
     <div id="hotbar"></div>
     <div id="itemname"></div>
     <div id="wrist"><div class="wr-h">WRIST LINK · SUIT 07</div><div id="wristbody"></div></div>
-    <div id="craft"><div class="panel"><h2>Crafting <button id="craftfilter" title="F: show only what you can craft now"></button></h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
+    <div id="craft"><div class="panel"><div id="craftview"><h2>Crafting <button id="craftfilter" title="F: show only what you can craft now"></button></h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div><div id="storeview" hidden></div></div></div>
     <div id="death"><div><div id="deathtext">You froze.</div><div id="deathhint"></div><div class="sub">Recovering at the crash site…</div></div></div>
     <div id="crosshair"></div><div id="hitmark"></div>
     <div id="compass"></div>

@@ -1,6 +1,8 @@
 // Carried resources and tools. Materials fill carry slots (stacks), everything has weight, and meat goes off.
 export type ItemId = 'stone' | 'stalkwood' | 'fiber' | 'cordage' | 'chitin' | 'hide' | 'bone' | 'raw_meat' | 'cooked_meat'
-  | 'stone_pick' | 'stone_knife' | 'spear' | 'bone_needle' | 'hide_wrap' | 'chitin_spearhead' | 'fiber_pouch' | 'hide_pack';
+  | 'stone_pick' | 'stone_knife' | 'spear' | 'bone_needle' | 'hide_wrap' | 'chitin_spearhead' | 'fiber_pouch' | 'hide_pack'
+  /** Placed, never carried: crafting it starts placement. */
+  | 'crate';
 export type Cost = Partial<Record<ItemId, number>>;
 
 export const ITEM_NAMES: Record<ItemId, string> = {
@@ -18,6 +20,7 @@ export const ITEM_NAMES: Record<ItemId, string> = {
   chitin_spearhead: 'Chitin spearhead',
   fiber_pouch: 'Fiber pouch',
   hide_pack: 'Hide pack',
+  crate: 'Storage crate',
   stone_pick: 'Stone pick',
   stone_knife: 'Stone knife',
   spear: 'Spear',
@@ -57,15 +60,17 @@ export const LOAD_BANDS = [
 export class Inventory {
   readonly counts: Record<ItemId, number> = {
     stone: 0, stalkwood: 0, fiber: 0, cordage: 0, chitin: 0, hide: 0, bone: 0, raw_meat: 0, cooked_meat: 0,
-    stone_pick: 0, stone_knife: 0, spear: 0, bone_needle: 0, hide_wrap: 0, chitin_spearhead: 0, fiber_pouch: 0, hide_pack: 0,
+    stone_pick: 0, stone_knife: 0, spear: 0, bone_needle: 0, hide_wrap: 0, chitin_spearhead: 0, fiber_pouch: 0, hide_pack: 0, crate: 0,
   };
   /** Age in seconds of each carried piece of meat, oldest first. Always as long as the count. */
   readonly ages: Record<Perishable, number[]> = { raw_meat: [], cooked_meat: [] };
   /** Everything you have ever held: recipes unlock once you've held all their parts. */
   readonly seen = new Set<ItemId>();
   onChange: () => void = () => {};
+  /** `base` carry slots before bags (a crate has more and takes no bags). */
+  constructor(readonly base = BASE_SLOTS) {}
 
-  slots() { return BASE_SLOTS + GEAR.reduce((s, k) => s + (this.counts[k] > 0 ? BAG_SLOTS[k] ?? 0 : 0), 0); }
+  slots() { return this.base + GEAR.reduce((s, k) => s + (this.counts[k] > 0 ? BAG_SLOTS[k] ?? 0 : 0), 0); }
   usedSlots() { return MATERIALS.reduce((s, k) => s + Math.ceil(this.counts[k] / (STACK[k] ?? 1)), 0); }
   weight() { return (Object.keys(this.counts) as ItemId[]).reduce((s, k) => s + this.counts[k] * (WEIGHT[k] ?? 0), 0); }
   load_() { const kg = this.weight(); let b: (typeof LOAD_BANDS)[number] = LOAD_BANDS[0]; for (const x of LOAD_BANDS) if (kg >= x.kg) b = x; return b; }
@@ -115,6 +120,19 @@ export class Inventory {
     }
     if (spoiled.length) this.onChange();
     return spoiled;
+  }
+
+  /** Moves up to `n` of `id` into `to` (as many as fit there), keeping meat ages. Returns how many moved. */
+  moveTo(to: Inventory, id: ItemId, n: number) {
+    const k = Math.min(n, this.counts[id], to.room(id));
+    if (k <= 0) return 0;
+    const ages = id in this.ages ? this.ages[id as Perishable].slice(0, k) : [];
+    this.counts[id] -= k;
+    if (id in this.ages) this.ages[id as Perishable].splice(0, k);
+    to.counts[id] += k; to.seen.add(id);
+    if (id in to.ages) { const a = to.ages[id as Perishable]; a.push(...ages); a.sort((x, y) => y - x); }
+    this.onChange(); to.onChange();
+    return k;
   }
 
   /** Seconds until the oldest piece of `k` spoils, or null when you carry none. */

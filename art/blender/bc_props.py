@@ -548,6 +548,36 @@ for v in m_["verts"]: v.co = Matrix.Rotation(math.radians(90), 4, "Y") @ v.co
 bmesh.ops.translate(bm, verts=m_["verts"], vec=(0, 0, 0.28))
 make("Pack", bm, 0.005, 2, [("CLOUDS", 0.06, 0.006), ("CLOUDS", 0.015, 0.0015)], 1400, fabric_material("Pack"), BASE, 0.012)
 
+# Storage crate: a frame of lashed stalkwood slats (origin at the base centre, 0.92 x 0.62 x 0.56 m) under a lid
+# cut from torn hull plating. Crate_Wood and Crate_Lid are separate meshes, the lid already in place.
+bm = bmesh.new()
+for sx in (-1, 1):
+    for sy in (-1, 1):  # corner posts
+        p = trunk_bm(0.58, 0.05, 0.045, 30 + sx * 3 + sy, rings=28, segs=20, ridges=7, torn=0.03)
+        bmesh.ops.translate(p, verts=p.verts, vec=(sx * 0.43, sy * 0.28, 0.29))
+        merge_into(bm, p)
+for side in (-1, 1):
+    for k, z in enumerate((0.1, 0.27, 0.44)):  # slats: long sides along x, short sides along y
+        p = trunk_bm(0.9, 0.045, 0.042, 40 + k + side * 7, rings=40, segs=18, ridges=7, torn=0.025)
+        bmesh.ops.scale(p, vec=(1, 0.55, 1), verts=p.verts)
+        bmesh.ops.transform(p, matrix=Matrix.Rotation(math.radians(90), 4, "Y"), verts=p.verts)
+        bmesh.ops.translate(p, verts=p.verts, vec=(0, side * 0.3, z + noise.noise(Vector((k, side, 0))) * 0.012))
+        merge_into(bm, p)
+        p = trunk_bm(0.6, 0.045, 0.042, 50 + k + side * 7, rings=28, segs=18, ridges=7, torn=0.025)
+        bmesh.ops.scale(p, vec=(0.55, 1, 1), verts=p.verts)
+        bmesh.ops.transform(p, matrix=Matrix.Rotation(math.radians(90), 4, "X"), verts=p.verts)
+        bmesh.ops.translate(p, verts=p.verts, vec=(side * 0.45, 0, z + 0.03))
+        merge_into(bm, p)
+for x in (-0.25, 0.0, 0.25):  # floor slats
+    p = trunk_bm(0.6, 0.05, 0.05, 60 + x * 10, rings=24, segs=16, ridges=6, torn=0.02)
+    bmesh.ops.scale(p, vec=(1, 1, 0.5), verts=p.verts)
+    bmesh.ops.transform(p, matrix=Matrix.Rotation(math.radians(90), 4, "X"), verts=p.verts)
+    bmesh.ops.translate(p, verts=p.verts, vec=(x, 0, 0.03))
+    merge_into(bm, p)
+make("Crate_Wood", bm, 0.006, 1, [("CLOUDS", 0.04, 0.003)], 2600, trunk_material("Crate_Wood"), BASE, 0.012)
+lid = make_plate("Crate_Lid", 0.98, 0.7, 0.02, 7.0, metal_material("CrateLid", 0.45))
+lid.data.transform(Matrix.Translation((0, 0, 0.575)))
+
 # ---------------------------------------------------------------------------------------------------- export
 for o in bpy.context.view_layer.objects: o.select_set(True)
 glb = os.path.join(OUT, "props.glb")

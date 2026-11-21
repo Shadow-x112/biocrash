@@ -14,7 +14,7 @@ import { Player } from './player';
 import { Sky, DAY_LENGTH } from './sky';
 import { Survival, TEMP } from './survival';
 import { Props } from './props';
-import { Inventory, ITEM_NAMES, MATERIALS, TOOLS, GEAR, SHELF_LIFE, PERISHABLE, type ItemId, type Perishable } from './inventory';
+import { Inventory, ITEM_NAMES, MATERIALS, TOOLS, GEAR, SHELF_LIFE, STACK, PERISHABLE, type ItemId, type Perishable } from './inventory';
 import { RECIPES, knows } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, setCreatureModels, type Creature } from './creatures';
@@ -22,6 +22,7 @@ import { Wreck } from './wreck';
 import { loadProps, propGlow, loadCreatures, loadViewmodels } from './assets';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
+import { Crates, MAX_CRATES, CRATE_SLOTS, type Crate } from './crate';
 import { Packs } from './packs';
 import { Post, SkyEnv, fxUniforms, addTerrainSurface } from './fx';
 import { Audio } from './audio';
@@ -208,6 +209,14 @@ async function main() {
   const packs = new Packs();
   scene.add(packs.group);
   packs.load(meta?.packs);
+  const crates = new Crates(RAPIER, physics);
+  scene.add(crates.group);
+  crates.load(meta?.crates);
+  const cratePreview = crates.makePreview();
+  scene.add(cratePreview.group);
+  /** The crate whose contents the crafting panel is showing (null: the panel shows recipes). */
+  let storeCrate: Crate | null = null;
+  void loadProps().then((m) => { crates.setLooks(m); cratePreview.refresh(); });
   let wasNight = meta?.wasNight ?? false;
   let nights = meta?.nights ?? 0;
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
@@ -308,7 +317,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
-    inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
+    crates: crates.save(), inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
@@ -358,7 +367,9 @@ async function main() {
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
     if (s !== 'menu') overlay.classList.remove('showsettings', 'showlog');
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
-    if (s === 'craft') { renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
+    if (s !== 'craft') storeCrate = null;
+    $('craftview').hidden = !!storeCrate; $('storeview').hidden = !storeCrate;
+    if (s === 'craft') { if (storeCrate) renderStore(); else renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
     if (s !== 'playing') $('prompt').textContent = '';
     audio.setWorldPaused(s !== 'playing' && s !== 'dead');
   };
@@ -548,7 +559,7 @@ async function main() {
       const have = inventory.counts[r.makes];
       const done = r.unique && have > 0;
       const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
-      const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>Craft</button>`;
+      const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>${r.place ? 'Place' : 'Craft'}</button>`;
       if (craftableOnly && !can) return '';
       return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
@@ -585,7 +596,7 @@ async function main() {
     }
     for (const k of [...MATERIALS, ...GEAR]) popPrev[k] = inventory.counts[k];
     renderHotbar();
-    if (state === 'craft') renderCraft();
+    if (state === 'craft') { if (storeCrate) renderStore(); else renderCraft(); }
     recipeCheck?.();
   };
   // Switching tools flashes the item's name over the hotbar for a moment.
@@ -630,6 +641,13 @@ async function main() {
   /** Crafts recipe `r` up to `times` times; reports what was made or what's missing. */
   const craft = (r: (typeof RECIPES)[number], times: number) => {
     if (!known.has(r.id)) { audio.deny(); craftNote('You haven\u2019t worked that one out yet: pick up its materials first.'); return; }
+    if (r.place) { // built in the world: close the panel and show where it would go
+      if (!inventory.has(r.cost)) { audio.deny(); craftNote(`Need ${(Object.keys(r.cost) as ItemId[]).filter((k) => inventory.counts[k] < (r.cost[k] ?? 0)).map((k) => `${(r.cost[k] ?? 0) - inventory.counts[k]} more ${ITEM_NAMES[k].toLowerCase()}`).join(' and ')}.`); return; }
+      setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.'));
+      build('crate');
+      flash(`Place the crate: ${K('build')} or click where it should go. Any other key cancels.`);
+      return;
+    }
     if (r.unique && inventory.counts[r.makes] > 0) { craftNote(`You already have a ${ITEM_NAMES[r.makes].toLowerCase()}.`); return; }
     const missing = (r.needs ?? []).filter((k) => inventory.counts[k] <= 0);
     if (missing.length) { audio.deny(); craftNote(`You need a ${missing.map((k) => ITEM_NAMES[k].toLowerCase()).join(' and a ')} for this.`); return; }
@@ -655,6 +673,67 @@ async function main() {
     if (r) craft(r, (e as MouseEvent).shiftKey ? 5 : 1);
   });
 
+
+  // --- Crate storage: the crafting panel's other face. Click moves a stack, Shift+click all of that item. ------
+  const storeMsg = (msg: string) => { const el = $('storemsg'); el.textContent = msg; clearTimeout(craftMsgTimer); craftMsgTimer = window.setTimeout(() => { el.textContent = ''; }, 2500); };
+  const openStore = (c: Crate) => {
+    storeCrate = c;
+    setState('craft');
+    if (document.pointerLockElement) document.exitPointerLock();
+    audio.play('ui_2', { bus: 'ui', gain: 0.5, rate: 0.8 });
+  };
+  const cells = (inv: Inventory, side: 'pack' | 'crate') => {
+    const ks = MATERIALS.filter((k) => inv.counts[k] > 0);
+    if (!ks.length) return `<div class="stempty">${side === 'pack' ? 'Nothing carried' : 'Empty'}</div>`;
+    return ks.map((k) => {
+      const f = PERISHABLE.includes(k as Perishable) ? inv.freshness(k as Perishable) : null;
+      const stale = f !== null && f < (SHELF_LIFE[k] ?? 0) * 0.25;
+      return `<button class="cell${stale ? ' stale' : ''}" data-side="${side}" data-k="${k}" title="${ITEM_NAMES[k]}${f !== null ? ' · next spoils in ' + fmtTime(f * (side === 'crate' ? 2 : 1)) : ''}">${ico(k)}<b>${inv.counts[k]}</b><i>${ITEM_NAMES[k]}</i></button>`;
+    }).join('');
+  };
+  function renderStore() {
+    const c = storeCrate;
+    if (!c) return;
+    const ld = inventory.load_();
+    $('storeview').innerHTML = `<h2>Storage crate</h2>
+      <p class="sub">Click moves a stack · Shift+click moves all of it · ${K('use')}, ${K('craft')} or Esc to close</p>
+      <div class="stcols">
+        <div class="stcol"><div class="sth"><span>Your pack</span><span class="load ${ld.name.toLowerCase()}">${inventory.usedSlots()}/${inventory.slots()} · ${inventory.weight().toFixed(1)} kg</span></div>
+          <div class="stgrid">${cells(inventory, 'pack')}</div><button class="stall" data-act="storeall">Store everything ▸</button></div>
+        <div class="stcol"><div class="sth"><span>Crate</span><span>${c.inv.usedSlots()}/${CRATE_SLOTS}</span></div>
+          <div class="stgrid">${cells(c.inv, 'crate')}</div><button class="stall" data-act="takeall">◂ Take all that fits</button></div>
+      </div>
+      <div class="stfoot"><span class="hint">Meat keeps twice as long in a crate.</span><button class="stdis" data-act="dismantle"${c.inv.usedSlots() ? ' disabled title="Empty it first"' : ''}>Dismantle</button></div>
+      <div id="storemsg"></div>`;
+  }
+  $('storeview').addEventListener('click', (e) => {
+    const c = storeCrate;
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!c || !b || b.disabled) return;
+    const shift = (e as MouseEvent).shiftKey;
+    if (b.dataset.k) {
+      const k = b.dataset.k as ItemId, from = b.dataset.side === 'pack' ? inventory : c.inv, to = from === inventory ? c.inv : inventory;
+      const n = shift ? from.counts[k] : Math.min(from.counts[k], STACK[k] ?? 1);
+      const moved = from.moveTo(to, k, n);
+      if (moved) audio.play('ui_3', { bus: 'ui', gain: 0.35, rate: from === inventory ? 0.9 : 1.1 });
+      else { audio.deny(); storeMsg(to === inventory ? 'Your carry slots are full.' : 'The crate is full.'); }
+      renderStore();
+    } else if (b.dataset.act === 'storeall' || b.dataset.act === 'takeall') {
+      const from = b.dataset.act === 'storeall' ? inventory : c.inv, to = from === inventory ? c.inv : inventory;
+      let moved = 0, left = 0;
+      for (const k of MATERIALS) if (from.counts[k] > 0) { moved += from.moveTo(to, k, from.counts[k]); left += from.counts[k]; }
+      if (moved) audio.play('ui_3', { bus: 'ui', gain: 0.4 }); else audio.deny();
+      storeMsg(left ? `${to === inventory ? 'Your carry slots are' : 'The crate is'} full: ${left} left behind.` : moved ? `Moved ${moved}.` : 'Nothing to move.');
+      renderStore();
+    } else if (b.dataset.act === 'dismantle') {
+      if (c.inv.usedSlots()) { audio.deny(); storeMsg('Empty the crate first.'); return; }
+      crates.remove(c);
+      give('stalkwood', 3); give('cordage', 1); give('stone', 2);
+      setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.'));
+      flash('Crate taken apart: you salvage 3 stalkwood, 1 cordage and 2 stone.');
+    }
+  });
+
   // --- What you're looking at: one query, used by the prompt and by E ------------------------------
   type Target =
     | { kind: 'creature'; c: Creature }
@@ -662,6 +741,7 @@ async function main() {
     | { kind: 'fire'; f: NonNullable<ReturnType<Campfires['lookAt']>> }
     | { kind: 'stalk'; s: NonNullable<ReturnType<Flora['lookAt']>> }
     | { kind: 'pack'; pk: NonNullable<ReturnType<Packs['near']>> }
+    | { kind: 'crate'; cr: Crate }
     | null;
   let target: Target = null;
   const queryTarget = (): Target => {
@@ -669,6 +749,8 @@ async function main() {
     if (c) return { kind: 'creature', c };
     const pk = packs.near(player.position, 2.5);
     if (pk) return { kind: 'pack', pk };
+    const cr = crates.lookAt(camera, USE_REACH);
+    if (cr) return { kind: 'crate', cr };
     const f = campfires.lookAt(camera, USE_REACH);
     if (f) return { kind: 'fire', f };
     const p = props.lookAt(camera, USE_REACH);
@@ -689,6 +771,7 @@ async function main() {
           : inventory.counts.raw_meat > 0 && t.f.lit ? `  \u00b7  ${K('eat')}  cook raw meat` : '';
         return (t.f.lit ? `${K('use')}  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : `${K('use')}  relight with stalkwood`) + cook;
       }
+      case 'crate': return `${K('use')}  open crate  \u00b7  ${t.cr.inv.usedSlots()}/${CRATE_SLOTS} slots`;
       case 'pack': return `${K('use')}  recover your pack (${Object.values(t.pk.items).reduce((a, b) => a + b, 0)} items)`;
       case 'stalk': {
         const left = flora.usesLeft(t.s);
@@ -736,6 +819,8 @@ async function main() {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
       else if (inventory.take({ stalkwood: 1 })) { campfires.addFuel(t.f); audio.fireLit(t.f.position); }
       else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
+    } else if (t.kind === 'crate') {
+      openStore(t.cr);
     } else if (t.kind === 'pack') {
       const got: string[] = [];
       // Take what fits; the rest stays in the pack. Meat that sat out comes back half-spoiled.
@@ -857,8 +942,19 @@ async function main() {
   };
 
   const MAX_FIRES = 40;
-  /** Why a campfire can't go where you're aiming ('' if it can). */
-  const placeProblem = (hit: { point: THREE.Vector3; normal: THREE.Vector3 } | null): string => {
+  type PlaceKind = 'fire' | 'crate';
+  const crateCost = RECIPES.find((r) => r.id === 'crate')!.cost;
+  /** Why a campfire (or crate) can't go where you're aiming ('' if it can). */
+  const placeProblem = (hit: { point: THREE.Vector3; normal: THREE.Vector3 } | null, kind: PlaceKind = 'fire'): string => {
+    if (kind === 'crate') {
+      if (!hit || hit.normal.y < 0.75) return 'Look at flat ground nearby to place the crate.';
+      if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.1)) return 'Too close to another crate.';
+      if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.3)) return 'Too close to the fire.';
+      if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to place it here.';
+      if (crates.list.length >= MAX_CRATES) return `You have ${MAX_CRATES} crates already.`;
+      if (!inventory.has(crateCost)) return 'You no longer have the materials for a crate.';
+      return '';
+    }
     if (!hit || hit.normal.y < 0.6) return 'Look at flat ground nearby to build a campfire.';
     // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
     if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
@@ -872,14 +968,23 @@ async function main() {
   // second press, or a click, builds it. Anything else, or 8 seconds, cancels.
   const preview = campfires.makePreview();
   scene.add(preview.group);
-  let placing = 0, digBlock = false;
-  const cancelPlacing = () => { placing = 0; preview.group.visible = false; };
-  const buildCampfire = () => {
-    if (!placing) { placing = 8; return; }
+  let placing = 0, digBlock = false, placeKind: PlaceKind = 'fire';
+  const cancelPlacing = () => { placing = 0; preview.group.visible = false; cratePreview.group.visible = false; };
+  /** First call shows where it would go; the second builds it. */
+  const build = (kind: PlaceKind = 'fire') => {
+    if (!placing) { placeKind = kind; placing = kind === 'crate' ? 15 : 8; return; }
+    const k = placeKind;
     cancelPlacing();
     const hit = aimAtTerrain(5);
-    const problem = placeProblem(hit);
+    const problem = placeProblem(hit, k);
     if (problem || !hit) { audio.deny(); flash(problem); return; }
+    if (k === 'crate') {
+      inventory.take(crateCost);
+      crates.add(hit.point.clone(), player.yaw);
+      audio.place(hit.point);
+      flash(`Crate built. ${K('use')} to open it: 16 slots, and meat keeps twice as long inside.`);
+      return;
+    }
     inventory.take(CAMPFIRE_COST);
     if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
     campfires.add(hit.point.clone());
@@ -890,9 +995,10 @@ async function main() {
     if (!placing) return;
     if ((placing -= dt) <= 0 || state !== 'playing') { cancelPlacing(); return; }
     const hit = aimAtTerrain(5);
-    preview.group.visible = !!hit;
-    if (hit) { preview.group.position.copy(hit.point); preview.setOk(!placeProblem(hit)); }
-    promptEl.textContent = `${K('build')} or click: build here  \u00b7  ${placeProblem(hit) || 'fits'}`;
+    const pv = placeKind === 'crate' ? cratePreview : preview;
+    pv.group.visible = !!hit;
+    if (hit) { pv.group.position.copy(hit.point); pv.group.rotation.y = placeKind === 'crate' ? player.yaw : 0; pv.setOk(!placeProblem(hit, placeKind)); }
+    promptEl.textContent = `${K('build')} or click: ${placeKind === 'crate' ? 'place crate' : 'build'} here  \u00b7  ${placeProblem(hit, placeKind) || 'fits'}`;
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */
   const pendingHits: { t: number; c: Creature }[] = [];
@@ -951,6 +1057,10 @@ async function main() {
       else if (state === 'playing') { setState('craft'); if (document.pointerLockElement) document.exitPointerLock(); }
       return;
     }
+    if (state === 'craft' && storeCrate) { // the crate view: E (or Tab/Esc, below) closes it; nothing else
+      if (input.is(e.code, 'use') && !e.repeat) { setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.')); return; }
+      if (e.code !== 'Escape') return;
+    }
     if (state === 'craft' && e.code === 'KeyF') { craftableOnly = !craftableOnly; renderCraft(); return; }
     if (e.code === 'Escape') {
       // Esc isn't a user gesture, so it can't recapture the mouse: go to the pause menu, whose button can.
@@ -959,7 +1069,7 @@ async function main() {
       return;
     }
     if (state === 'craft' && !e.repeat) {
-      const n = Number(e.key);
+      const n = e.key === '0' ? 10 : Number(e.key);
       if (n >= 1 && n <= RECIPES.length) craft(RECIPES[n - 1], e.shiftKey ? 5 : 1);
       // Shift+digit gives a symbol in e.key on most layouts: fall back to the physical key.
       else if (e.shiftKey && /^Digit[1-9]$/.test(e.code)) { const d = Number(e.code.slice(5)); if (d <= RECIPES.length) craft(RECIPES[d - 1], 5); }
@@ -970,7 +1080,7 @@ async function main() {
     if (input.is(e.code, 'rest')) { rest(); return; }
     if (placing && !input.is(e.code, 'build')) cancelPlacing(); // any other action cancels placement
     if (input.is(e.code, 'use')) use();
-    else if (input.is(e.code, 'build')) buildCampfire();
+    else if (input.is(e.code, 'build')) build();
     else if (input.is(e.code, 'eat')) food();
     else if (input.is(e.code, 'lamp')) {
       if (!lampOn && lampCharge < 3) { audio.deny(); flash('The lamp is out of charge. It refills by a fire or in daylight.'); }
@@ -1240,6 +1350,7 @@ async function main() {
           ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor() * inventory.load_().speed;
         for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
+        crates.update(wdt);
         if (survival.dead) {
           setState('dead');
           audio.death();
@@ -1313,7 +1424,7 @@ async function main() {
       const dig = input.down('dig'), fill = input.down('fill');
       updatePlacing(dt);
       if (!dig) digBlock = false;
-      if (placing && dig && !digBlock) { buildCampfire(); digBlock = true; } // a click while placing builds instead of digging
+      if (placing && dig && !digBlock) { build(); digBlock = true; } // a click while placing builds instead of digging
       else if (digBlock) { /* that click was the build: no digging until it's released */ }
       else if ((dig || fill) && (actionCooldown -= dt) <= 0) {
         const prey = dig ? fauna.lookAt(camera, ATTACK[hotbar.slot].reach) : null;

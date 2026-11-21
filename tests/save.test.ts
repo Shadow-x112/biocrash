@@ -29,3 +29,13 @@ describe('sanitizeMeta', () => {
     expect(m.horror).toEqual({ figureSeen: false, figureNight: -1, played: ['memory'], last: 'figure' });
   });
 });
+
+describe('crate and food saves', () => {
+  it('keeps crates, meat ages and seen items, clamping junk', async () => {
+    const { sanitizeMeta } = await import('../src/save');
+    const m = sanitizeMeta({ seed: 's', saveVersion: 2, genVersion: 1, crates: [{ x: 1, y: 2, z: 3, rot: 0.5, items: { stone: 4, bad: 'x' }, fresh: { raw_meat: [10, 'q'] } }, null], fresh: { raw_meat: [5] }, seen: ['stone', 7] });
+    expect(m?.crates).toEqual([{ x: 1, y: 2, z: 3, rot: 0.5, items: { stone: 4 }, fresh: { raw_meat: [10] } }]);
+    expect(m?.fresh).toEqual({ raw_meat: [5] });
+    expect(m?.seen).toEqual(['stone']);
+  });
+});

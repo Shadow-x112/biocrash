@@ -303,4 +303,6 @@ for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_
     rot = {"cordage": (20, 0, 0), "bone": (0, -35, 20), "bone_needle": (0, -45, 0), "chitin_spearhead": (0, -45, 0),
            "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38)}.get(k, (0, 0, 0))
     shoot(k, with_extra(EXTRA[k]), rot)
+if "Crate_Wood" in PROPS:  # the storage crate (placed, but its recipe row needs an icon)
+    shoot("crate", [PROPS["Crate_Wood"], PROPS["Crate_Lid"]], (0, 0, 28))
 print("@@DONE@@", sorted(os.listdir(RAW)))
