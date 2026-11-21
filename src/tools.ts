@@ -86,28 +86,26 @@ export class Hotbar {
   }
 
   /**
-   * Swap in the Blender viewmodels: the suited arm with its wrist lamp on every slot, an open glove for bare hands,
-   * a fist plus the tool otherwise. The fist is modelled around a vertical handle at GRIP; for the spear it turns
-   * at that point to follow the shaft.
+   * Swap in the Blender viewmodels, Minecraft style: a held tool floats in the lower right on its own, tilted across
+   * the view (no arm); bare-handed shows just the gloved hand. Tools turn about their grip point (GRIP).
    */
   setLooks(m: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
-    if (!m.Arm || !m.Hand_Grip || !m.Hand_Open) return;
-    this.base.set(0.22, -0.12, -0.4);
+    if (!m.Hand_Open) return;
+    this.base.set(0.25, -0.17, -0.42);
     const make = (n: string) => { const o = new THREE.Mesh(m[n].geometry, m[n].material); o.frustumCulled = false; return o; };
-    const tool: Record<Slot, string | null> = { hands: null, stone_pick: 'Tool_Pick', stone_knife: 'Tool_Knife', spear: 'Tool_Spear' };
+    // Per tool: [mesh, tilt x (tip forward), tilt z (lean left across the view), lift].
+    const tool: Record<Slot, [string, number, number, number] | null> = {
+      hands: null, stone_pick: ['Tool_Pick', -0.3, 0.55, 0], stone_knife: ['Tool_Knife', -0.25, 0.55, 0.08], spear: ['Tool_Spear', 0.0, 0.18, 0.04],
+    };
     for (const [slot, g] of this.models) {
       g.clear();
-      g.add(make('Arm'));
-      if (slot === 'hands') { g.add(make('Hand_Open')); continue; }
-      const fist = make('Hand_Grip');
-      if (slot === 'spear') {
-        const pivot = new THREE.Group();
-        pivot.position.set(...GRIP); pivot.rotation.x = -Math.PI / 2 + 0.25;
-        fist.position.set(-GRIP[0], -GRIP[1], -GRIP[2]);
-        pivot.add(fist); g.add(pivot);
-      } else g.add(fist);
       const t = tool[slot];
-      if (t && m[t]) g.add(make(t));
+      if (!t) { const h = make('Hand_Open'); h.position.set(-0.03, 0.07, 0); g.add(h); continue; }
+      if (!m[t[0]]) continue;
+      const pivot = new THREE.Group(), mesh = make(t[0]);
+      pivot.position.set(GRIP[0], GRIP[1] + t[3], GRIP[2]); pivot.rotation.set(t[1], 0, t[2]);
+      mesh.position.set(-GRIP[0], -GRIP[1], -GRIP[2]);
+      pivot.add(mesh); g.add(pivot);
     }
   }
 
