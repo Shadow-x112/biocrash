@@ -14,7 +14,7 @@ const SPOTS_PER = 7;
 interface Shroom {
   id: string; source: number; kind: 'giant' | 'small';
   base: THREE.Vector3; radius: number; height: number;
-  collider: RAPIER.Collider | null;
+  colliders: RAPIER.Collider[];
   slots: { stalk: number; gill: number; cap: number; spots: number[] };
   alive: boolean;
   /** Placement, kept so harvesting can rebuild the instances (shorter stalk, toppled at the end). */
@@ -43,6 +43,15 @@ capGeo.scale(1, 0.55, 1);
 // The dome's rim sits CAP_RIM above its centre: lower it so the rim meets the gills (it used to float ~0.7 m above them).
 const CAP_RIM = Math.cos(Math.PI * 0.42) * 0.55;
 capGeo.translate(0, -CAP_RIM, 0);
+// Unit cap outline for its physics shape (a convex hull, scaled per mushroom): the cap is solid, you can stand on it.
+const CAP_HULL = (() => {
+  const p = capGeo.getAttribute('position'), seen = new Set<string>(), out: number[] = [];
+  for (let i = 0; i < p.count; i++) {
+    const k = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
+    if (!seen.has(k)) { seen.add(k); out.push(p.getX(i), p.getY(i), p.getZ(i)); }
+  }
+  return out;
+})();
 const gillGeo = new THREE.CircleGeometry(0.93, 14).rotateX(Math.PI / 2);
 const spotGeo = new THREE.IcosahedronGeometry(0.09, 0);
 const sproutGeo = (() => {
@@ -151,13 +160,11 @@ export class Flora {
         m.compose(local.applyQuaternion(q).add(topP), q, sc.setScalar(o.cap * 0.9));
         spots.push(this.spots.alloc(m));
       }
-      const collider = o.h > 5
-        ? this.physics.createCollider(this.rapier.ColliderDesc.cylinder(o.h / 2, o.r * 0.85).setTranslation(o.p.x, o.p.y + o.h / 2, o.p.z))
-        : null;
-      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, collider, slots: { stalk, gill, cap, spots }, alive: true,
+      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, colliders: [], slots: { stalk, gill, cap, spots }, alive: true,
         q: q.clone(), capR: o.cap, color: o.color, spin: o.spin };
       c.shrooms.push(s);
       if (this.harvested.get(s.id)) this.shape(s); // already cut: rebuild its harvested state
+      else this.solid(s, o.h, null);
     }
 
     // Glowing sprouts.
@@ -175,7 +182,7 @@ export class Flora {
   private removeShroom(s: Shroom) {
     if (!s.alive) return;
     s.alive = false;
-    if (s.collider) { this.physics.removeCollider(s.collider, false); s.collider = null; }
+    this.clearColliders(s);
     this.stalks.release(s.slots.stalk);
     this.gills.release(s.slots.gill);
     this.caps.release(s.slots.cap);
@@ -227,6 +234,33 @@ export class Flora {
 
   /** Rebuilds a mushroom's instances for how often it's been cut: each cut takes ~18% off the stalk (the cap sinks
    *  with it); the last one topples it: the stalk lies on the ground, the cap is gone. */
+  private clearColliders(s: Shroom) {
+    for (const c of s.colliders) this.physics.removeCollider(c, false);
+    s.colliders = [];
+  }
+
+  /** Physics for a mushroom as it currently looks: every stalk (giant or small) and every cap is solid. Standing:
+   *  a tilted cylinder for the stalk plus the cap's convex hull. Toppled (`fall` set): the stalk lying on the ground. */
+  private solid(s: Shroom, h: number, fall: THREE.Quaternion | null) {
+    this.clearColliders(s);
+    const R = this.rapier, c = new THREE.Vector3();
+    if (fall) {
+      c.set(0, h / 2, 0).applyQuaternion(fall).add(s.base).setY(c.y + s.radius * 0.8);
+      s.colliders.push(this.physics.createCollider(R.ColliderDesc.cylinder(h / 2, s.radius * 0.85)
+        .setTranslation(c.x, c.y, c.z).setRotation(fall)));
+      return;
+    }
+    const len = h + 0.3;
+    c.set(0, len / 2, 0).applyQuaternion(s.q).add(s.base).setY(c.y - 0.3);
+    s.colliders.push(this.physics.createCollider(R.ColliderDesc.cylinder(len / 2, s.radius * 0.85)
+      .setTranslation(c.x, c.y, c.z).setRotation(s.q)));
+    const top = c.set(0, h, 0).applyQuaternion(s.q).add(s.base);
+    const pts = new Float32Array(CAP_HULL.length);
+    for (let i = 0; i < pts.length; i++) pts[i] = CAP_HULL[i] * s.capR;
+    const hull = R.ColliderDesc.convexHull(pts);
+    if (hull) s.colliders.push(this.physics.createCollider(hull.setTranslation(top.x, top.y, top.z).setRotation(s.q)));
+  }
+
   private shape(s: Shroom) {
     const n = Math.min(STALK_HARVESTS, this.harvested.get(s.id) ?? 0);
     const m = new THREE.Matrix4(), v = new THREE.Vector3(), sc = new THREE.Vector3(), top = new THREE.Vector3(), local = new THREE.Vector3();
@@ -238,11 +272,12 @@ export class Flora {
       this.stalks.set(s.slots.stalk, m);
       this.caps.set(s.slots.cap, ZERO); this.gills.set(s.slots.gill, ZERO);
       for (const sp of s.slots.spots) this.spots.set(sp, ZERO);
-      if (s.collider) { this.physics.removeCollider(s.collider, false); s.collider = null; }
+      this.solid(s, len, fall);
       return;
     }
     const h = s.height * (1 - 0.18 * n);
     m.compose(v.copy(s.base).setY(s.base.y - 0.3), s.q, sc.set(s.radius, h + 0.3, s.radius));
+    this.solid(s, h, null);
     this.stalks.set(s.slots.stalk, m);
     top.set(0, h, 0).applyQuaternion(s.q).add(s.base);
     m.compose(top, s.q, sc.setScalar(s.capR));
