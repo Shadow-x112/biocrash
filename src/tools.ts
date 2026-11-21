@@ -86,12 +86,12 @@ export class Hotbar {
   }
 
   /**
-   * Swap in the Blender viewmodels, Minecraft style: a held tool floats in the lower right on its own, tilted across
-   * the view (no arm); bare-handed shows just the gloved hand. Tools turn about their grip point (GRIP).
+   * Swap in the Blender viewmodels, Minecraft style: a held tool sits in the lower right in a gloved fist, tilted across
+   * the view (no arm or sleeve); bare-handed shows just the gloved hand. Tools turn about their grip point (GRIP).
    */
   setLooks(m: Record<string, { geometry: THREE.BufferGeometry; material: THREE.Material }>) {
-    if (!m.Hand_Open) return;
-    this.base.set(0.25, -0.17, -0.42);
+    if (!m.Hand_Open || !m.Hand_Grip) return;
+    this.base.set(0.29, -0.13, -0.38); // fist near the bottom-right corner: the wrist runs off screen
     const make = (n: string) => { const o = new THREE.Mesh(m[n].geometry, m[n].material); o.frustumCulled = false; return o; };
     // Per tool: [mesh, tilt x (tip forward), tilt z (lean left across the view), lift].
     const tool: Record<Slot, [string, number, number, number] | null> = {
@@ -105,7 +105,9 @@ export class Hotbar {
       const pivot = new THREE.Group(), mesh = make(t[0]);
       pivot.position.set(GRIP[0], GRIP[1] + t[3], GRIP[2]); pivot.rotation.set(t[1], 0, t[2]);
       mesh.position.set(-GRIP[0], -GRIP[1], -GRIP[2]);
-      pivot.add(mesh); g.add(pivot);
+      // The gloved fist holds it (turning with it); the wrist runs off the bottom-right of the screen.
+      const fist = make('Hand_Grip'); fist.position.copy(mesh.position);
+      pivot.add(mesh, fist); g.add(pivot);
     }
   }
 
