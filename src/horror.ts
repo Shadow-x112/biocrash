@@ -121,6 +121,13 @@ export class Horror {
     this.staticEl = document.getElementById('static')!;
   }
 
+  /** The Blender-built silhouette: gaunt, hunched, arms too long, head tilted. Same unlit black. */
+  setFigure(g: THREE.BufferGeometry) {
+    const mat = (this.figure.children[0] as THREE.Mesh).material;
+    this.figure.clear();
+    this.figure.add(new THREE.Mesh(g, mat));
+  }
+
   save(): HorrorSave { return { figureSeen: this.figureSeen, figureNight: this.figureNight, played: [...this.played], last: this.last }; }
   load(s: Partial<HorrorSave> | undefined) {
     if (typeof s?.figureSeen === 'boolean') this.figureSeen = s.figureSeen;

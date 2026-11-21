@@ -4,6 +4,12 @@ import * as THREE from 'three';
 import { addRim } from './fx';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Cost } from './inventory';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { addColourGlow, addMapGlow, type CreatureModels } from './assets';
+
+/** The Blender-built rigs, once loaded (creatures spawned before then keep the simple shapes). */
+let MODELS: CreatureModels | null = null;
+export function setCreatureModels(m: CreatureModels | null) { MODELS = m; }
 
 type State = 'idle' | 'wander' | 'flee' | 'curl' | 'sleep' | 'dead';
 
@@ -169,6 +175,7 @@ export class Creature {
   strip() {
     this.harvested = true;
     this.strippedT = 0;
+    if (this.mixer) { this.root.traverse((o) => { if (o instanceof THREE.Mesh) o.material = CARCASS; }); return; }
     this.root.traverse((o) => { if (o instanceof THREE.Mesh) o.material = CARCASS; });
     this.root.scale.set(0.55, 1, 1); // it lies on its side (rotated about z), so local x is now height
   }
@@ -178,7 +185,14 @@ export class Creature {
   /** Seconds a Tuko holds still after uncurling. */
   private peek = 0;
 
+  /** Rigged model and its animation (when the Blender models are loaded). */
+  private mixer: THREE.AnimationMixer | null = null;
+  private actions = new Map<string, THREE.AnimationAction>();
+  private current: THREE.AnimationAction | null = null;
+  private skinMat: THREE.MeshStandardMaterial | null = null;
+
   constructor(readonly species: Species, readonly position: THREE.Vector3) {
+    if (MODELS) { this.root = new THREE.Group(); this.legs = []; this.body = new THREE.Object3D(); this.glow = new THREE.MeshStandardMaterial(); this.health = species.health; this.useModel(MODELS); this.root.position.copy(position); return; }
     // Each species is built (and its body merged) once; every spawn clones that template, sharing its geometry and
     // materials. Only the glow material is per creature, because it flashes red when that creature is hurt.
     let t = TEMPLATES.get(species.id);
@@ -200,6 +214,38 @@ export class Creature {
     this.legs = this.root.children.filter((o) => o.userData.leg !== undefined).sort((a, b) => a.userData.leg - b.userData.leg);
     this.health = species.health;
     this.root.position.copy(position);
+  }
+
+  private useModel(m: CreatureModels) {
+    const rig = SkeletonUtils.clone(m.rigs[this.species.id]);
+    this.root.add(rig);
+    rig.traverse((o) => {
+      const mesh = o as THREE.SkinnedMesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = true; mesh.frustumCulled = false;
+      // Its own material: it flashes red when this creature is hurt.
+      const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
+      if (mat.emissiveMap) { mat.emissive.setRGB(1, 1, 1); addMapGlow(mat, 2.2); } else addColourGlow(mat);
+      if (mat.map) mat.map.anisotropy = 8;
+      mesh.material = mat; this.skinMat = mat;
+    });
+    this.mixer = new THREE.AnimationMixer(rig);
+    const pre = this.species.id === 'tuko' ? 'Tuko_' : 'Oomi_';
+    for (const c of m.clips) if (c.name.startsWith(pre)) {
+      const a = this.mixer.clipAction(c);
+      const once = /Curl|Death|Sleep/.test(c.name);
+      if (once) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      this.actions.set(c.name.slice(pre.length), a);
+    }
+    this.play('Idle');
+  }
+
+  private play(name: string) {
+    const a = this.actions.get(name);
+    if (!a || a === this.current) return;
+    a.reset().fadeIn(0.25).play();
+    this.current?.fadeOut(0.25);
+    this.current = a;
   }
 
   get alive() { return this.state !== 'dead'; }
@@ -224,6 +270,7 @@ export class Creature {
   private die() {
     this.state = 'dead';
     this.speed = 0;
+    if (this.mixer) { this.play('Death'); return; }
     this.root.rotation.z = Math.PI / 2 * 0.95; // fall on its side
     this.glow.emissiveIntensity = 0;
     if (this.ball) { this.ball.visible = false; this.body.visible = true; }
@@ -239,6 +286,7 @@ export class Creature {
     this.gait += dt;
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
     if (!this.alive) {
+      this.mixer?.update(dt);
       this.deadTime += dt;
       if (this.strippedT >= 0) { // a stripped carcass sinks into the moss over a minute and a half
         this.strippedT += dt;
@@ -303,6 +351,16 @@ export class Creature {
     this.root.position.copy(this.position);
     const yawDiff = Math.atan2(Math.sin(this.heading - this.root.rotation.y), Math.cos(this.heading - this.root.rotation.y));
     this.root.rotation.y += yawDiff * Math.min(1, dt * 6);
+    if (this.mixer) {
+      // Animation by state; walk and run play at the speed the creature is actually moving.
+      const clip = this.state === 'curl' ? 'Curl' : this.state === 'sleep' ? 'Sleep' : this.speed > 2.2 ? 'Run' : this.speed > 0.15 ? 'Walk' : 'Idle';
+      this.play(clip);
+      if (this.current && (clip === 'Walk' || clip === 'Run')) this.current.timeScale = Math.max(0.4, this.speed / (clip === 'Run' ? sp.run : sp.walk));
+      else if (this.current) this.current.timeScale = 1;
+      this.mixer.update(dt);
+      if (this.skinMat) { if (this.skinMat.emissiveMap) this.skinMat.color.setHex(this.hurtFlash > 0 ? 0xff5040 : 0xffffff); else this.skinMat.emissive.setHex(this.hurtFlash > 0 ? 0x701010 : 0x000000); }
+      return;
+    }
     const step = this.speed * (sp.id === 'tuko' ? 9 : 3.5);
     const phase = this.gait * step;
     this.legs.forEach((leg, i) => {

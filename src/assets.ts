@@ -9,7 +9,7 @@ export const propGlow = { value: 0.6 };
 
 /** Organic props carry their colour in the vertex colours; the brightest of them (bulbs, sprout heads, fibre tips,
  *  the hazard stripe) glow. */
-function addColourGlow(mat: THREE.Material) {
+export function addColourGlow(mat: THREE.Material) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uPropGlow = propGlow;
     sh.fragmentShader = sh.fragmentShader
@@ -21,6 +21,19 @@ function addColourGlow(mat: THREE.Material) {
         #endif`);
   };
   mat.customProgramCacheKey = () => 'prop-glow';
+  mat.needsUpdate = true;
+}
+
+/** Baked emission maps (creatures): scale the emissive glow with the night (propGlow) by k. */
+export function addMapGlow(mat: THREE.MeshStandardMaterial, k: number) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uPropGlow = propGlow;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uPropGlow;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance *= uPropGlow * ${k.toFixed(2)};`);
+  };
+  mat.customProgramCacheKey = () => 'map-glow';
   mat.needsUpdate = true;
 }
 
@@ -45,4 +58,24 @@ export function loadProps(): Promise<PropMeshes> {
     }, undefined, () => resolve({})); // missing: keep the old shapes
   });
   return loading;
+}
+
+export interface CreatureModels {
+  rigs: Record<'tuko' | 'oomi', THREE.Object3D>;
+  clips: THREE.AnimationClip[];
+  figure: THREE.BufferGeometry | null;
+}
+let creatures: Promise<CreatureModels | null> | null = null;
+/** Rigged, animated creatures (art/blender/bc_creatures.py) and the horror figure. */
+export function loadCreatures(): Promise<CreatureModels | null> {
+  creatures ??= new Promise((resolve) => {
+    new GLTFLoader().load('models/creatures.json', (gltf) => {
+      const tuko = gltf.scene.getObjectByName('Tuko'), oomi = gltf.scene.getObjectByName('Oomi');
+      const fig = gltf.scene.getObjectByName('Figure') as THREE.Mesh | undefined;
+      if (!tuko || !oomi) { resolve(null); return; }
+      for (const r of [tuko, oomi]) { r.parent?.remove(r); r.position.set(0, 0, 0); }
+      resolve({ rigs: { tuko, oomi }, clips: gltf.animations, figure: fig ? fig.geometry : null });
+    }, undefined, () => resolve(null));
+  });
+  return creatures;
 }
