@@ -20,11 +20,12 @@ export interface Settings {
   runToggle: boolean;  // press run once instead of holding it
   sneakToggle: boolean;
   compass: boolean;
+  fullHud: boolean;    // always show vitals and inventory (instead of only when they change)
   tutorial: boolean;   // station-core objectives panel
 }
 
 export const DEFAULTS: Settings = {
-  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, tutorial: true,
+  master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, fullHud: false, tutorial: true,
 };
 
 const KEY = 'biocrash-settings';
@@ -85,6 +86,7 @@ const ROWS: { group: string; rows: Row[] }[] = [
     { key: 'headBob', label: 'Head bob', kind: 'check' },
     { key: 'shakeAmt', label: 'Camera shake', kind: 'range', min: 0, max: 1, step: 0.05, fmt: pct },
     { key: 'compass', label: 'Compass', kind: 'check' },
+    { key: 'fullHud', label: 'Always show vitals and inventory', kind: 'check' },
     { key: 'tutorial', label: 'Station core objectives', kind: 'check' },
   ] },
 ];

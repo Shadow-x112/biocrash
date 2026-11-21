@@ -1,5 +1,11 @@
 // Biocrash: entry point. Builds the world and systems, runs the game-state machine and the frame loop.
 import * as THREE from 'three';
+// HUD type: Rajdhani (labels, headings), Inter (small text), Share Tech Mono (the station core's voice). OFL, latin only.
+import '@fontsource/rajdhani/latin-500.css';
+import '@fontsource/rajdhani/latin-600.css';
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/share-tech-mono/latin-400.css';
 import type RAPIERType from '@dimforge/rapier3d';
 import { World } from './terrain/world';
 import { createGenerator } from './terrain/density';
@@ -504,6 +510,8 @@ async function main() {
 
   // --- Inventory, hotbar and crafting UI -----------------------------------------------------------
   const invEl = $('inv'), recipesEl = $('recipes'), craftMsg = $('craftmsg');
+  let invShowT = 0; // seconds the inventory list stays up after a change
+  let craftableOnly = false;
   /** Pixel icon for an item, tool or the bare-hands slot (public/icons). */
   const ico = (id: string) => `<img class="ico" src="icons/${id}.png" alt="">`;
   function renderHotbar() {
@@ -515,19 +523,22 @@ async function main() {
   }
   function renderCraft() {
     $('craftinv').innerHTML = 'Carrying: ' + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `${ico(k)}<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
+    $('craftfilter').textContent = craftableOnly ? 'Craftable (F)' : 'All (F)';
+    $('craftfilter').classList.toggle('on', craftableOnly);
     recipesEl.innerHTML = RECIPES.map((r, i) => {
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
-        return `<span class="${have >= need ? 'ok' : 'no'}">${ico(k)}${need} ${ITEM_NAMES[k].toLowerCase()}${have >= need ? '' : ` (${have})`}</span>`;
+        return `<span class="${have >= need ? 'ok' : 'no'}">${have >= need ? '\u2713' : '\u2717'} ${ico(k)}${ITEM_NAMES[k]} <b>${Math.min(have, 999)}/${need}</b></span>`;
       }).join(' · ');
       const warm = fireNearPlayer() > 0.5;
-      const needs = [...(r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">needs ${ITEM_NAMES[k].toLowerCase()}</span>`),
-        ...(r.heat ? [`<span class="${warm ? 'ok' : 'no'}">\u{1F525} needs a lit fire close by</span>`] : [])].join(' · ');
+      const needs = [...(r.needs ?? []).map((k) => `<span class="${inventory.counts[k] > 0 ? 'ok' : 'no'}">${inventory.counts[k] > 0 ? '\u2713' : '\u2717'} ${ico(k)}needs ${ITEM_NAMES[k].toLowerCase()}</span>`),
+        ...(r.heat ? [`<span class="${warm ? 'ok' : 'no'}">${warm ? '\u2713' : '\u2717'} \u{1F525} needs a lit fire close by</span>`] : [])].join(' · ');
       const name = ITEM_NAMES[r.makes];
       const have = inventory.counts[r.makes];
       const done = r.unique && have > 0;
       const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
       const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>Craft</button>`;
+      if (craftableOnly && !can) return '';
       return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
@@ -543,6 +554,7 @@ async function main() {
     setTimeout(() => el.remove(), 1100);
   };
   inventory.onChange = () => {
+    invShowT = 5;
     invEl.innerHTML = MATERIALS.filter((k, i) => i < 3 || inventory.counts[k] > 0).map((k) => {
       const got = (lastCounts[k] ?? inventory.counts[k]) < inventory.counts[k];
       lastCounts[k] = inventory.counts[k];
@@ -588,6 +600,7 @@ async function main() {
     craftNote(`Made ${ITEM_NAMES[r.makes].toLowerCase()}${total > 1 ? ' \u00d7' + total : ''}. You have ${inventory.counts[r.makes]}.`);
     if (r.tool && first) hotbar.select(r.makes as Slot, () => true); // equip your first one
   };
+  $('craftfilter').addEventListener('click', () => { craftableOnly = !craftableOnly; renderCraft(); });
   recipesEl.addEventListener('click', (e) => {
     const r = RECIPES.find((x) => x.id === (e.target as HTMLElement).dataset.r);
     if (r) craft(r, (e as MouseEvent).shiftKey ? 5 : 1);
@@ -882,6 +895,7 @@ async function main() {
       else if (state === 'playing') { setState('craft'); if (document.pointerLockElement) document.exitPointerLock(); }
       return;
     }
+    if (state === 'craft' && e.code === 'KeyF') { craftableOnly = !craftableOnly; renderCraft(); return; }
     if (e.code === 'Escape') {
       // Esc isn't a user gesture, so it can't recapture the mouse: go to the pause menu, whose button can.
       if (state === 'craft') setState(player.dragLook ? 'playing' : 'menu');
@@ -928,14 +942,35 @@ async function main() {
   const fahrenheit = navigator.language === 'en-US';
   const fmtTemp = (c: number) => (fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
   const goalEl = $('goal'), buffsEl = $('buffs'), deathText = $('deathtext'), deathHint = $('deathhint');
+  // Only touch the DOM when a value actually changes (no per-frame style writes).
+  const domCache = new Map<HTMLElement, string>();
+  const setText = (el: HTMLElement, v: string) => { if (domCache.get(el) !== v) { domCache.set(el, v); el.textContent = v; } };
+  const setStyle = (el: HTMLElement, prop: 'transform' | 'opacity' | 'backgroundColor', v: string) => {
+    const k = `${prop}:${v}`;
+    if ((el.dataset.s ?? '') !== k) { el.dataset.s = k; el.style[prop] = v; }
+  };
+  // Contextual vitals: health shows when hurt or for a few seconds after it changes; body heat only while you're
+  // losing it or cold. The "Always show vitals and inventory" setting keeps everything up.
+  const hpGroup = $('hpgroup'), heatGroup = $('heatgroup'), hpvEl = $('hpv'), heatLabelEl = $('heatlabel'), tempvEl = $('tempv');
+  let lastHp = -1, lastHeat = -1, hpShowT = 0, heatShowT = 0, vitalsClock = performance.now();
+  const showGroup = (el: HTMLElement, on: boolean) => { if (el.classList.contains('faded') === on) el.classList.toggle('faded', !on); };
   const updateVitals = () => {
-    hpBar.style.width = `${survival.health}%`;
-    heatBar.style.width = `${survival.warmth}%`;
-    heatBar.style.backgroundColor = survival.warmth > 60 ? '#e0a050' : survival.warmth > 30 ? '#c9b98a' : '#8fc3e8';
-    $('hpv').textContent = String(Math.ceil(survival.health));
-    $('heatlabel').textContent = survival.cold ? '\u2744 Body heat \u00b7 freezing' : survival.warmth < 60 ? 'Body heat \u00b7 cooling' : 'Body heat';
-    $('tempv').textContent = `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`;
-    frostEl.style.opacity = String(Math.max(0, (45 - survival.warmth) / 45));
+    const now = performance.now(), dtv = (now - vitalsClock) / 1000; vitalsClock = now;
+    if (Math.abs(survival.health - lastHp) > 0.25) { if (lastHp >= 0) hpShowT = 4; lastHp = survival.health; }
+    if (survival.warmth < lastHeat - 0.4) { heatShowT = 4; lastHeat = survival.warmth; } else if (survival.warmth > lastHeat) lastHeat = survival.warmth;
+    hpShowT = Math.max(0, hpShowT - dtv); heatShowT = Math.max(0, heatShowT - dtv);
+    showGroup(hpGroup, settings.fullHud || survival.health < 75 || hpShowT > 0);
+    showGroup(heatGroup, settings.fullHud || survival.cold || survival.warmth < 60 || heatShowT > 0);
+    setStyle(hpBar, 'transform', `scaleX(${(survival.health / 100).toFixed(3)})`);
+    setStyle(heatBar, 'transform', `scaleX(${(survival.warmth / 100).toFixed(3)})`);
+    setStyle(heatBar, 'backgroundColor', survival.warmth > 60 ? '#e0a050' : survival.warmth > 30 ? '#c9b98a' : '#8fc3e8');
+    setText(hpvEl, String(Math.ceil(survival.health)));
+    setText(heatLabelEl, survival.cold ? '\u2744 Body heat \u00b7 freezing' : survival.warmth < 60 ? 'Body heat \u00b7 cooling' : 'Body heat');
+    setText(tempvEl, `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`);
+    setStyle(frostEl, 'opacity', Math.max(0, (45 - survival.warmth) / 45).toFixed(2));
+    // Inventory list: only for a few seconds after something changes (or always, with the setting on).
+    invShowT = Math.max(0, invShowT - dtv);
+    if (invEl.classList.contains('faded') === (settings.fullHud || invShowT > 0)) invEl.classList.toggle('faded');
     const buffs = [lampOn || lampCharge < 100 ? `Lamp ${Math.round(lampCharge)}%${lampOn ? '' : ` (${K('lamp')})`}` : '', survival.fed > 0 ? `Fed ${fmtTime(survival.fed)}` : '', survival.wrapped ? 'Hide wrap' : '', survival.afterglow > 0 ? `Recovering ${fmtTime(survival.afterglow)}` : ''].filter(Boolean).join('  \u00b7  ');
     // The sky is the only other clock: a readout of time until dark, or until dawn.
     const until = (to: number) => fmtTime((((to - sky.time) % 1) + 1) % 1 * DAY_LENGTH);
@@ -945,10 +980,11 @@ async function main() {
     const goal = tutorial.currentGoal();
     const goalText = goal ? `\u25B8 ${goal}` : '';
     if (goalEl.textContent !== goalText) goalEl.textContent = goalText;
-    if (horror.glitch > 0) { // the wrist readout misbehaves for a moment
-      $('tempv').textContent = `air ${fmtTemp(-60 + Math.random() * 140)}`;
-      $('hpv').textContent = String(Math.floor(Math.random() * 999));
-      $('heatlabel').textContent = Math.random() < 0.5 ? 'Body heat' : 'B\u0336ody h\u0336eat';
+    if (horror.glitch > 0) { // the wrist readout misbehaves for a moment (and shows itself to do it)
+      showGroup(hpGroup, true); showGroup(heatGroup, true);
+      setText(tempvEl, `air ${fmtTemp(-60 + Math.random() * 140)}`);
+      setText(hpvEl, String(Math.floor(Math.random() * 999)));
+      setText(heatLabelEl, Math.random() < 0.5 ? 'Body heat' : 'B\u0336ody h\u0336eat');
     }
   };
 

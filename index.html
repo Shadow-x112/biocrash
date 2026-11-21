@@ -138,16 +138,50 @@
       #death .sub { margin-top: 14px; font: 400 12px system-ui, sans-serif; color: #7f8e9c; }
       #overlay.showsettings #settings { display: block; } #overlay.showsettings #mainmenu { display: none; }
       #status { margin-top: 10px; font-size: 12px; color: #8a96a3; min-height: 1em; }
+
+      /* ---- HUD theme: field-kit panels, condensed labels, readable small text ---- */
+      :root { --hud-bg: rgba(7, 11, 13, 0.82); --hud-line: rgba(95, 211, 196, 0.22); --hud-text: #e3eaee; --hud-dim: #93a3ad;
+              --hud-accent: #e07a2f; --hud-core: #5fd3c4; --hud-danger: #ff5a4f;
+              --f-label: 'Rajdhani', system-ui, sans-serif; --f-body: 'Inter', system-ui, sans-serif; --f-mono: 'Share Tech Mono', ui-monospace, monospace; }
+      #vitals, #inv, #hotbar .slot, #core, #toast, #craft .panel, #overlay .panel, #prompt, #captions div { font-family: var(--f-body); }
+      #vitals, #inv, #hotbar, #core { contain: layout style; }
+      #inv, #hotbar .slot, #core, #toast { background: var(--hud-bg); border: 1px solid var(--hud-line);
+        clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); border-radius: 0; }
+      #vitals { padding: 8px 10px 4px; }
+      #vitals .row, #inv .row { font: 600 13px/1.5 var(--f-label); letter-spacing: 0.04em; text-transform: uppercase; color: var(--hud-text); }
+      #vitals .row > span:last-child, #inv .row > span:last-child { font: 600 13px var(--f-body); letter-spacing: 0; text-transform: none; color: var(--hud-dim); }
+      #inv .row > span:last-child { color: var(--hud-text); }
+      #hpv { color: var(--hud-text) !important; }
+      .vgroup, #inv { transition: opacity 0.6s ease, transform 0.6s ease; }
+      .vgroup.faded { opacity: 0; transform: translateX(-8px); }
+      #inv.faded { opacity: 0; transform: translateX(8px); }
+      .bar { height: 6px; border-radius: 0; background: rgba(255,255,255,0.07); }
+      .bar > div { width: 100% !important; border-radius: 0; transform-origin: left center; transition: transform 0.25s linear, background-color 0.4s; will-change: transform; }
+      #buffs, #goal { font: 600 12px/1.5 var(--f-label); letter-spacing: 0.05em; }
+      #hotbar .slot { font: 600 13px var(--f-label); letter-spacing: 0.04em; text-transform: uppercase; }
+      #hotbar .slot b { font: 600 10px var(--f-mono); letter-spacing: 0; color: var(--hud-dim); text-transform: none; }
+      #hotbar .slot.sel { border-color: var(--hud-accent); background: rgba(30, 16, 6, 0.85); box-shadow: inset 0 0 0 1px var(--hud-accent); }
+      #core, #core .tc-say, #logtext { font-family: var(--f-mono) !important; }
+      #core .tc-h { font-family: var(--f-mono); }
+      #compass span { font-family: var(--f-label); font-weight: 600; letter-spacing: 0.06em; }
+      #craft h2, #overlay h1 { font-family: var(--f-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+      .rname { font: 600 15px var(--f-label); letter-spacing: 0.03em; }
+      .rcost { font-size: 12px; } .rcost b { font-weight: 600; }
+      .rcost .no { color: #ff8a7a; }
+      #craftfilter { float: right; margin-top: 2px; padding: 3px 9px; border: 1px solid #3a4450; border-radius: 4px; background: transparent; color: var(--hud-dim);
+        font: 600 11px var(--f-label); letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; }
+      #craftfilter.on { border-color: var(--hud-accent); color: var(--hud-accent); }
+      #prompt { font-family: var(--f-label); font-size: 15px; letter-spacing: 0.04em; }
     </style>
   </head>
   <body>
     <div id="hud"></div>
     <div id="frost"></div><div id="hurt"></div><div id="unease"></div><div id="static"></div>
     <div id="vitals">
-      <div class="row"><span><img class="ico" src="icons/st_health.png" alt="">Health</span><span id="hpv"></span></div>
-      <div class="bar" id="hp"><div></div></div>
-      <div class="row"><span><img class="ico" src="icons/st_heat.png" alt=""><span id="heatlabel">Body heat</span></span><span id="tempv"></span></div>
-      <div class="bar" id="heat"><div></div></div>
+      <div id="hpgroup" class="vgroup"><div class="row"><span><img class="ico" src="icons/st_health.png" alt="">Health</span><span id="hpv"></span></div>
+      <div class="bar" id="hp"><div></div></div></div>
+      <div id="heatgroup" class="vgroup"><div class="row"><span><img class="ico" src="icons/st_heat.png" alt=""><span id="heatlabel">Body heat</span></span><span id="tempv"></span></div>
+      <div class="bar" id="heat"><div></div></div></div>
       <div id="buffs"></div>
       <div id="goal"></div>
     </div>
@@ -157,7 +191,7 @@
     <div id="rest"><div>Resting by the fire&hellip;<div class="sub">The night passes faster. Any key to get up.</div></div></div>
     <div id="inv"></div>
     <div id="hotbar"></div>
-    <div id="craft"><div class="panel"><h2>Crafting</h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
+    <div id="craft"><div class="panel"><h2>Crafting <button id="craftfilter" title="F: show only what you can craft now"></button></h2><p class="sub" id="craftsub"></p><div class="have" id="craftinv"></div><div id="recipes"></div><div id="craftmsg"></div></div></div>
     <div id="death"><div><div id="deathtext">You froze.</div><div id="deathhint"></div><div class="sub">Recovering at the crash site…</div></div></div>
     <div id="crosshair"></div><div id="hitmark"></div>
     <div id="compass"></div>
