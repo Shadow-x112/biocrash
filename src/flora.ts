@@ -33,6 +33,8 @@ const capGeo = new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0
 capGeo.scale(1, 0.55, 1);
 // The dome's rim sits CAP_RIM above its centre: lower it so the rim meets the gills (it used to float ~0.7 m above them).
 const CAP_RIM = Math.cos(Math.PI * 0.42) * 0.55;
+// ...and the rim's radius: the gills fill it exactly (same 14 corners), so no ring of sky shows between them.
+const CAP_RIM_R = Math.sin(Math.PI * 0.42);
 capGeo.translate(0, -CAP_RIM, 0);
 // Unit cap outline for its physics shape (a convex hull, scaled per mushroom): the cap is solid, you can stand on it.
 const CAP_HULL = (() => {
@@ -55,7 +57,7 @@ const bodyGeo = (() => {
     { g: new THREE.CylinderGeometry(0.7, 1, 1, 9, 3).translate(0, 0.5, 0), part: 0, tint: 0, glow: 0, col: STALK_COL },
     { g: capGeo, part: 1, tint: 1, glow: 0, col: new THREE.Color(1, 1, 1) },
     // Gills face the ground, so no sun reaches them: a faint glow of their own colour keeps them from going black.
-    { g: new THREE.CircleGeometry(0.93, 14).rotateX(Math.PI / 2).translate(0, 0.004, 0), part: 1, tint: 0, glow: -0.45, col: GILL_COL },
+    { g: new THREE.CircleGeometry(CAP_RIM_R, 14).rotateX(Math.PI / 2).translate(0, 0.004, 0), part: 1, tint: 0, glow: -0.45, col: GILL_COL },
   ];
   for (let k = 0; k < SPOTS_PER; k++) {
     const a = k * 2.4, rr = 0.35 + (k % 3) * 0.2;
@@ -77,9 +79,11 @@ const bodyGeo = (() => {
   out.setAttribute('aGlow', new THREE.Float32BufferAttribute(glow, 1));
   return out;
 })();
+// The trunk reaches this far below its base point, so on a slope its downhill side still meets the ground.
 const BODY_VERT = `
+  float SINK = 0.4 + iDims.x * 1.5;
   vec3 transformed = aPart < 0.5
-    ? vec3(position.x * iDims.x, position.y * (iDims.y + 0.3) - 0.3, position.z * iDims.x)
+    ? vec3(position.x * iDims.x, position.y * (iDims.y + SINK) - SINK, position.z * iDims.x)
     : position * iDims.z + vec3(0.0, iDims.y, 0.0);`;
 const SWAY = `
   {
@@ -283,8 +287,8 @@ export class Flora {
     this.clearBody(s);
     const R = this.rapier;
     const body = this.physics.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation(rot));
-    const len = h + 0.3;
-    this.physics.createCollider(R.ColliderDesc.cylinder(len / 2, s.radius * 0.85).setTranslation(0, len / 2 - 0.3, 0), body);
+    const sink = 0.4 + s.radius * 1.5, len = h + sink;
+    this.physics.createCollider(R.ColliderDesc.cylinder(len / 2, s.radius * 0.85).setTranslation(0, len / 2 - sink, 0), body);
     const pts = new Float32Array(CAP_HULL.length);
     for (let i = 0; i < pts.length; i++) pts[i] = CAP_HULL[i] * s.capR;
     const hull = R.ColliderDesc.convexHull(pts);
