@@ -136,6 +136,8 @@ export class Flora {
   readonly group = new THREE.Group();
   /** How many times each mushroom has been harvested (saved). */
   readonly harvested = new Map<string, number>();
+  /** Ground nothing may grow on (the wreck). */
+  blocked?: (x: number, z: number) => boolean;
   private chunks = new Map<string, ChunkFlora>();
   private bodies: InstancePool;
   private sprouts: InstancePool;
@@ -193,6 +195,7 @@ export class Flora {
         if (!d[o + 8]) continue;
         const p = new THREE.Vector3(d[o], d[o + 1], d[o + 2]);
         if (Math.hypot(p.x - this.avoid.x, p.z - this.avoid.z) < 9) continue; // keep the crash site clear
+        if (this.blocked?.(p.x, p.z)) continue; // not through the wreck
         const h = hMin + d[o + 4] * (hMax - hMin);
         const capR = h * (kind === 'giant' ? 0.42 : 0.5);
         if (placed.some((q) => q.p.distanceTo(p) < (q.cap + capR) * 0.8)) continue; // no overlapping caps

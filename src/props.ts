@@ -57,6 +57,8 @@ const KINDS: PropKind[] = [
 import { InstancePool } from './pool';
 
 export class Props {
+  /** Ground nothing may lie on (the wreck). */
+  blocked?: (x: number, z: number) => boolean;
   readonly group = new THREE.Group();
   readonly picked = new Set<string>();
   private chunks = new Map<string, ChunkProps>();
@@ -119,6 +121,7 @@ export class Props {
         if (!d[o + 8]) continue; // ground dug away or buried
         const id = `${key}:${kind.id}:${i}`;
         if (this.picked.has(id)) continue;
+        if (this.blocked?.(d[o], d[o + 2])) continue; // not inside the wreck
         const sc = kind.scale[0] + d[o + 5] * (kind.scale[1] - kind.scale[0]);
         // Tilt to the slope: approximate the normal from ny with a seeded lean direction.
         const lean = Math.acos(Math.min(1, d[o + 3])), dir = d[o + 6] * Math.PI * 2;
