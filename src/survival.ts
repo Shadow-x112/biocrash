@@ -50,7 +50,7 @@ export class Survival {
   /** Speed multiplier for the player (cold makes you sluggish). */
   moveFactor() { return this.cold ? 0.7 + (this.warmth / 30) * 0.3 : 1; }
 
-  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; roof: (eye: THREE.Vector3) => boolean;
+  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; roof: (eye: THREE.Vector3) => boolean; caps?: (eye: THREE.Vector3, dir: THREE.Vector3) => boolean;
     ground: (x: number, z: number) => { y: number } | null }) {
     // Is there anything over your head, and is the sun behind terrain? A few times a second. The roof uses the physics
     // ray (fast); the shade check walks along the sun's direction against the height map instead of raycasting meshes.
@@ -65,6 +65,7 @@ export class Survival {
           if (g && g.y > y) { this.shaded = true; break; }
           if (y > 90) break; // above any terrain
         }
+        if (!this.shaded && ctx.caps) this.shaded = ctx.caps(ctx.eye, ctx.sunDir); // under a mushroom cap's shadow
       }
     }
 

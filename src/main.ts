@@ -985,10 +985,14 @@ async function main() {
   /** The hand scene's lights follow the world's: sky colours, the sun or moon turned into the camera's frame, the
    *  nearest burning fire, and the lamp as a fill. */
   const camInv = new THREE.Quaternion(), tv = new THREE.Vector3();
-  const syncHandLights = () => {
+  let handLit = 1;
+  const syncHandLights = (dt: number) => {
     camInv.copy(camera.quaternion).invert();
     handHemi.color.copy(sky.hemi.color); handHemi.groundColor.copy(sky.hemi.groundColor); handHemi.intensity = sky.hemi.intensity;
-    handSun.color.copy(sky.sun.color); handSun.intensity = sky.sun.intensity;
+    // The held tool has its own lights (separate scene, no shadow map): dim its sun when you stand in shade, under a cap or
+    // a roof, or it glowed sunlit in the dark of a pit.
+    handLit += ((survival.shaded || survival.sheltered ? 0.12 : 1) - handLit) * Math.min(1, dt * 4);
+    handSun.color.copy(sky.sun.color); handSun.intensity = sky.sun.intensity * handLit;
     handSun.position.copy(tv.subVectors(sky.sun.position, sky.sun.target.position).normalize().applyQuaternion(camInv)).multiplyScalar(5);
     let near: THREE.Vector3 | null = null, nd = 14, str = 0;
     for (const f of campfires.list) { const d = f.position.distanceTo(camera.position); if (f.lit && d < nd) { nd = d; near = f.position; str = f.heat.heatC / 62; } }
@@ -1497,7 +1501,7 @@ async function main() {
       sky.update(wdt, camera);
       if (live && !player.frozen) {
         survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40),
-          ground: (x, z) => world.groundAt(x, z) });
+          caps: (e, d) => flora.capOver(e, d), ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor() * inventory.load_().speed;
         for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
         crates.update(wdt);
@@ -1612,8 +1616,8 @@ async function main() {
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.info.reset(); // count every pass of the frame for the F3 readout
-    syncHandLights();
-    if (renderer.shadowMap.enabled && ++shadowTick % 3 === 0) renderer.shadowMap.needsUpdate = true;
+    syncHandLights(dt);
+    if (renderer.shadowMap.enabled && sky.sun.intensity > 0.02 && ++shadowTick % 3 === 0) renderer.shadowMap.needsUpdate = true; // none in the dusk gap
     post.render(scene, camera, dt, hands);
     if (recompileIn > 0 && --recompileIn === 0) recompileAll();
     smooth('render', performance.now() - tm);

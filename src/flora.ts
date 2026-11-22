@@ -217,11 +217,14 @@ BODY.customProgramCacheKey = () => 'fungus-body';
 // Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit fungus.
 const BODY_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 BODY_DEPTH.onBeforeCompile = (sh) => {
+  // ...and the same sway, or the shadows stand still while the caps and tendrils swing above them.
+  Object.assign(sh.uniforms, fxUniforms);
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute vec3 iDims;')
-    .replace('#include <begin_vertex>', BODY_VERT);
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTend; attribute vec3 iDims; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <begin_vertex>', BODY_VERT)
+    .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
 };
-BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth';
+BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth2';
 const sproutGeo = (() => {
   const parts = [new THREE.ConeGeometry(0.05, 0.35, 5).translate(0, 0.17, 0), new THREE.SphereGeometry(0.06, 6, 4).translate(0, 0.37, 0)];
   const pos: number[] = [], nrm: number[] = [];
@@ -235,6 +238,7 @@ const sproutGeo = (() => {
   return out;
 })();
 
+const CAP_C = new THREE.Vector3();
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 /** Real lights lent to the nearest glowing fungi (a fixed pool: no shader recompiles). */
 const GLOW_LIGHTS = 4;
@@ -412,6 +416,22 @@ export class Flora {
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const a = this.trunkGrid.get(`${Math.floor(x / 8) + dx},${Math.floor(z / 8) + dz}`);
       if (a) for (const s of a) if (s.alive && Math.hypot(x - s.base.x, z - s.base.z) < s.radius * 1.6 + pad) return true; // the foot flares to ~1.6x
+    }
+    return false;
+  }
+
+  /** Does a ray from `o` along unit `d` pass under a mushroom cap within `maxD` m (for shade: caps cast real shadows)? */
+  capOver(o: THREE.Vector3, d: THREE.Vector3, maxD = 40) {
+    const r = Math.ceil(maxD / 8), cx = Math.floor(o.x / 8), cz = Math.floor(o.z / 8);
+    for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      const a = this.trunkGrid.get(`${cx + dx},${cz + dz}`);
+      if (a) for (const s of a) {
+        if (!s.alive) continue;
+        const c = CAP_C.set(0, s.dims[1] + s.capR * 0.15, 0).applyMatrix4(s.pose).sub(o);
+        const t = c.dot(d);
+        if (t < 0 || t > maxD) continue;
+        if (c.lengthSq() - t * t < s.capR * s.capR * 0.8) return true;
+      }
     }
     return false;
   }
