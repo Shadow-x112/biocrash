@@ -25,6 +25,8 @@ interface Shroom {
   pose: THREE.Matrix4; dims: [number, number, number, number];
   /** Tendril length scale (1 = full; shorter where the ground under the cap is close, so they don't hang into it). */
   reach: number;
+  /** False until every ground sample under the cap had loaded when `reach` was measured. */
+  reachOk: boolean;
   /** Slot in the detailed near pool (-1: drawn with the light far mesh). */
   near: number;
 }
@@ -137,6 +139,7 @@ const SWAY = `
     sway *= clamp(transformed.y / max(iDims.y, 0.5), 0.0, 1.0); // rooted: the trunk bends, the crown moves most
     // Tendrils trail and swing on their own, most at the tips.
     sway += vec3(sin(uFxTime * 1.3 + ph * 3.0 + position.x * 9.0), 0.0, cos(uFxTime * 1.1 + ph * 2.0 + position.z * 9.0)) * aTend * aTend * 0.12 * iDims.z;
+    sway *= step(0.1, iDims.w); // a felled one lies still (it kept swaying on the ground)
     mvPosition.xyz += (viewMatrix * vec4(sway, 0.0)).xyz;
     gl_Position = projectionMatrix * mvPosition;
   }`;
@@ -217,7 +220,7 @@ BODY.onBeforeCompile = (sh) => {
       totalEmissiveRadiance += uRim * rimF;`);
 };
 BODY.side = THREE.DoubleSide;
-BODY.customProgramCacheKey = () => 'fungus-body2';
+BODY.customProgramCacheKey = () => 'fungus-body3';
 // Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit fungus.
 const BODY_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 BODY_DEPTH.onBeforeCompile = (sh) => {
@@ -228,7 +231,7 @@ BODY_DEPTH.onBeforeCompile = (sh) => {
     .replace('#include <begin_vertex>', BODY_VERT)
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
 };
-BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth3';
+BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth4';
 const sproutGeo = (() => {
   const parts = [new THREE.ConeGeometry(0.05, 0.35, 5).translate(0, 0.17, 0), new THREE.SphereGeometry(0.06, 6, 4).translate(0, 0.37, 0)];
   const pos: number[] = [], nrm: number[] = [];
@@ -243,6 +246,8 @@ const sproutGeo = (() => {
 })();
 
 const CAP_C = new THREE.Vector3();
+/** Stable per-id number (which of two overlapping fungi from neighbouring chunks is kept). */
+const idHash = (id: string) => { let h = 2166136261; for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619); return h >>> 0; };
 const TENDRIL_LEN = 2.0; // lowest tendril tip, in cap radii below the cap's centre (both fungus meshes)
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 /** Real lights lent to the nearest glowing fungi (a fixed pool: no shader recompiles). */
@@ -341,6 +346,16 @@ export class Flora {
         const h = hMin + d[o + 4] * (hMax - hMin);
         const capR = h * (kind === 'giant' ? 0.32 : 0.4);
         if (placed.some((q) => q.p.distanceTo(p) < (q.cap + capR) * 0.8)) continue; // no overlapping caps
+        // ...nor with a neighbouring chunk's (each chunk only checked its own). The same one always wins whichever
+        // chunk loads first: a cut mushroom, else the higher id hash.
+        const id = `${key}:${kind}:${i}`;
+        let lose = false;
+        for (const o of this.near(p.x, p.z, 2)) {
+          if (!o.alive || o.base.distanceTo(p) >= (o.capR + capR) * 0.8) continue;
+          if (this.harvested.has(o.id) || idHash(o.id) > idHash(id)) { lose = true; break; }
+        }
+        if (lose) continue;
+        for (const o of this.near(p.x, p.z, 2)) if (o.alive && o.base.distanceTo(p) < (o.capR + capR) * 0.8) this.removeShroom(o);
         placed.push({ p, n: new THREE.Vector3(d[o + 9], d[o + 3], d[o + 10]).normalize(), h, r: h * (kind === 'giant' ? 0.06 : 0.09), cap: capR, tilt: (d[o + 5] - 0.5) * 0.25,
           spin: d[o + 6] * Math.PI * 2, color: Math.floor(d[o + 7] * CAP_COLORS.length) % CAP_COLORS.length, id: `${key}:${kind}:${i}`, source: i, kind });
       }
@@ -351,9 +366,9 @@ export class Flora {
       e.set(o.tilt, o.spin, o.tilt * 0.6);
       q.setFromEuler(e);
       const slot = this.bodies.alloc(m.compose(o.p, q, one), CAP_COLORS[o.color]);
-      const reach = this.tendrilReach(m, o.h, o.cap);
+      const [reach, reachOk] = this.tendrilReach(m, o.h, o.cap);
       this.bodies.setExtra(slot, o.r, o.h, o.cap, reach);
-      const s: Shroom = { reach, id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
+      const s: Shroom = { reach, reachOk, id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
         q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n, pose: m.clone(), dims: [o.r, o.h, o.cap, reach], near: -1 };
       c.shrooms.push(s);
       this.gridAdd(s);
@@ -448,17 +463,34 @@ export class Flora {
   ground?: (x: number, z: number) => number | null;
 
   /** How much of the tendrils' length fits between the cap and the highest ground under it (1 = all of it). */
-  private tendrilReach(pose: THREE.Matrix4, h: number, capR: number) {
-    if (!this.ground) return 1;
+  private tendrilReach(pose: THREE.Matrix4, h: number, capR: number): [number, boolean] {
+    if (!this.ground) return [1, true];
     const c = CAP_C.set(0, h, 0).applyMatrix4(pose);
-    let hi = -Infinity;
+    let hi = -Infinity, all = true;
     for (let a = 0; a < 8; a++) for (const rr of [0.35, 0.8]) {
       const g = this.ground(c.x + Math.cos(a * 0.785) * capR * rr, c.z + Math.sin(a * 0.785) * capR * rr);
-      if (g != null) hi = Math.max(hi, g);
+      if (g != null) hi = Math.max(hi, g); else all = false;
     }
-    if (hi === -Infinity) return 1;
+    if (hi === -Infinity) return [1, false];
     // Tendrils hang ~2 cap radii below the cap's centre; keep their tips ~0.25 m off the ground.
-    return THREE.MathUtils.clamp((c.y - hi - 0.25) / (TENDRIL_LEN * capR), 0.25, 1);
+    return [THREE.MathUtils.clamp((c.y - hi - 0.25) / (TENDRIL_LEN * capR), 0.25, 1), all];
+  }
+
+  /** Re-measures a standing fungus's tendrils (ground loaded late, or was dug or filled under the cap). */
+  private remeasure(s: Shroom) {
+    if (!s.alive || this.toppled(s)) return;
+    [s.reach, s.reachOk] = this.tendrilReach(s.pose, s.dims[1], s.capR);
+    s.dims[3] = s.reach;
+    this.place(s);
+  }
+
+  /** Fungi whose trunks stand within `r` grid cells (8 m) of (x, z). */
+  private *near(x: number, z: number, r: number) {
+    const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
+    for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      const a = this.trunkGrid.get(`${cx + dx},${cz + dz}`);
+      if (a) yield* [...a];
+    }
   }
 
   /** Swap in the Blender-built fungus (bc_flora.py): same unit layout and per-vertex tags as the code-built one. */
@@ -512,6 +544,7 @@ export class Flora {
   /** After digging or filling: mushrooms and sprouts whose ground changed are removed (with their colliders). */
   private applyValidity(c: ChunkFlora, deco: DecoData) {
     for (const s of c.shrooms) if (s.alive && !deco[s.kind][s.source * STRIDE + 8]) this.removeShroom(s);
+    for (const s of c.shrooms) this.remeasure(s); // the ground under the caps may have moved
     c.sprouts = c.sprouts.filter((sp) => {
       if (deco.sprout[sp.source * STRIDE + 8]) return true;
       this.releaseSprout(sp);
@@ -555,7 +588,7 @@ export class Flora {
     for (const c of this.chunks.values()) for (const s of c.shrooms) {
       if (!s.alive) continue;
       const d = s.base.distanceTo(viewer) - s.capR * 4;
-      if (d < 45) cand.push({ s, d });
+      if (d < 45) { cand.push({ s, d }); if (!s.reachOk) this.remeasure(s); }
     }
     cand.sort((a, b) => a.d - b.d);
     for (const { s } of cand.slice(0, 120)) want.add(s);
