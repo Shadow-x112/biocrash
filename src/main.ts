@@ -193,12 +193,12 @@ async function main() {
   scene.add(wreck.group, wreck.debris);
   const wreckPos = wreck; // (the compass code below has its own `wreck`)
   const props = new Props();
-  props.blocked = (x, z) => wreck.covers(x, z) || flora.trunkAt(x, z); // not inside the wreck or a mushroom trunk
+  props.blocked = (x, z) => wreck.covers(x, z) || wreck.debrisAt(x, z) || flora.trunkAt(x, z); // not inside the wreck or a mushroom trunk
   for (const id of meta?.picked ?? []) props.picked.add(id);
   scene.add(props.group);
   const flora = new Flora(RAPIER, physics, spawnPoint);
-  flora.blocked = (x, z) => wreck.covers(x, z, 3);
-  wreck.onSeated = () => { flora.clearBlocked(); props.clearBlocked(); };
+  flora.blocked = (x, z) => wreck.covers(x, z, 3) || wreck.debrisAt(x, z, 0.3);
+  wreck.onSeated = wreck.onDebris = () => { flora.clearBlocked(); props.clearBlocked(); };
   // The Blender-built props replace the placeholder shapes as soon as they load.
   void loadProps().then((m) => { props.setLooks(m); flora.setLooks(m); campfires.setLooks(m); packs.setLook(m.Pack); });
   void loadViewmodels().then((m) => hotbar.setLooks(m));
@@ -824,7 +824,10 @@ async function main() {
   const aimDir = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
   /** What terrain the crosshair is on, within `reach` (through the physics colliders, not the render meshes). */
-  const aimAtTerrain = (reach: number) => world.raycast(camera.position, camera.getWorldDirection(aimDir), reach);
+  const aimAtTerrain = (reach: number) => {
+    const hit = world.raycast(camera.position, camera.getWorldDirection(aimDir), reach);
+    return hit && wreck.blocks(camera.position, aimDir, hit.distance) ? null : hit; // the hull is in the way
+  };
   const hitEl = $('hitmark'), crossEl = $('crosshair');
   /** Crosshair state: enemy in reach, something to use, a creature out of reach, terrain to dig, or nothing. */
   const crosshairFor = (t: Target): string => {
@@ -1016,6 +1019,7 @@ async function main() {
     }
     if (kind === 'solar') {
       if (!hit || hit.normal.y < 0.8) return 'Look at flatter ground nearby to set up the panel.';
+      if (wreck.debrisAt(hit.point.x, hit.point.z, 0.6)) return 'A hull plate is in the way.';
       if ([...crates.list.map((c) => c.position), ...placeables.solars.map((s) => s.pos), ...campfires.list.map((f) => f.position)].some((p) => p.distanceTo(hit.point) < 1.4)) return 'Too close to something else.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to set it up here.';
       if (placeables.solars.length >= MAX_SOLARS) return `You have ${MAX_SOLARS} panels already.`;
@@ -1024,6 +1028,7 @@ async function main() {
     }
     if (kind === 'crate') {
       if (!hit || hit.normal.y < 0.8) return 'Look at flatter ground nearby to place the crate.';
+      if (wreck.debrisAt(hit.point.x, hit.point.z, 0.6)) return 'A hull plate is in the way.';
       if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.1)) return 'Too close to another crate.';
       if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.3)) return 'Too close to the fire.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to place it here.';
@@ -1032,6 +1037,7 @@ async function main() {
       return '';
     }
     if (!hit || hit.normal.y < 0.7) return 'Look at flatter ground nearby to build a campfire.';
+    if (wreck.debrisAt(hit.point.x, hit.point.z, 0.5)) return 'A hull plate is in the way.';
     // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
     if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
     if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) return 'Step back a little to build here.';
@@ -1501,8 +1507,8 @@ async function main() {
       const wdt = resting ? dt * 6 : dt; // world time while resting
       sky.update(wdt, camera);
       if (live && !player.frozen) {
-        survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40),
-          caps: (e, d) => flora.capOver(e, d), ground: (x, z) => world.groundAt(x, z) });
+        survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40) || wreck.blocks(e, UP, 40), // the wreck shelters you too
+          caps: (e, d) => flora.capOver(e, d) || wreck.blocks(e, d, 40), ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor() * inventory.load_().speed;
         for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
         crates.update(wdt);

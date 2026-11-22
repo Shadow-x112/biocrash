@@ -74,8 +74,26 @@ export class Wreck {
     const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
     const pos = g.getAttribute('position').array as Float32Array;
     const idx = g.index ? new Uint32Array(g.index.array) : new Uint32Array([...Array(pos.length / 3).keys()]);
-    this.physics.createCollider(this.rapier.ColliderDesc.trimesh(new Float32Array(pos), idx));
+    this.colHandle = this.physics.createCollider(this.rapier.ColliderDesc.trimesh(new Float32Array(pos), idx)).handle;
   }
+
+  private colHandle = -1;
+  /** Does the hull stop a ray from `o` along unit `d` before `maxDist`? (Aiming at the ground used to look straight
+   *  through it: you could dig under the wreck and build fires and crates inside it.) */
+  blocks(o: THREE.Vector3, d: THREE.Vector3, maxDist: number) {
+    if (this.colHandle < 0) return false;
+    const hit = this.physics.castRay(new this.rapier.Ray(o, d), maxDist, true, undefined, undefined, undefined, undefined,
+      (c) => c.handle === this.colHandle);
+    return !!hit;
+  }
+
+  /** On or right beside a hull plate (props don't grow through them, nothing is built on them). */
+  debrisAt(x: number, z: number, pad = 0.2) {
+    for (const d of this.debris.children) if (Math.hypot(x - d.position.x, z - d.position.z) < 0.85 * d.scale.x + pad) return true;
+    return false;
+  }
+  /** Called when plates land (props and sprouts already growing under them are cleared). */
+  onDebris?: () => void;
 
   /** Inside the wreck's footprint (keeps mushrooms, stones and fiber from growing through it). */
   covers(x: number, z: number, margin = 1.5) {
@@ -166,6 +184,7 @@ export class Wreck {
   private todoTimer = 0;
   private debrisTodo: { i: number; x: number; z: number; rx: number; ry: number; rz: number; sc: number; k: { geometry: THREE.BufferGeometry; material: THREE.Material }; splatMat: THREE.Material; quad: THREE.BufferGeometry }[] = [];
   private placeDebris() {
+    let landed = false;
     this.debrisTodo = this.debrisTodo.filter(({ i, x, z, rx, ry, rz, sc, k, splatMat, quad }) => {
       const h = this.ground(x, z);
       if (h === null) return true;
@@ -185,8 +204,10 @@ export class Wreck {
       sp.position.set(0, -0.025, 0).applyQuaternion(piece.quaternion.clone().invert()); sp.scale.set(1.5, 1, 1.15); sp.renderOrder = -1;
       piece.add(sp);
       this.debris.add(piece);
+      landed = true;
       return false;
     });
+    if (landed) this.onDebris?.();
   }
 
   update(dt: number) {
