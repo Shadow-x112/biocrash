@@ -15,7 +15,7 @@ export interface Recipe {
   /** Built in the world rather than carried: crafting starts placement, the cost is paid when it's placed. */
   place?: boolean;
   /** Learned by scanning this creature with the wrist link, not by holding the parts. */
-  scan?: 'tuko' | 'oomi';
+  scan?: 'tuko' | 'oomi' | 'chip_cell' | 'chip_flare' | 'chip_solar';
   /** Needs a lit fire close by (curing hide, hardening chitin): night work at the camp. */
   heat?: boolean;
   blurb: string;
@@ -41,6 +41,13 @@ export const RECIPES: Recipe[] = [
     blurb: 'A stitched hide backpack with a bone frame: 4 more carry slots.' },
   { id: 'crate', makes: 'crate', amount: 1, place: true, cost: { stalkwood: 6, cordage: 3, stone: 2 },
     blurb: 'Lashed stalkwood under a hull-plate lid: 16 slots of storage at camp, and meat keeps twice as long.' },
+  // Station tech: each is learned by reading a data chip found around the wreck.
+  { id: 'lamp_cell', makes: 'lamp_cell', amount: 1, unique: true, cost: { chitin: 2, cordage: 2, bone: 1 }, scan: 'chip_cell',
+    blurb: 'A salvaged power cell wired into your wrist lamp: it drains half as fast and recharges faster.' },
+  { id: 'flare', makes: 'flare', amount: 1, place: true, cost: { stalkwood: 1, fiber: 4, chitin: 1 }, scan: 'chip_flare',
+    blurb: 'A stake with a chemical head. Burns red for two minutes: light in the dark, and it steadies your nerves.' },
+  { id: 'solar', makes: 'solar', amount: 1, place: true, cost: { stalkwood: 6, chitin: 4, cordage: 3 }, scan: 'chip_solar',
+    blurb: 'A salvaged cell panel on a stalkwood frame. In daylight it charges your wrist lamp fast while you stand near it.' },
 ];
 
 /** A recipe is learned once you have held every one of its parts (and the tools it needs). */

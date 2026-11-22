@@ -53,10 +53,11 @@ export const MILESTONES = {
   wreck: { say: 'Med bay is dark. The distress beacon is still transmitting. Nobody has answered. Yet.', goal: '' },
   scan_tuko: { say: 'Tuko scanned. That shell plate is harder than anything I have on file. Heated and lashed to a spear, it would bite deep. Added to crafting.', goal: '' },
   scan_oomi: { say: 'Oomi scanned. Dense hide, long bones. Stitch three hides over a bone frame and you could carry a lot more. Added to crafting.', goal: '' },
+  chip: { say: 'Station data, intact. I can rebuild the schematics from it. It’s in crafting now. There should be more of these scattered around the wreck.', goal: '' },
   death: { say: 'I pulled your vitals back at the crash site. What you carried is where you fell: it’s on your compass.', goal: 'Recover your pack' },
 } as const;
 export type MilestoneId = keyof typeof MILESTONES;
-const URGENT = new Set<MilestoneId>(['cold', 'sunset', 'scan_tuko', 'scan_oomi']);
+const URGENT = new Set<MilestoneId>(['cold', 'sunset', 'scan_tuko', 'scan_oomi', 'chip']);
 
 export class Tutorial {
   step = 0;

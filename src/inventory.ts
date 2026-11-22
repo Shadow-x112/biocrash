@@ -2,7 +2,9 @@
 export type ItemId = 'stone' | 'stalkwood' | 'fiber' | 'cordage' | 'chitin' | 'hide' | 'bone' | 'raw_meat' | 'cooked_meat'
   | 'stone_pick' | 'stone_knife' | 'spear' | 'bone_needle' | 'hide_wrap' | 'chitin_spearhead' | 'fiber_pouch' | 'hide_pack'
   /** Placed, never carried: crafting it starts placement. */
-  | 'crate';
+  | 'crate' | 'flare' | 'solar'
+  /** Station tech gear (learned from data chips). */
+  | 'lamp_cell';
 export type Cost = Partial<Record<ItemId, number>>;
 
 export const ITEM_NAMES: Record<ItemId, string> = {
@@ -21,6 +23,9 @@ export const ITEM_NAMES: Record<ItemId, string> = {
   fiber_pouch: 'Fiber pouch',
   hide_pack: 'Hide pack',
   crate: 'Storage crate',
+  flare: 'Signal flare',
+  solar: 'Solar panel',
+  lamp_cell: 'Lamp power cell',
   stone_pick: 'Stone pick',
   stone_knife: 'Stone knife',
   spear: 'Spear',
@@ -30,7 +35,7 @@ export const ITEM_NAMES: Record<ItemId, string> = {
 export const MATERIALS: ItemId[] = ['stone', 'stalkwood', 'fiber', 'cordage', 'chitin', 'hide', 'bone', 'raw_meat', 'cooked_meat'];
 export const TOOLS: ItemId[] = ['stone_pick', 'stone_knife', 'spear'];
 /** Kept for good once made (never dropped on death): worn or fitted gear, the needle and the bags. */
-export const GEAR: ItemId[] = ['bone_needle', 'hide_wrap', 'chitin_spearhead', 'fiber_pouch', 'hide_pack'];
+export const GEAR: ItemId[] = ['bone_needle', 'hide_wrap', 'chitin_spearhead', 'fiber_pouch', 'hide_pack', 'lamp_cell'];
 
 /** How many of a material share one carry slot. */
 export const STACK: Partial<Record<ItemId, number>> = {
@@ -39,7 +44,7 @@ export const STACK: Partial<Record<ItemId, number>> = {
 /** Kilograms each. Tools and bags count too; the needle and wrap are too light to matter. */
 export const WEIGHT: Partial<Record<ItemId, number>> = {
   stone: 1.0, stalkwood: 0.7, fiber: 0.05, cordage: 0.1, chitin: 0.5, hide: 0.8, bone: 0.3, raw_meat: 0.6, cooked_meat: 0.45,
-  stone_pick: 1.6, stone_knife: 0.4, spear: 1.3, fiber_pouch: 0.2, hide_pack: 0.9,
+  stone_pick: 1.6, stone_knife: 0.4, spear: 1.3, fiber_pouch: 0.2, hide_pack: 0.9, lamp_cell: 0.3,
 };
 /** Uses before a tool breaks: a dig stroke, a cut, a harvest or a hit each count one. */
 export const DURABILITY: Partial<Record<ItemId, number>> = { stone_pick: 500, stone_knife: 160, spear: 120 };
@@ -62,7 +67,7 @@ export const LOAD_BANDS = [
 export class Inventory {
   readonly counts: Record<ItemId, number> = {
     stone: 0, stalkwood: 0, fiber: 0, cordage: 0, chitin: 0, hide: 0, bone: 0, raw_meat: 0, cooked_meat: 0,
-    stone_pick: 0, stone_knife: 0, spear: 0, bone_needle: 0, hide_wrap: 0, chitin_spearhead: 0, fiber_pouch: 0, hide_pack: 0, crate: 0,
+    stone_pick: 0, stone_knife: 0, spear: 0, bone_needle: 0, hide_wrap: 0, chitin_spearhead: 0, fiber_pouch: 0, hide_pack: 0, crate: 0, flare: 0, solar: 0, lamp_cell: 0,
   };
   /** Age in seconds of each carried piece of meat, oldest first. Always as long as the count. */
   readonly ages: Record<Perishable, number[]> = { raw_meat: [], cooked_meat: [] };

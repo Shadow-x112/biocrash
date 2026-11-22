@@ -4,6 +4,7 @@
 import { CHUNK, GEN_VERSION, SAVE_VERSION } from './config';
 import type { CampfireSave } from './campfire';
 import type { CrateSave } from './crate';
+import type { PlacedSave } from './placeables';
 
 export interface SaveMeta {
   saveVersion: number;
@@ -43,6 +44,8 @@ export interface SaveMeta {
   wear?: Record<string, number>;
   /** Creatures scanned with the wrist link (advanced recipes). */
   scanned?: string[];
+  /** Solar panels and burning flares. */
+  placed?: PlacedSave;
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -155,6 +158,16 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     for (const [k, n] of Object.entries(m.wear as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v !== undefined) out.wear[k.slice(0, 32)] = Math.floor(v); }
   }
   if (Array.isArray(m.scanned)) out.scanned = m.scanned.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 50);
+  const pl = m.placed as Record<string, unknown> | undefined;
+  if (pl && typeof pl === 'object') {
+    const pts = (a: unknown, extra: 'rot' | 't') => (Array.isArray(a) ? a : []).slice(0, 60).flatMap((o: Record<string, unknown>) => {
+      if (!o || typeof o !== 'object') return [];
+      const [x, y, z] = [num(o.x, -1e6, 1e6), num(o.y, -1e4, 1e4), num(o.z, -1e6, 1e6)];
+      if (x === undefined || y === undefined || z === undefined) return [];
+      return [{ x, y, z, v: extra === 'rot' ? num(o.rot, -10, 10) ?? 0 : num(o.t, 0, 600) ?? 0 }];
+    });
+    out.placed = { solars: pts(pl.solars, 'rot').map(({ x, y, z, v }) => ({ x, y, z, rot: v })), flares: pts(pl.flares, 't').map(({ x, y, z, v }) => ({ x, y, z, t: v })) };
+  }
   if (Array.isArray(m.seen)) out.seen = m.seen.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 100);
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);

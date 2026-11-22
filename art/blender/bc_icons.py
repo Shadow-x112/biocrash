@@ -204,6 +204,17 @@ hs.data.materials.append(GLOWM)
 for p in hs.data.polygons:
     if p.center.y < -0.29 and abs(p.center.x) < 0.09: p.material_index = 1
 EXTRA["hide_pack"] = hpack; hpack["extra"] = "hide_pack_straps"; hpack["extra2"] = "hide_pack_flap"
+# Lamp cell: a stubby salvaged power cell with a glowing charge band.
+bm = bmesh.new(); bmesh.ops.create_cone(bm, cap_ends=True, segments=24, radius1=0.28, radius2=0.28, depth=0.8)
+cell = obj("lamp_cell", bm, METALM)
+bv = cell.modifiers.new("b", "BEVEL"); bv.width = 0.05; bv.segments = 3; cell.modifiers.move(1, 0)
+band = bmesh.new(); bmesh.ops.create_cone(band, cap_ends=False, segments=24, radius1=0.295, radius2=0.295, depth=0.16)
+bmesh.ops.solidify(band, geom=band.faces[:], thickness=0.02)
+cell_b = obj("lamp_cell_band", band, GLOWM)
+cap = bmesh.new(); bmesh.ops.create_cone(cap, cap_ends=True, segments=16, radius1=0.12, radius2=0.1, depth=0.1)
+bmesh.ops.translate(cap, verts=cap.verts, vec=(0, 0, 0.44))
+cell_c = obj("lamp_cell_cap", cap, METALM)
+EXTRA["lamp_cell"] = cell; cell["extra"] = "lamp_cell_band"; cell["extra2"] = "lamp_cell_cap"
 # Status icons: a glowing heart-organ (health), a flame (body heat), the wrist lamp (lamp).
 bm = lumpy(0.45, 1.0, 0.7, 1.05, 0.12, 2.0)
 for v in bm.verts:  # heart-ish: a cleft on top, tapered bottom
@@ -303,10 +314,12 @@ sp.scale = [1.0 if i == _long else 2.4 for i in range(3)]
 bpy.context.view_layer.update()
 shoot("spear", [sp], (60, -38, 0), zoom=0.5, focus=tip.lerp(grip, 0.13))  # the stone point fills the icon, the shaft runs off the corner
 shoot("hands", [VM["Hand_Open"]], (0, 0, 0))
-for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "fiber_pouch", "hide_pack", "st_health", "st_heat", "st_lamp"):
+for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "fiber_pouch", "hide_pack", "lamp_cell", "st_health", "st_heat", "st_lamp"):
     rot = {"cordage": (20, 0, 0), "bone": (0, -35, 20), "bone_needle": (0, -45, 0), "chitin_spearhead": (0, -45, 0),
-           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38)}.get(k, (0, 0, 0))
+           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38), "lamp_cell": (20, -30, 0)}.get(k, (0, 0, 0))
     shoot(k, with_extra(EXTRA[k]), rot)
 if "Crate_Wood" in PROPS:  # the storage crate (placed, but its recipe row needs an icon)
     shoot("crate", [PROPS["Crate_Wood"], PROPS["Crate_Lid"]], (0, 0, 28))
+for _k, _parts, _rot in (("chip", ["Chip"], (35, 0, 20)), ("flare", ["Flare"], (0, -25, 0)), ("solar", ["Solar_Frame", "Solar_Panel"], (0, 0, 30))):
+    if all(n in PROPS for n in _parts): shoot(_k, [PROPS[n] for n in _parts], _rot)
 print("@@DONE@@", sorted(os.listdir(RAW)))

@@ -23,6 +23,8 @@ import { loadProps, propGlow, loadCreatures, loadViewmodels, loadFlora } from '.
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Crates, MAX_CRATES, CRATE_SLOTS, type Crate } from './crate';
+import { Placeables, MAX_SOLARS, FLARE_TIME } from './placeables';
+import { Chips, CHIPS } from './chips';
 import { Packs } from './packs';
 import { Post, SkyEnv, fxUniforms, addTerrainSurface } from './fx';
 import { Audio } from './audio';
@@ -219,6 +221,15 @@ async function main() {
   let storeCrate: Crate | null = null;
   /** Creatures scanned with the wrist link. Saves from before scanning existed keep the recipes they had. */
   const scanned = new Set<string>(meta?.scanned ?? (meta?.inventory ? ['tuko', 'oomi'] : []));
+  // Station tech placed in the world (flares, solar panels) and the data chips around the wreck.
+  const placeables = new Placeables(RAPIER, physics);
+  scene.add(placeables.group);
+  placeables.load(meta?.placed);
+  const flarePreview = placeables.makePreview('flare'), solarPreview = placeables.makePreview('solar');
+  scene.add(flarePreview.group, solarPreview.group);
+  const chips = new Chips(spawnPoint, (id) => scanned.has(id), (x, z) => wreck.covers(x, z));
+  scene.add(chips.group);
+  void loadProps().then((m) => { placeables.setLooks(m); flarePreview.refresh(); solarPreview.refresh(); chips.setLook(m.Chip); });
   void loadProps().then((m) => { crates.setLooks(m); cratePreview.refresh(); });
   let wasNight = meta?.wasNight ?? false;
   let nights = meta?.nights ?? 0;
@@ -320,7 +331,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
-    crates: crates.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
+    crates: crates.save(), placed: placeables.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
@@ -551,7 +562,7 @@ async function main() {
         if (craftableOnly) return '';
         const parts = [...Object.keys(r.cost), ...(r.needs ?? [])] as ItemId[];
         const found = parts.filter((k) => inventory.seen.has(k)).length;
-        const how = r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found`;
+        const how = r.scan?.startsWith('chip') ? 'Station tech: find a data chip near the wreck and read it' : r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found`;
         return `<div class="recipe unknown"><div><div class="rname"><span class="key">${i + 1}</span><span class="ico q">?</span>Unknown recipe</div>
           <div class="rblurb">${how}</div></div><span class="hint">locked</span></div>`;
       }
@@ -664,8 +675,8 @@ async function main() {
     if (r.place) { // built in the world: close the panel and show where it would go
       if (!inventory.has(r.cost)) { audio.deny(); craftNote(`Need ${(Object.keys(r.cost) as ItemId[]).filter((k) => inventory.counts[k] < (r.cost[k] ?? 0)).map((k) => `${(r.cost[k] ?? 0) - inventory.counts[k]} more ${ITEM_NAMES[k].toLowerCase()}`).join(' and ')}.`); return; }
       setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.'));
-      build('crate');
-      flash(`Place the crate: ${K('build')} or click where it should go. Any other key cancels.`);
+      build(r.id as PlaceKind);
+      flash(`Place the ${ITEM_NAMES[r.makes].toLowerCase()}: ${K('build')} or click where it should go. Any other key cancels.`);
       return;
     }
     if (r.unique && inventory.counts[r.makes] > 0) { craftNote(`You already have a ${ITEM_NAMES[r.makes].toLowerCase()}.`); return; }
@@ -763,6 +774,7 @@ async function main() {
     | { kind: 'stalk'; s: NonNullable<ReturnType<Flora['lookAt']>> }
     | { kind: 'pack'; pk: NonNullable<ReturnType<Packs['near']>> }
     | { kind: 'crate'; cr: Crate }
+    | { kind: 'chip'; ch: NonNullable<ReturnType<Chips['lookAt']>> }
     | null;
   let target: Target = null;
   const queryTarget = (): Target => {
@@ -774,6 +786,8 @@ async function main() {
     if (cr) return { kind: 'crate', cr };
     const f = campfires.lookAt(camera, USE_REACH);
     if (f) return { kind: 'fire', f };
+    const ch = chips.lookAt(camera, USE_REACH);
+    if (ch) return { kind: 'chip', ch };
     const p = props.lookAt(camera, USE_REACH);
     if (p) return { kind: 'prop', p };
     const s = flora.lookAt(camera, USE_REACH);
@@ -792,6 +806,7 @@ async function main() {
           : inventory.counts.raw_meat > 0 && t.f.lit ? `  \u00b7  ${K('eat')}  cook raw meat` : '';
         return (t.f.lit ? `${K('use')}  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : `${K('use')}  relight with stalkwood`) + cook;
       }
+      case 'chip': return `${K('use')}  read data chip`;
       case 'crate': return `${K('use')}  open crate  \u00b7  ${t.cr.inv.usedSlots()}/${CRATE_SLOTS} slots`;
       case 'pack': return `${K('use')}  recover your pack (${Object.values(t.pk.items).reduce((a, b) => a + b, 0)} items)`;
       case 'stalk': {
@@ -842,6 +857,13 @@ async function main() {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
       else if (inventory.take({ stalkwood: 1 })) { campfires.addFuel(t.f); audio.fireLit(t.f.position); }
       else { audio.deny(); flash('You need stalkwood to feed the fire.'); }
+    } else if (t.kind === 'chip') {
+      chips.take(t.ch);
+      scanned.add(t.ch.id);
+      audio.play('ui_3', { bus: 'ui', gain: 0.6, rate: 0.9 });
+      tutorial.milestone('chip');
+      flash(`Data chip read: ${t.ch.name}. ${chips.list.length ? `${CHIPS.length - chips.list.length}/${CHIPS.length} found.` : 'That was the last one.'}`);
+      recipeCheck?.();
     } else if (t.kind === 'crate') {
       openStore(t.cr);
     } else if (t.kind === 'pack') {
@@ -882,9 +904,16 @@ async function main() {
     return n;
   };
   /** Drains in 5 minutes, so trips away from the fire need planning; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
+  let solarHinted = false;
   const updateLamp = (dt: number, fireNear: number) => {
-    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 300)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
-    else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0));
+    const cell = inventory.counts.lamp_cell > 0; // the salvaged power cell: half the drain, faster recharge
+    if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 300) * (cell ? 0.5 : 1)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
+    else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0) * (cell ? 1.5 : 1));
+    // A solar panel in daylight charges it fast even while it's on.
+    if (sky.daylight > 0.25 && lampCharge < 100 && placeables.solarNear(player.position, 6)) {
+      lampCharge = Math.min(100, lampCharge + dt * (100 / 20));
+      if (!solarHinted) { solarHinted = true; flash('The solar panel is charging your lamp.'); }
+    } else if (!placeables.solarNear(player.position, 8)) solarHinted = false;
     let k = lampOn ? 1 : 0;
     if (lampOn && !settings.reduceFlash && (horror.glitch > 0 || (lampCharge < 15 && Math.random() < 0.08))) k = Math.random() < 0.5 ? 0.1 : 0.7;
     lamp.intensity = 34 * k * (lampCharge < 15 ? 0.6 : 1);
@@ -966,10 +995,25 @@ async function main() {
   };
 
   const MAX_FIRES = 40;
-  type PlaceKind = 'fire' | 'crate';
-  const crateCost = RECIPES.find((r) => r.id === 'crate')!.cost;
+  type PlaceKind = 'fire' | 'crate' | 'flare' | 'solar';
+  const costOf = (id: string) => RECIPES.find((r) => r.id === id)!.cost;
+  const crateCost = costOf('crate');
   /** Why a campfire (or crate) can't go where you're aiming ('' if it can). */
   const placeProblem = (hit: { point: THREE.Vector3; normal: THREE.Vector3 } | null, kind: PlaceKind = 'fire'): string => {
+    if (kind === 'flare') {
+      if (!hit || hit.normal.y < 0.5) return 'Look at the ground nearby to plant the flare.';
+      if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.6) return 'Step back a little to plant it here.';
+      if (!inventory.has(costOf('flare'))) return 'You no longer have the materials for a flare.';
+      return '';
+    }
+    if (kind === 'solar') {
+      if (!hit || hit.normal.y < 0.75) return 'Look at flat ground nearby to set up the panel.';
+      if ([...crates.list.map((c) => c.position), ...placeables.solars.map((s) => s.pos), ...campfires.list.map((f) => f.position)].some((p) => p.distanceTo(hit.point) < 1.4)) return 'Too close to something else.';
+      if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to set it up here.';
+      if (placeables.solars.length >= MAX_SOLARS) return `You have ${MAX_SOLARS} panels already.`;
+      if (!inventory.has(costOf('solar'))) return 'You no longer have the materials for a panel.';
+      return '';
+    }
     if (kind === 'crate') {
       if (!hit || hit.normal.y < 0.75) return 'Look at flat ground nearby to place the crate.';
       if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.1)) return 'Too close to another crate.';
@@ -993,15 +1037,29 @@ async function main() {
   const preview = campfires.makePreview();
   scene.add(preview.group);
   let placing = 0, digBlock = false, placeKind: PlaceKind = 'fire';
-  const cancelPlacing = () => { placing = 0; preview.group.visible = false; cratePreview.group.visible = false; };
+  const cancelPlacing = () => { placing = 0; for (const p of [preview, cratePreview, flarePreview, solarPreview]) p.group.visible = false; };
   /** First call shows where it would go; the second builds it. */
   const build = (kind: PlaceKind = 'fire') => {
-    if (!placing) { placeKind = kind; placing = kind === 'crate' ? 15 : 8; return; }
+    if (!placing) { placeKind = kind; placing = kind === 'fire' ? 8 : 15; return; }
     const k = placeKind;
     cancelPlacing();
     const hit = aimAtTerrain(5);
     const problem = placeProblem(hit, k);
     if (problem || !hit) { audio.deny(); flash(problem); return; }
+    if (k === 'flare') {
+      inventory.take(costOf('flare'));
+      placeables.addFlare(hit.point.clone());
+      audio.fireLit(hit.point);
+      flash(`Flare lit. It burns for ${FLARE_TIME / 60} minutes.`);
+      return;
+    }
+    if (k === 'solar') {
+      inventory.take(costOf('solar'));
+      placeables.addSolar(hit.point.clone(), player.yaw);
+      audio.place(hit.point);
+      flash('Solar panel set up. In daylight, stand near it to charge your wrist lamp.');
+      return;
+    }
     if (k === 'crate') {
       inventory.take(crateCost);
       crates.add(hit.point.clone(), player.yaw);
@@ -1019,10 +1077,10 @@ async function main() {
     if (!placing) return;
     if ((placing -= dt) <= 0 || state !== 'playing') { cancelPlacing(); return; }
     const hit = aimAtTerrain(5);
-    const pv = placeKind === 'crate' ? cratePreview : preview;
+    const pv = { fire: preview, crate: cratePreview, flare: flarePreview, solar: solarPreview }[placeKind];
     pv.group.visible = !!hit;
-    if (hit) { pv.group.position.copy(hit.point); pv.group.rotation.y = placeKind === 'crate' ? player.yaw : 0; pv.setOk(!placeProblem(hit, placeKind)); }
-    promptEl.textContent = `${K('build')} or click: ${placeKind === 'crate' ? 'place crate' : 'build'} here  \u00b7  ${placeProblem(hit, placeKind) || 'fits'}`;
+    if (hit) { pv.group.position.copy(hit.point); pv.group.rotation.y = placeKind === 'crate' || placeKind === 'solar' ? player.yaw : 0; pv.setOk(!placeProblem(hit, placeKind)); }
+    promptEl.textContent = `${K('build')} or click: ${{ fire: 'build', crate: 'place crate', flare: 'plant flare', solar: 'set up panel' }[placeKind]} here  \u00b7  ${placeProblem(hit, placeKind) || 'fits'}`;
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */
   const pendingHits: { t: number; c: Creature }[] = [];
@@ -1214,6 +1272,7 @@ async function main() {
       ${survival.wrapped ? `<div class="kv"><span>${corrupt('Hide wrap')}</span><b>worn</b></div>` : ''}
       ${goal ? `<div class="sec goal">\u25B8 ${goal}</div>` : ''}
       ${TOOLS.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="kv"><span>${corrupt(ITEM_NAMES[k])}</span><b>${Math.round((inventory.condition(k) ?? 0) * 100)}% condition${inventory.counts[k] > 1 ? ` \u00b7 +${inventory.counts[k] - 1} spare` : ''}</b></div>`).join('')}
+      <div class="kv"><span>${corrupt('Data chips')}</span><b>${CHIPS.length - chips.list.length}/${CHIPS.length} found${chips.list.length ? ' \u00b7 scattered round the wreck' : ''}</b></div>
       <div class="kv"><span>${corrupt('Load')}</span><b>${inventory.usedSlots()}/${inventory.slots()} slots \u00b7 ${inventory.weight().toFixed(1)} kg \u00b7 ${inventory.load_().name}</b></div>
       ${PERISHABLE.map((k) => { const f = inventory.freshness(k); return f === null ? '' : `<div class="kv"><span>${corrupt(ITEM_NAMES[k])}</span><b>next spoils in ${fmtTime(f)}</b></div>`; }).join('')}
       <div class="sec"><div class="kv"><span>${corrupt('CARRIED')}</span><span>${K('craft')}: craft</span></div>
@@ -1382,6 +1441,7 @@ async function main() {
     const live = state === 'playing' || (state === 'craft' && !settings.pauseCraft);
     updateWrist(dt);
     updateScan(dt);
+    chips.update(dt, (x, z) => world.groundAt(x, z));
     const simulating = live || state === 'dead';
 
     let tm = performance.now();
@@ -1406,6 +1466,7 @@ async function main() {
         player.speedMul = survival.moveFactor() * inventory.load_().speed;
         for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
         crates.update(wdt);
+        placeables.update(wdt, camera.position);
         if (survival.dead) {
           setState('dead');
           audio.death();
@@ -1462,7 +1523,7 @@ async function main() {
         let fireNear = 0;
         for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
         const g = world.groundAt(camera.position.x, camera.position.z);
-        horror.update({ dt: wdt, camera, night: sky.night, daylight: sky.daylight, fireNear, warmth: survival.warmth, health: survival.health,
+        horror.update({ dt: wdt, camera, night: sky.night, daylight: sky.daylight, fireNear: Math.max(fireNear, placeables.flareNear(player.position) * 0.8), warmth: survival.warmth, health: survival.health,
           underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint,
           nights, running: input.moving && input.down('run') && !player.crouching, moving: input.moving,
           litFiresNear: campfires.list.filter((f) => f.lit && f.position.distanceToSquared(player.position) < 40 * 40).length,

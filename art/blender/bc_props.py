@@ -1,4 +1,4 @@
-# Biocrash props v2: dark-alien, realistic-but-exaggerated. One glTF the game reads meshes from by name.
+﻿# Biocrash props v2: dark-alien, realistic-but-exaggerated. One glTF the game reads meshes from by name.
 # Meshes (same names, sizes and origins as v1 so the game places them identically):
 #   Stone, Stalkwood, Fiber, Sprout, Bulbs, Debris_1..3, Campfire_Stones, Campfire_Scrap, Campfire_Wood, Pack
 # Pipeline per prop (Fiber excepted: thin blades keep vertex colour):
@@ -587,6 +587,85 @@ for x in (-0.25, 0.0, 0.25):  # floor slats
 make("Crate_Wood", bm, 0.006, 1, [("CLOUDS", 0.04, 0.003)], 2600, trunk_material("Crate_Wood"), BASE, 0.012)
 lid = make_plate("Crate_Lid", 0.98, 0.7, 0.02, 7.0, metal_material("CrateLid", 0.45))
 lid.data.transform(Matrix.Translation((0, 0, 0.575)))
+
+# Station tech (learned from data chips): the chip itself, a signal flare stake, a salvaged solar panel on a stalkwood frame.
+def chip_material(name):
+    m = M(name)
+    w1 = m.n("ShaderNodeTexWave", _wave_type="BANDS", _bands_direction="X", Scale=40.0, Distortion=0.0); m.L(m.tc.outputs["Object"], w1.inputs["Vector"])
+    w2 = m.n("ShaderNodeTexWave", _wave_type="BANDS", _bands_direction="Y", Scale=28.0, Distortion=0.0); m.L(m.tc.outputs["Object"], w2.inputs["Vector"])
+    tr = m.math("MAXIMUM", m.ramp(w1.outputs["Fac"], 0.9, 0.97), m.ramp(w2.outputs["Fac"], 0.92, 0.98))
+    tr = m.math("MULTIPLY", tr, m.ramp(m.noise(30, 2).outputs["Fac"], 0.45, 0.55))
+    base = m.mix(tr, (0.012, 0.03, 0.025), (0.4, 0.24, 0.08))
+    sc = m.ramp(m.noise(2.5, 3).outputs["Fac"], 0.5, 0.7, 0.0, 0.8)  # scorched where it was thrown clear
+    base = m.mix(sc, base, (0.01, 0.009, 0.008))
+    x = m.n("ShaderNodeSeparateXYZ"); m.L(m.tc.outputs["Object"], x.inputs[0])
+    led = m.ramp(x.outputs["X"], 0.048, 0.056)  # a status strip along one edge
+    emit = m.mix(m.math("MAXIMUM", led, m.math("MULTIPLY", tr, 0.25)), (0, 0, 0), (0.2, 1.0, 0.85))
+    metal = m.math("MULTIPLY", tr, 0.8)
+    rough = m.lerp(tr, 0.45, 0.3)
+    h = m.math("ADD", tr, m.math("MULTIPLY", m.noise(60, 3).outputs["Fac"], 0.2))
+    return m.finish(base, rough, metal, emit, h, 0.3, 0.001)
+
+
+def solar_material(name):
+    m = M(name)
+    br = m.n("ShaderNodeTexBrick", Scale=7.0, _offset=0.0); m.L(m.tc.outputs["Object"], br.inputs["Vector"])
+    br.inputs["Mortar Size"].default_value = 0.025
+    br.inputs["Color1"].default_value = (1, 1, 1, 1); br.inputs["Color2"].default_value = (1, 1, 1, 1); br.inputs["Mortar"].default_value = (0, 0, 0, 1)
+    lines = m.math("SUBTRACT", 1.0, br.outputs["Color"])
+    cells = m.voronoi(7.0)
+    dead = m.ramp(cells.outputs["Distance"], 0.0, 0.02)  # a few shattered cells
+    cr = m.voronoi(40.0, "DISTANCE_TO_EDGE")
+    crack = m.math("MULTIPLY", m.ramp(cr.outputs["Distance"], 0.0, 0.03, 1.0, 0.0), m.ramp(m.noise(3, 2).outputs["Fac"], 0.55, 0.65))
+    base = m.mix(m.ramp(m.noise(18, 4).outputs["Fac"], 0.3, 0.7), (0.008, 0.014, 0.05), (0.02, 0.035, 0.09))
+    base = m.mix(crack, base, (0.25, 0.27, 0.3))
+    base = m.mix(lines, base, (0.45, 0.46, 0.5))
+    grime = m.ramp(m.noise(4, 5).outputs["Fac"], 0.5, 0.75, 0.0, 0.7)
+    base = m.mix(grime, base, (0.03, 0.025, 0.02))
+    metal = m.math("MAXIMUM", m.math("MULTIPLY", lines, 0.9), m.math("MULTIPLY", crack, 0.5))
+    rough = m.math("ADD", m.lerp(lines, 0.12, 0.4), m.math("MULTIPLY", grime, 0.5))
+    h = m.math("ADD", m.math("MULTIPLY", br.outputs["Color"], 0.6), m.math("MULTIPLY", crack, -0.4))
+    return m.finish(base, rough, metal, None, h, 0.4, 0.002)
+
+
+# Chip: a cracked data slate, 14 x 9 cm, lying flat (origin at its underside).
+bm = bmesh.new(); bmesh.ops.create_cube(bm, size=1.0); bmesh.ops.scale(bm, vec=(0.14, 0.09, 0.008), verts=bm.verts)
+bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.002, segments=2, affect="EDGES")
+res = bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0.05, 0.03, 0), plane_no=(0.7, 0.7, 0.05), clear_outer=True)
+edges = [e for e in res["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
+if edges:
+    try: bmesh.ops.holes_fill(bm, edges=edges, sides=0)
+    except Exception: pass
+bmesh.ops.translate(bm, verts=bm.verts, vec=(0, 0, 0.004))
+make("Chip", bm, None, 1, (), 300, chip_material("Chip"), BASE // 2, 0.004, metal=True, emit=True)
+
+# Flare: a stalkwood stake with a wrapped head that burns with red, veined chemical light.
+bm = trunk_bm(0.62, 0.02, 0.017, 21.0, rings=24, segs=12, ridges=5, torn=0.02)
+bmesh.ops.translate(bm, verts=bm.verts, vec=(0, 0, 0.31))
+m_ = bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=12, radius=0.045)
+for v in m_["verts"]:
+    v.co.z *= 2.0; v.co += Vector((0, 0, 0.64)) + v.co.normalized() * noise.noise(v.co * 40) * 0.006
+make("Flare", bm, 0.0025, 1, [("CLOUDS", 0.02, 0.002)], 500, glow_flesh_material("Flare", (1.0, 0.22, 0.1), split=0.55, cells=24.0), BASE // 2, 0.006)
+
+# Solar: a salvaged cell panel tilted on a lashed stalkwood frame. Two meshes: Solar_Frame and Solar_Panel (in place).
+bm = bmesh.new()
+for x, y, h in ((-0.42, -0.25, 0.55), (0.42, -0.25, 0.55), (-0.42, 0.25, 0.98), (0.42, 0.25, 0.98)):
+    p = trunk_bm(h, 0.03, 0.025, 70 + x * 3 + y, rings=20, segs=12, ridges=5, torn=0.02)
+    bmesh.ops.translate(p, verts=p.verts, vec=(x, y, h / 2))
+    merge_into(bm, p)
+for y, h in ((-0.25, 0.5), (0.25, 0.93)):  # cross bars the panel rests on
+    p = trunk_bm(0.9, 0.022, 0.02, 80 + y, rings=24, segs=10, ridges=5, torn=0.02)
+    bmesh.ops.transform(p, matrix=Matrix.Rotation(math.radians(90), 4, "Y"), verts=p.verts)
+    bmesh.ops.translate(p, verts=p.verts, vec=(0, y, h))
+    merge_into(bm, p)
+make("Solar_Frame", bm, 0.005, 1, [("CLOUDS", 0.03, 0.003)], 1400, trunk_material("Solar_Frame"), BASE, 0.01)
+bm = bmesh.new(); bmesh.ops.create_cube(bm, size=1.0); bmesh.ops.scale(bm, vec=(1.0, 0.68, 0.025), verts=bm.verts)
+bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.006, segments=2, affect="EDGES")
+bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=6, use_grid_fill=True)
+for v in bm.verts:  # bent and dented from the crash
+    v.co.z += noise.noise(v.co * 3) * 0.012 + math.sin(v.co.x * 3) * 0.008
+bmesh.ops.transform(bm, matrix=Matrix.Translation((0, 0.0, 0.78)) @ Matrix.Rotation(math.radians(40), 4, "X"), verts=bm.verts)
+make("Solar_Panel", bm, None, 1, (), 600, solar_material("Solar_Panel"), BASE, 0.01, metal=True, emit=False)
 
 # ---------------------------------------------------------------------------------------------------- export
 for o in bpy.context.view_layer.objects: o.select_set(True)
