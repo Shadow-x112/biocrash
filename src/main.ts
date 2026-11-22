@@ -1503,6 +1503,7 @@ async function main() {
     fxUniforms.uMist.value = Math.min(0.75, sky.night * 0.55 + horror.level * 0.3);
     fxUniforms.uMistTop.value = camera.position.y - 1.5;
     fxUniforms.uBreath.value = Math.min(1, sky.night * 0.6 + horror.level * 0.5);
+    fxUniforms.uNight.value = sky.night;
     fxUniforms.uRim.value.setRGB(0.05 * sky.daylight, 0.04 * sky.daylight + 0.07 * sky.night, 0.03 * sky.daylight + 0.065 * sky.night);
     post.update(horror.level, horror.glitch, horror.staticT, sky.daylight, sky.night);
     const fog = scene.fog as THREE.Fog;

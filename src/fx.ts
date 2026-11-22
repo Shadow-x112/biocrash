@@ -138,6 +138,7 @@ export const fxUniforms = {
   uMist: { value: 0 },        // 0..1 ground-mist strength (night, unease)
   uMistTop: { value: 0 },     // world height the mist sits below (just under your eyes)
   uBreath: { value: 0 },      // 0..1 how much the mushrooms "breathe" (night, unease)
+  uNight: { value: 0 },       // 0..1 darkness (the ground's mycelium and spores glow more at night)
   uRim: { value: new THREE.Color(0, 0, 0) }, // edge light on flora and creatures: warm by day, teal at night
 };
 
@@ -172,6 +173,8 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
     tSoilC: { value: load('mud_forest_col', true) }, tSoilN: { value: load('mud_forest_nrm', false) },
     tAshC: { value: load('burned_ground_01_col', true) }, tAshN: { value: load('burned_ground_01_nrm', false) },
     tRockC: { value: load('dark_rock_02_col', true) }, tRockN: { value: load('dark_rock_02_nrm', false) },
+    // Blender-made alien layer (art/blender/bc_ground.py): R moss clumps, G wet patches, B spore specks (dark), A mycelium (dark).
+    tAlien: { value: load('ground_alien', false) },
   };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, fxUniforms, tex);
@@ -182,7 +185,7 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
       .replace('#include <common>', `#include <common>
         varying vec3 vMistWorld; varying vec3 vWN;
         uniform float uFxTime; uniform float uMist; uniform float uMistTop;
-        uniform sampler2D tSoilC, tSoilN, tAshC, tAshN, tRockC, tRockN;
+        uniform sampler2D tSoilC, tSoilN, tAshC, tAshN, tRockC, tRockN, tAlien; uniform float uNight;
         float fxHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float fxNoise(vec3 x) {
           vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -203,7 +206,7 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           vec3 wn = normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
           return vec4(wn, a.b * w.x + b.b * w.y + c.b * w.z);
         }
-        vec3 gN; float gRough;`)
+        vec3 gN; float gRough, gMyc, gSpeck;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           vec3 n = normalize(vWN), w = triW(n), p = vMistWorld;
@@ -219,12 +222,27 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           vec3 alb = cS.rgb * vec3(0.52, 0.58, 0.6) * hw.x + cA.rgb * vec3(0.62, 0.56, 0.62) * hw.y + cR.rgb * vec3(0.55, 0.55, 0.62) * hw.z;
           alb *= mix(0.8, 1.1, macro);
           alb *= 1.0 - gDeep * 0.55;
+          // The alien layer: dark moss carpets in patches of flat soil, slick wet ground in the hollows, and a faint
+          // mycelium net under the soil and ash (the forest's roots), with spores in the moss.
+          vec4 gX = triC(tAlien, p * 0.33, w);
+          float zone = triC(tAlien, p * 0.045 + 0.37, w).g; // the wet-patch channel at a much larger scale: where moss carpets grow
+          float mossZone = smoothstep(0.55, 0.75, zone) * hw.x * gFlat;
+          float moss = mossZone * (0.55 + 0.45 * smoothstep(0.2, 0.85, gX.r));
+          alb = mix(alb, vec3(0.032, 0.042, 0.04) * mix(0.75, 1.2, gX.r), moss);
+          float wet = smoothstep(0.58, 0.8, gX.g * 0.75 + gDeep * 0.35 + (macro - 0.5) * 0.35) * gFlat * (1.0 - hw.z * 0.8) * (1.0 - moss);
+          alb *= 1.0 - wet * 0.45;
+          gMyc = pow(1.0 - gX.a, 2.0) * (hw.x + hw.y) * (1.0 - wet) * (1.0 - moss * 0.6) * smoothstep(0.5, 0.78, 1.0 - zone);
+          gSpeck = (1.0 - gX.b) * smoothstep(0.75, 0.95, moss) * step(0.5, triC(tAlien, p * 0.11, w).r);
           diffuseColor.rgb = alb;
           vec4 nS = triN(tSoilN, p * 0.26, w, n), nA = triN(tAshN, p * 0.3, w, n), nR = triN(tRockN, p * 0.19, w, n);
           vec4 nn = nS * hw.x + nA * hw.y + nR * hw.z;
-          gN = normalize(nn.xyz); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
+          gN = normalize(mix(nn.xyz, n, wet * 0.85 + moss * 0.35)); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
+          gRough = mix(mix(gRough, 0.12, wet), 0.97, moss); // puddle sheen; moss is dead matte
         }`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = gRough;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance += vec3(0.12, 0.8, 0.65) * gMyc * (0.01 + 0.16 * uNight) * (0.65 + 0.35 * sin(uFxTime * 0.45 + vMistWorld.x * 0.25 + vMistWorld.z * 0.18));
+        totalEmissiveRadiance += vec3(0.45, 1.0, 0.8) * gSpeck * (0.02 + 0.35 * uNight);`)
       .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(gN, 0.0)).xyz);')
       .replace('#include <fog_fragment>', `#include <fog_fragment>
       #ifdef USE_FOG
@@ -234,7 +252,7 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
         gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, clamp(uMist * mistH * mistD * (0.5 + 0.5 * drift), 0.0, 0.85));
       #endif`);
   };
-  mat.customProgramCacheKey = () => 'ground3';
+  mat.customProgramCacheKey = () => 'ground4';
   mat.needsUpdate = true;
 }
 
