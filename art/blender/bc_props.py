@@ -464,13 +464,23 @@ bmesh.ops.scale(bm, vec=(1, 1, 1.3), verts=m_["verts"]); bmesh.ops.translate(bm,
 make("Sprout", bm, 0.0025, 1, [("CLOUDS", 0.02, 0.002)], 110, glow_flesh_material("Sprout", (0.35, 1.0, 0.85), split=0.3, cells=30.0), BASE // 2, 0.006)
 
 # Bulbs: a cluster of glowing bulbs on a root knot.
-bm = rock_bm(0.12, 9.0, 0.5, 3, 0)
-for i in range(9):
-    a = random.uniform(0, math.tau); r = random.uniform(0.02, 0.16); s = random.uniform(0.04, 0.11)
+bm = rock_bm(0.1, 9.0, 0.45, 3, 0)
+rb = random.Random(91)
+for i in range(7):  # each bulb on its own stalk, spread round the knot, so they read as separate bulbs, not one blob
+    a = i / 7 * math.tau + rb.uniform(-0.25, 0.25); r = rb.uniform(0.09, 0.17); s = rb.uniform(0.035, 0.07)
+    top = Vector((math.cos(a) * r, math.sin(a) * r, rb.uniform(0.13, 0.3)))
+    foot = Vector((math.cos(a) * 0.03, math.sin(a) * 0.03, 0.03))
+    d = top - foot
+    st = bmesh.ops.create_cone(bm, cap_ends=True, segments=10, radius1=0.013, radius2=0.008, depth=d.length)
+    q = Vector((0, 0, 1)).rotation_difference(d.normalized())
+    bmesh.ops.transform(bm, matrix=Matrix.Translation((foot + top) / 2) @ q.to_matrix().to_4x4(), verts=st["verts"])
     mm = bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=14, radius=s)
-    bmesh.ops.scale(bm, vec=(1, 1, random.uniform(1.1, 1.9)), verts=mm["verts"])
-    bmesh.ops.translate(bm, verts=mm["verts"], vec=(math.cos(a) * r, math.sin(a) * r, s * 1.3 + 0.03))
-make("Bulbs", bm, 0.004, 1, [("CLOUDS", 0.04, 0.003)], 450, glow_flesh_material("Bulbs", (0.45, 0.85, 1.0), split=0.06, cells=16.0), BASE, 0.01)
+    for v in mm["verts"]:  # teardrop: pinched at the stalk, full at the top
+        t = (v.co.z / s + 1) / 2
+        k = 0.45 + 0.55 * math.sin(min(1.0, t * 1.15) * math.pi / 2)
+        v.co.x *= k; v.co.y *= k; v.co.z *= 1.4
+    bmesh.ops.translate(bm, verts=mm["verts"], vec=top + Vector((0, 0, s * 1.2)))
+make("Bulbs", bm, 0.0028, 1, [("CLOUDS", 0.04, 0.002)], 1300, glow_flesh_material("Bulbs", (0.45, 0.85, 1.0), split=0.11, cells=16.0), BASE, 0.01)
 
 
 # Debris: bent, torn, dented hull plates with bevelled edges.

@@ -297,7 +297,11 @@ def girth(end):
 g0, c0 = girth(0); g1, c1 = girth(1)
 grip = sp.matrix_world @ Vector((0.0, 0.14, -0.09))  # the hand grip (viewmodel space): the point is the far end
 tip = c1 if (c1 - grip).length > (c0 - grip).length else c0
-shoot("spear", [sp], (60, -38, 0), zoom=0.75, focus=tip)
+# A real spear is too slender to read at 64 px: thicken it across its length (icon only) and frame the point.
+_dims = sp.dimensions; _long = max(range(3), key=lambda i: _dims[i])
+sp.scale = [1.0 if i == _long else 2.4 for i in range(3)]
+bpy.context.view_layer.update()
+shoot("spear", [sp], (60, -38, 0), zoom=0.5, focus=tip.lerp(grip, 0.13))  # the stone point fills the icon, the shaft runs off the corner
 shoot("hands", [VM["Hand_Open"]], (0, 0, 0))
 for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "fiber_pouch", "hide_pack", "st_health", "st_heat", "st_lamp"):
     rot = {"cordage": (20, 0, 0), "bone": (0, -35, 20), "bone_needle": (0, -45, 0), "chitin_spearhead": (0, -45, 0),
