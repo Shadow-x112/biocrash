@@ -862,8 +862,9 @@ async function main() {
       scanned.add(t.ch.id);
       audio.play('ui_3', { bus: 'ui', gain: 0.6, rate: 0.9 });
       tutorial.milestone('chip');
-      flash(`Data chip read: ${t.ch.name}. ${chips.list.length ? `${CHIPS.length - chips.list.length}/${CHIPS.length} found.` : 'That was the last one.'}`);
-      recipeCheck?.();
+      recipeCheck?.(); // (its "New recipe" note is replaced by the fuller line below)
+      const learned = RECIPES.find((r) => r.scan === t.ch.id);
+      flash(`Data chip read: ${t.ch.name}. New recipe: ${learned ? ITEM_NAMES[learned.makes] : '?'} (${K('craft')}). ${chips.list.length ? `${CHIPS.length - chips.list.length}/${CHIPS.length} chips found.` : 'That was the last chip.'}`);
     } else if (t.kind === 'crate') {
       openStore(t.cr);
     } else if (t.kind === 'pack') {
@@ -1300,12 +1301,38 @@ async function main() {
   const SCAN_TIME = 1.6, SCAN_RANGE = 14;
   const setPrompt = (t: string) => { if (promptEl.textContent !== t) promptEl.textContent = t; };
   let scanT = 0, scanTick = 0, scanning = false, scanDone = false, scanOf: Creature | null = null;
+  let scanLost = 0;
+  const scanDir = new THREE.Vector3(), scanTo = new THREE.Vector3();
+  const scanPick = (): Creature | null => {
+    camera.getWorldDirection(scanDir);
+    let best: Creature | null = null, bestA = Infinity;
+    for (const c of fauna.list) {
+      scanTo.copy(c.hitCentre()).sub(camera.position);
+      const d = scanTo.length();
+      if (d > SCAN_RANGE || d < 0.3) continue;
+      scanTo.multiplyScalar(1 / d);
+      const ang = scanDir.angleTo(scanTo) * 180 / Math.PI;
+      if (ang > (c === scanOf ? 16 : 9) || ang >= bestA) continue;
+      const hit = world.raycast(camera.position, scanTo, d); // terrain in the way blocks the scan
+      if (hit && hit.point.distanceTo(camera.position) < d - 0.4) continue;
+      best = c; bestA = ang;
+    }
+    return best;
+  };
   const updateScan = (dt: number) => {
     if (state !== 'playing' || !input.down('scan')) { scanning = false; scanDone = false; scanOf = null; scanT = 0; return; }
     if (scanDone) return;
     scanning = true;
-    const c = fauna.lookAt(camera, SCAN_RANGE);
-    if (!c) { scanOf = null; scanT = 0; setPrompt('Scanning… no lifeform in view'); return; }
+    // A forgiving cone (small, quick creatures are hard to keep under the crosshair): the current target holds within
+    // 16 degrees, a new one needs 9; losing it briefly only pauses the scan.
+    const c = scanPick();
+    if (!c) {
+      scanLost += dt;
+      if (scanLost > 0.8) { scanOf = null; scanT = 0; }
+      setPrompt(scanOf ? `Scanning ${scanOf.species.name}… keep it in view` : 'Scanning… no lifeform in view');
+      return;
+    }
+    scanLost = 0;
     if (c !== scanOf) { scanOf = c; scanT = 0; }
     scanT += dt;
     if ((scanTick -= dt) <= 0) { scanTick = 0.18; audio.play('ui_2', { bus: 'ui', gain: 0.12, rate: 1.5 + scanT * 0.4 }); }
