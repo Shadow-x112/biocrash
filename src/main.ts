@@ -197,6 +197,7 @@ async function main() {
   for (const id of meta?.picked ?? []) props.picked.add(id);
   scene.add(props.group);
   const flora = new Flora(RAPIER, physics, spawnPoint);
+  flora.ground = (x, z) => world.groundAt(x, z)?.y ?? null;
   flora.blocked = (x, z) => wreck.covers(x, z, 3) || wreck.debrisAt(x, z, 0.3);
   wreck.onSeated = wreck.onDebris = () => { flora.clearBlocked(); props.clearBlocked(); };
   // The Blender-built props replace the placeholder shapes as soon as they load.

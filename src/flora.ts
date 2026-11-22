@@ -22,13 +22,15 @@ interface Shroom {
   /** Glow patch on the ground under the cap (-1: none, e.g. once felled), and the ground normal there. */
   card: number; n: THREE.Vector3;
   /** Current pose and per-instance sizes, so it can move between the near (detailed) and far pools. */
-  pose: THREE.Matrix4; dims: [number, number, number];
+  pose: THREE.Matrix4; dims: [number, number, number, number];
+  /** Tendril length scale (1 = full; shorter where the ground under the cap is close, so they don't hang into it). */
+  reach: number;
   /** Slot in the detailed near pool (-1: drawn with the light far mesh). */
   near: number;
 }
 interface ChunkFlora {
   shrooms: Shroom[];
-  sprouts: { slot: number; source: number; bulb: boolean; card: number }[];
+  sprouts: { slot: number; source: number; bulb: boolean; card: number; x: number; z: number }[];
 }
 
 const SPROUT = new THREE.MeshStandardMaterial({ color: 0x24403a, emissive: 0x7affd6, emissiveIntensity: 0.3, flatShading: true });
@@ -122,9 +124,11 @@ const CAP_HULL = (() => {
 })();
 const BODY_VERT = `
   float SINK = 0.4 + iDims.x * 1.5;
+  vec3 P0 = position;
+  if (aTend > 0.0 || (aPart > 0.5 && position.y < -0.45)) P0.y *= iDims.w; // tendrils shortened (felled: tucked away)
   vec3 transformed = aPart < 0.5
     ? vec3(position.x * iDims.x, position.y * (iDims.y + SINK) - SINK, position.z * iDims.x)
-    : position * iDims.z + vec3(0.0, iDims.y, 0.0);`;
+    : P0 * iDims.z + vec3(0.0, iDims.y, 0.0);`;
 const SWAY = `
   {
     vec3 base = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
@@ -147,7 +151,7 @@ new THREE.TextureLoader().load('textures/fungus_detail.webp', (t) => {
 BODY.onBeforeCompile = (sh) => {
   Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU, uDetail: detailU });
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; varying float vPart; varying vec3 vDP; varying vec3 vDN; varying mat3 vNM; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec4 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; varying float vPart; varying vec3 vDP; varying vec3 vDN; varying mat3 vNM; uniform float uFxTime; uniform float uBreath;')
     .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb; vPart = aPart; vDP = transformed; vDN = objectNormal; vNM = normalMatrix * mat3(instanceMatrix);\n  vSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);')
     .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb;')
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
@@ -213,18 +217,18 @@ BODY.onBeforeCompile = (sh) => {
       totalEmissiveRadiance += uRim * rimF;`);
 };
 BODY.side = THREE.DoubleSide;
-BODY.customProgramCacheKey = () => 'fungus-body';
+BODY.customProgramCacheKey = () => 'fungus-body2';
 // Shadows are drawn with a depth material: it needs the same trunk stretch, or the shadow would be a unit fungus.
 const BODY_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 BODY_DEPTH.onBeforeCompile = (sh) => {
   // ...and the same sway, or the shadows stand still while the caps and tendrils swing above them.
   Object.assign(sh.uniforms, fxUniforms);
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTend; attribute vec3 iDims; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTend; attribute vec4 iDims; uniform float uFxTime; uniform float uBreath;')
     .replace('#include <begin_vertex>', BODY_VERT)
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
 };
-BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth2';
+BODY_DEPTH.customProgramCacheKey = () => 'fungus-depth3';
 const sproutGeo = (() => {
   const parts = [new THREE.ConeGeometry(0.05, 0.35, 5).translate(0, 0.17, 0), new THREE.SphereGeometry(0.06, 6, 4).translate(0, 0.37, 0)];
   const pos: number[] = [], nrm: number[] = [];
@@ -239,6 +243,7 @@ const sproutGeo = (() => {
 })();
 
 const CAP_C = new THREE.Vector3();
+const TENDRIL_LEN = 2.0; // lowest tendril tip, in cap radii below the cap's centre (both fungus meshes)
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 /** Real lights lent to the nearest glowing fungi (a fixed pool: no shader recompiles). */
 const GLOW_LIGHTS = 4;
@@ -278,7 +283,7 @@ export class Flora {
   private dir = new THREE.Vector3();
 
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, private avoid: THREE.Vector3) {
-    this.bodies = new InstancePool(bodyGeo, BODY, this.group, 1024, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
+    this.bodies = new InstancePool(bodyGeo, BODY, this.group, 1024, true, true, { extra: { name: 'iDims', size: 4 }, depth: BODY_DEPTH });
     this.sprouts = new InstancePool(sproutGeo, SPROUT, this.group, 4096);
     this.bulbs = new InstancePool(sproutGeo, SPROUT, this.group, 1024);
     // Glow cast on the ground: additive patches in each cap's colour (cheap stand-ins for real light), plus a few
@@ -346,9 +351,10 @@ export class Flora {
       e.set(o.tilt, o.spin, o.tilt * 0.6);
       q.setFromEuler(e);
       const slot = this.bodies.alloc(m.compose(o.p, q, one), CAP_COLORS[o.color]);
-      this.bodies.setExtra(slot, o.r, o.h, o.cap);
-      const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
-        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n, pose: m.clone(), dims: [o.r, o.h, o.cap], near: -1 };
+      const reach = this.tendrilReach(m, o.h, o.cap);
+      this.bodies.setExtra(slot, o.r, o.h, o.cap, reach);
+      const s: Shroom = { reach, id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
+        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n, pose: m.clone(), dims: [o.r, o.h, o.cap, reach], near: -1 };
       c.shrooms.push(s);
       this.gridAdd(s);
       this.shape(s); // physics, and the harvested state if it was already cut
@@ -366,6 +372,8 @@ export class Flora {
       const s = bulb ? 1.2 + sd[o + 4] * 1.6 : 0.6 + sd[o + 4] * 0.9;
       q.setFromAxisAngle(up, sd[o + 5] * 6.28);
       p.set(sd[o], sd[o + 1], sd[o + 2]);
+      // Not inside a trunk (this chunk's or a neighbour's), the wreck or under a hull plate.
+      if (this.blocked?.(p.x, p.z) || this.trunkAt(p.x, p.z, 0.15)) continue;
       if (bulb) {
         // The root knot is wide: tilt it most of the way with the slope and sink it a little, or on hillsides its
         // downhill edge hangs in the air.
@@ -377,7 +385,7 @@ export class Flora {
       const slot = (bulb ? this.bulbs : this.sprouts).alloc(m);
       // Bulb clusters throw a small teal glow on the ground.
       const card = bulb ? this.cards.alloc(m.compose(p.set(sd[o], sd[o + 1] + 0.04, sd[o + 2]), q.identity(), sc.set(1.6 + sd[o + 4], 1, 1.6 + sd[o + 4])), BULB_GLOW) : -1;
-      c.sprouts.push({ slot, source: i, bulb, card });
+      c.sprouts.push({ slot, source: i, bulb, card, x: sd[o], z: sd[o + 2] });
     }
     this.chunks.set(key, c);
   }
@@ -436,6 +444,23 @@ export class Flora {
     return false;
   }
 
+  /** Ground height sampler (set by the game): felled caps rest on it and tendrils stop short of it. */
+  ground?: (x: number, z: number) => number | null;
+
+  /** How much of the tendrils' length fits between the cap and the highest ground under it (1 = all of it). */
+  private tendrilReach(pose: THREE.Matrix4, h: number, capR: number) {
+    if (!this.ground) return 1;
+    const c = CAP_C.set(0, h, 0).applyMatrix4(pose);
+    let hi = -Infinity;
+    for (let a = 0; a < 8; a++) for (const rr of [0.35, 0.8]) {
+      const g = this.ground(c.x + Math.cos(a * 0.785) * capR * rr, c.z + Math.sin(a * 0.785) * capR * rr);
+      if (g != null) hi = Math.max(hi, g);
+    }
+    if (hi === -Infinity) return 1;
+    // Tendrils hang ~2 cap radii below the cap's centre; keep their tips ~0.25 m off the ground.
+    return THREE.MathUtils.clamp((c.y - hi - 0.25) / (TENDRIL_LEN * capR), 0.25, 1);
+  }
+
   /** Swap in the Blender-built fungus (bc_flora.py): same unit layout and per-vertex tags as the code-built one. */
   setFungus(m: { geometry: THREE.BufferGeometry } | undefined) {
     if (!m) return;
@@ -449,7 +474,7 @@ export class Flora {
     for (let i = 0; i < n; i++) (part.getX(i) < 0.5 ? TRUNK_COL : glow.getX(i) < 0 ? LINING_COL : BODY_COL).toArray(col, i * 3);
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     if (!g.getAttribute('normal')) g.computeVertexNormals();
-    this.nearPool = new InstancePool(g, BODY, this.group, 128, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
+    this.nearPool = new InstancePool(g, BODY, this.group, 128, true, true, { extra: { name: 'iDims', size: 4 }, depth: BODY_DEPTH });
     this.lodTimer = 0;
   }
 
@@ -474,7 +499,14 @@ export class Flora {
   /** Removes mushrooms already grown on ground that's now blocked (the wreck settled after they loaded). */
   clearBlocked() {
     if (!this.blocked) return;
-    for (const c of this.chunks.values()) for (const s of c.shrooms) if (s.alive && this.blocked(s.base.x, s.base.z)) this.removeShroom(s);
+    for (const c of this.chunks.values()) {
+      for (const s of c.shrooms) if (s.alive && this.blocked(s.base.x, s.base.z)) this.removeShroom(s);
+      c.sprouts = c.sprouts.filter((sp) => {
+        if (!this.blocked!(sp.x, sp.z)) return true;
+        this.releaseSprout(sp);
+        return false;
+      });
+    }
   }
 
   /** After digging or filling: mushrooms and sprouts whose ground changed are removed (with their colliders). */
@@ -593,15 +625,24 @@ export class Flora {
   private shape(s: Shroom) {
     const n = Math.min(STALK_HARVESTS, this.harvested.get(s.id) ?? 0);
     const pos = s.base.clone(), one = new THREE.Vector3(1, 1, 1);
-    let rot = s.q, h = s.height * (1 - 0.18 * n);
+    let rot = s.q, h = s.height * (1 - 0.18 * n), reach = s.reach;
     if (n >= STALK_HARVESTS) {
       this.dropCard(s); // felled: its cap no longer hangs over the ground
       h = s.height * (1 - 0.18 * (STALK_HARVESTS - 1)); // cut at the base: the whole remaining trunk comes down
-      const lean = Math.min(Math.PI / 2 - 0.08, Math.max(0.9, Math.PI / 2 - Math.atan2(s.capR - s.radius, h)));
-      rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), lean);
       pos.y += s.radius * 0.6;
+      // It tips until the cap meets the ground (a fixed lean floated the cap downhill and buried it uphill).
+      const axis = new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), cap = new THREE.Vector3();
+      let lean = Math.PI / 2 - 0.08;
+      for (let a = 0.5; a <= Math.PI / 2 - 0.08; a += 0.04) {
+        rot = new THREE.Quaternion().setFromAxisAngle(axis, a);
+        cap.set(0, h, 0).applyQuaternion(rot).add(pos);
+        const g = this.ground?.(cap.x, cap.z);
+        if (g != null && cap.y - g < s.capR * 0.45) { lean = a; break; }
+      }
+      rot = new THREE.Quaternion().setFromAxisAngle(axis, lean);
+      reach = 0.05; // tendrils tucked under the fallen cap (they stuck out sideways, stiff)
     }
-    s.pose.compose(pos, rot, one); s.dims = [s.radius, h, s.capR];
+    s.pose.compose(pos, rot, one); s.dims = [s.radius, h, s.capR, reach];
     this.place(s);
     this.solid(s, pos, rot, h);
   }
@@ -616,16 +657,18 @@ export class Flora {
     for (const l of this.lights) if (l.userData.s) l.intensity = (0.4 + night * 5.5) * (0.8 + 0.2 * Math.sin(performance.now() * 0.0007 + l.userData.ph));
     const pos = this.spores.geometry.getAttribute('position') as THREE.BufferAttribute;
     if (night > 0.02) {
-      const a = pos.array as Float32Array;
+      // Spores drift in world space and wrap around a 40 m box centred on you (they used to ride along with the
+      // camera, so walking never moved you through them).
+      const a = pos.array as Float32Array, vx = viewer.x, vy = viewer.y - 3, vz = viewer.z;
       for (let i = 0; i < a.length; i += 3) {
         a[i] += this.sporeVel[i] * dt; a[i + 1] += this.sporeVel[i + 1] * dt; a[i + 2] += this.sporeVel[i + 2] * dt;
-        if (a[i + 1] > 10) a[i + 1] = 0;
-        if (a[i] > 20) a[i] -= 40; else if (a[i] < -20) a[i] += 40;
-        if (a[i + 2] > 20) a[i + 2] -= 40; else if (a[i + 2] < -20) a[i + 2] += 40;
+        const dx = a[i] - vx, dy = a[i + 1] - vy, dz = a[i + 2] - vz;
+        if (dx > 20) a[i] -= 40; else if (dx < -20) a[i] += 40;
+        if (dz > 20) a[i + 2] -= 40; else if (dz < -20) a[i + 2] += 40;
+        if (dy > 10) a[i + 1] -= 10; else if (dy < 0) a[i + 1] += 10;
       }
       pos.needsUpdate = true;
     }
-    this.spores.position.set(viewer.x, viewer.y - 3, viewer.z);
     (this.spores.material as THREE.PointsMaterial).opacity = night * 0.9;
   }
 }
