@@ -240,9 +240,9 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           diffuseColor.rgb = alb;
           vec4 nS = triN(tSoilN, p * 0.26, w, n), nA = triN(tAshN, p * 0.3, w, n), nR = triN(tRockN, p * 0.19, w, n);
           vec4 nn = nS * hw.x + nA * hw.y + nR * hw.z;
-          gN = normalize(mix(nn.xyz, n, wet * 0.85 + moss * 0.35)); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
+          gN = normalize(mix(nn.xyz, n, wet * 0.3 + moss * 0.35)); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
           // Puddle sheen (rougher with distance so far-off puddles don't flash white sun glints); moss is dead matte.
-          gRough = mix(mix(gRough, mix(0.3, 0.6, smoothstep(8.0, 60.0, length(vViewPosition))), wet), 0.97, moss);
+          gRough = mix(mix(gRough, mix(0.62, 0.82, smoothstep(5.0, 40.0, length(vViewPosition))), wet), 0.97, moss);
         }`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = gRough;')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -257,7 +257,7 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
         gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, clamp(uMist * mistH * mistD * (0.5 + 0.5 * drift), 0.0, 0.85));
       #endif`);
   };
-  mat.customProgramCacheKey = () => 'ground5';
+  mat.customProgramCacheKey = () => 'ground7';
   mat.needsUpdate = true;
 }
 
