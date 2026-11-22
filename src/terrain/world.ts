@@ -212,7 +212,8 @@ export class World {
       m.updateMatrix();
       m.updateMatrixWorld();
       m.userData.chunk = c.key;
-      m.receiveShadow = true;
+      // The ground casts too: without it, sunlight passes through hills into dug pits, ravines and caves.
+      m.receiveShadow = m.castShadow = true;
       this.group.add(m);
       c.mesh = m;
     }

@@ -57,7 +57,7 @@ export class Placeables {
 
   addFlare(pos: THREE.Vector3, t = FLARE_TIME) {
     const g = new THREE.Group(); g.position.copy(pos); g.rotation.set((Math.random() - 0.5) * 0.25, Math.random() * 6.28, (Math.random() - 0.5) * 0.25);
-    const m = new THREE.Mesh(flareLook.geometry, flareLook.material); m.castShadow = true;
+    const m = new THREE.Mesh(flareLook.geometry, flareLook.material); m.castShadow = m.receiveShadow = true;
     const glow = glowSprite(FLARE_RED, 0.7); glow.position.y = 0.66;
     g.add(m, glow); this.group.add(g);
     this.flares.push({ pos: pos.clone(), t, group: g, glow });
@@ -68,7 +68,7 @@ export class Placeables {
     const tq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot));
     const g = new THREE.Group(); g.position.copy(pos); g.quaternion.copy(tq);
     const a = new THREE.Mesh(frameLook.geometry, frameLook.material), b = new THREE.Mesh(panelLook.geometry, panelLook.material);
-    a.castShadow = b.castShadow = true; b.receiveShadow = true;
+    a.castShadow = b.castShadow = a.receiveShadow = b.receiveShadow = true;
     g.add(a, b); this.group.add(g);
     const R = this.rapier, q = tq;
     const body = this.physics.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation(q));

@@ -48,6 +48,7 @@ class Campfire {
     this.ringMesh = new THREE.Mesh(parts.ring, parts.mats.stone);
     this.logMesh = new THREE.Mesh(parts.logs, parts.mats.log);
     this.ringMesh.quaternion.copy(tilt); this.logMesh.quaternion.copy(tilt);
+    this.ringMesh.receiveShadow = this.logMesh.receiveShadow = true;
     this.group.add(this.ringMesh, this.logMesh);
     if (parts.scrap) this.setScrap(parts.scrap);
     this.flame = new THREE.Mesh(parts.flame, parts.mats.flame);
@@ -70,7 +71,7 @@ class Campfire {
     if (this.scrapMesh) return;
     this.scrapMesh = new THREE.Mesh(s.geometry, s.material);
     this.scrapMesh.quaternion.copy(this.tilt).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2));
-    this.scrapMesh.castShadow = true;
+    this.scrapMesh.castShadow = this.scrapMesh.receiveShadow = true;
     this.group.add(this.scrapMesh);
   }
 

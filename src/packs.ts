@@ -39,6 +39,7 @@ export class Packs {
     g.position.copy(position);
     const sack = new THREE.Mesh(sackGeo, sackMat);
     sack.position.y = modelled ? 0 : 0.2;
+    sack.receiveShadow = true;
     const strap = new THREE.Mesh(strapGeo, glowMat);
     strap.position.y = 0.22;
     strap.rotation.x = Math.PI / 2;

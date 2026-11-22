@@ -206,7 +206,7 @@ export class Creature {
     }
     const tpl = t;
     this.root = tpl.root.clone(true);
-    this.root.traverse((o) => { o.castShadow = true; });
+    this.root.traverse((o) => { o.castShadow = o.receiveShadow = true; });
     this.glow = tpl.glow.clone();
     this.root.traverse((o) => { if (o instanceof THREE.Mesh && o.material === tpl.glow) o.material = this.glow; });
     this.body = this.root.getObjectByName('body')!;
@@ -222,7 +222,7 @@ export class Creature {
     rig.traverse((o) => {
       const mesh = o as THREE.SkinnedMesh;
       if (!mesh.isMesh) return;
-      mesh.castShadow = true; mesh.frustumCulled = false;
+      mesh.castShadow = mesh.receiveShadow = true; mesh.frustumCulled = false;
       // Its own material: it flashes red when this creature is hurt.
       const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
       if (mat.emissiveMap) { mat.emissive.setRGB(1, 1, 1); addMapGlow(mat, 2.2); } else addColourGlow(mat);

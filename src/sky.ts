@@ -66,12 +66,15 @@ const frag = /* glsl */ `
     #include <colorspace_fragment>
   }`;
 
+const UP_Y = new THREE.Vector3(0, 1, 0);
 export class Sky {
   /** 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset. */
   time = 0.3;
   speed = 1;
   readonly sun = new THREE.DirectionalLight(0xfff1dc, 3);
   private snap = new THREE.Vector3();
+  private lRight = new THREE.Vector3();
+  private lUp = new THREE.Vector3();
   /** Sun and moon are never both meaningful, so one directional light plays whichever is up (one light fewer on every
    *  pixel, and no shader recompiles: the light count never changes). */
   private moonCol = new THREE.Color(0x9fb4e0);
@@ -151,9 +154,14 @@ export class Sky {
     // Lights and dome follow the camera.
     const c = camera.position;
     this.dome.position.copy(c);
-    // Shadow centre snapped to a 0.25 m grid so the shadow map doesn't crawl as the player walks.
-    const s = this.snap.set(Math.round(c.x * 4) / 4, Math.round(c.y * 4) / 4, Math.round(c.z * 4) / 4);
-    this.sun.position.copy(s).addScaledVector(moonUp ? moonDir : this.sunDir, 50);
+    // Shadow centre snapped to whole shadow-map texels in the light's own frame (a world-space grid isn't texel
+    // aligned, so edges shimmered every time the player crossed a grid line).
+    const ld = moonUp ? moonDir : this.sunDir;
+    const sc = this.sun.shadow.camera, texel = (sc.right - sc.left) / this.sun.shadow.mapSize.x;
+    this.lRight.crossVectors(UP_Y, ld).normalize(); this.lUp.crossVectors(ld, this.lRight);
+    const lx = Math.round(c.dot(this.lRight) / texel) * texel, ly = Math.round(c.dot(this.lUp) / texel) * texel, lz = c.dot(ld);
+    const s = this.snap.copy(this.lRight).multiplyScalar(lx).addScaledVector(this.lUp, ly).addScaledVector(ld, lz);
+    this.sun.position.copy(s).addScaledVector(ld, 60);
     this.sun.target.position.copy(s);
   }
 }

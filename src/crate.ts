@@ -44,7 +44,7 @@ export class Crates {
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot));
     g.position.copy(position); g.quaternion.copy(q);
     const w = new THREE.Mesh(woodGeo, woodMat), l = new THREE.Mesh(lidGeo, lidMat);
-    w.castShadow = l.castShadow = true;
+    w.castShadow = l.castShadow = w.receiveShadow = l.receiveShadow = true;
     g.add(w, l);
     this.group.add(g);
     const R = this.rapier;

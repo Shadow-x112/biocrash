@@ -28,6 +28,7 @@ export class InstancePool {
     m.count = 0;
     m.frustumCulled = false; // spans the whole loaded world; culling per pool would never cull anything
     m.castShadow = this.castShadow;
+    m.receiveShadow = true; // things in a cap's shadow must darken too (unlit materials ignore it)
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     if (this.colored) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
     if (this.depth) m.customDepthMaterial = this.depth;

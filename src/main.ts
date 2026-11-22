@@ -79,7 +79,7 @@ async function main() {
   const post = new Post(renderer, scene, camera, hands);
   const skyEnv = new SkyEnv(renderer, scene);
   // Graphics quality. Low: no shadows, no MSAA. Medium: one 1024 sun/moon shadow (stalks, caps and creatures only cast).
-  // High: a 2048 shadow. The shadow follows the player over +-25 m and is redrawn every third frame.
+  // High: a 2048 shadow. The shadow follows the player (+-30 m, +-40 m at High) and is redrawn every third frame.
   renderer.shadowMap.type = THREE.PCFShadowMap; // soft since r182 (PCFSoftShadowMap was removed in r186)
   renderer.shadowMap.autoUpdate = false;
   let shadowTick = 0;
@@ -90,7 +90,9 @@ async function main() {
     const size = q >= 2 ? 2048 : 1024;
     if (sky.sun.shadow.mapSize.x !== size) { sky.sun.shadow.mapSize.set(size, size); sky.sun.shadow.map?.dispose(); sky.sun.shadow.map = null; }
     const cam = sky.sun.shadow.camera;
-    cam.left = cam.bottom = -25; cam.right = cam.top = 25; cam.near = 1; cam.far = 120; cam.updateProjectionMatrix();
+    // Wider at High: tall caps 30 m away still cast (beyond the box, shadows simply stop).
+    const R = q >= 2 ? 40 : 30;
+    cam.left = cam.bottom = -R; cam.right = cam.top = R; cam.near = 1; cam.far = 140; cam.updateProjectionMatrix();
     sky.sun.shadow.bias = -0.0004; sky.sun.shadow.normalBias = 0.04;
     post.setQuality(q);
     // Shaders compiled while the shadow map didn't exist yet keep a stale shadow sampler, which ANGLE (Chrome on
