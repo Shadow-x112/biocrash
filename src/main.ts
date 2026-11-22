@@ -216,6 +216,8 @@ async function main() {
   scene.add(cratePreview.group);
   /** The crate whose contents the crafting panel is showing (null: the panel shows recipes). */
   let storeCrate: Crate | null = null;
+  /** Creatures scanned with the wrist link. Saves from before scanning existed keep the recipes they had. */
+  const scanned = new Set<string>(meta?.scanned ?? (meta?.inventory ? ['tuko', 'oomi'] : []));
   void loadProps().then((m) => { crates.setLooks(m); cratePreview.refresh(); });
   let wasNight = meta?.wasNight ?? false;
   let nights = meta?.nights ?? 0;
@@ -317,7 +319,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
-    crates: crates.save(), inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
+    crates: crates.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
@@ -438,7 +440,7 @@ async function main() {
     $('keylist').textContent =
       `${K('forward')}${K('left')}${K('back')}${K('right')} move \u00b7 ${K('jump')} jump \u00b7 ${K('run')} run \u00b7 ${K('sneak')} sneak\n` +
       `${K('use')} pick up / use \u00b7 ${K('craft')} crafting \u00b7 1-4 tools\n` +
-      `${K('build')} build campfire \u00b7 ${K('eat')} cook at a fire / eat \u00b7 ${K('lamp')} wrist lamp\n` +
+      `${K('build')} build campfire \u00b7 ${K('eat')} cook at a fire / eat \u00b7 ${K('lamp')} wrist lamp \u00b7 hold ${K('scan')} scan a creature\n` +
       `${K('dig')} / left click dig \u00b7 ${K('fill')} / right click fill\n` +
       'Arrow keys also look around\nF1 hide the HUD \u00b7 F3 debug info \u00b7 F5 save now \u00b7 Esc pause';
     $('craftsub').textContent = `Number keys or click to craft \u00b7 Shift+click makes up to 5 \u00b7 ${K('craft')} or Esc to close`;
@@ -533,7 +535,9 @@ async function main() {
     $('hotbar').innerHTML = SLOTS.map((s, i) => {
       const owned = s === 'hands' || inventory.counts[s] > 0;
       const n = s === 'hands' ? 0 : inventory.counts[s];
-      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}">${ico(s)}<b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}</div>`;
+      const c = s === 'hands' ? null : inventory.condition(s);
+      const dur = c === null ? '' : `<i class="dur${c < 0.25 ? ' low' : ''}"><i style="transform:scaleX(${c.toFixed(2)})"></i></i>`;
+      return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}">${ico(s)}<b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}${dur}</div>`;
     }).join('');
   }
   function renderCraft() {
@@ -546,8 +550,9 @@ async function main() {
         if (craftableOnly) return '';
         const parts = [...Object.keys(r.cost), ...(r.needs ?? [])] as ItemId[];
         const found = parts.filter((k) => inventory.seen.has(k)).length;
+        const how = r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found`;
         return `<div class="recipe unknown"><div><div class="rname"><span class="key">${i + 1}</span><span class="ico q">?</span>Unknown recipe</div>
-          <div class="rblurb">Pick up its materials to work it out \u00b7 ${found}/${parts.length} found</div></div><span class="hint">locked</span></div>`;
+          <div class="rblurb">${how}</div></div><span class="hint">locked</span></div>`;
       }
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
         const need = r.cost[k] ?? 0, have = inventory.counts[k];
@@ -596,6 +601,7 @@ async function main() {
       if (d > 0) pop(`+${d} ${ITEM_NAMES[k]}`);
     }
     for (const k of [...MATERIALS, ...GEAR]) popPrev[k] = inventory.counts[k];
+    if (hotbar.slot !== 'hands' && inventory.counts[hotbar.slot] <= 0) hotbar.select('hands', () => true);
     renderHotbar();
     if (state === 'craft') { if (storeCrate) renderStore(); else renderCraft(); }
     recipeCheck?.();
@@ -610,11 +616,11 @@ async function main() {
     itemNameEl.classList.add('show'); clearTimeout(itemNameTimer);
     itemNameTimer = window.setTimeout(() => itemNameEl.classList.remove('show'), 1200);
   };
-  inventory.load(meta?.inventory, meta?.fresh, meta?.seen);
+  inventory.load(meta?.inventory, meta?.fresh, meta?.seen, meta?.wear);
   // Recipes you've worked out: learning one (holding all its parts for the first time) is announced once.
-  const known = new Set(RECIPES.filter((r) => knows(r, inventory.seen)).map((r) => r.id));
+  const known = new Set(RECIPES.filter((r) => knows(r, inventory.seen, scanned)).map((r) => r.id));
   recipeCheck = () => {
-    for (const r of RECIPES) if (!known.has(r.id) && knows(r, inventory.seen)) {
+    for (const r of RECIPES) if (!known.has(r.id) && knows(r, inventory.seen, scanned)) {
       known.add(r.id);
       flash(`New recipe: ${ITEM_NAMES[r.makes]}  \u00b7  ${K('craft')} to craft`);
       audio.play('ui_2', { bus: 'ui', gain: 0.4, rate: 1.4 });
@@ -631,6 +637,18 @@ async function main() {
       flash(`Pack full: left ${n - got} ${ITEM_NAMES[id].toLowerCase()} on the ground.`);
     }
     return got;
+  };
+  /** One use of a tool: warns when it's nearly spent, and when it breaks swaps in a spare (or your hands). */
+  let durShown = '';
+  const useTool = (id: ItemId) => {
+    const r = inventory.wearOut(id);
+    if (r === 'low') flash(`Your ${ITEM_NAMES[id].toLowerCase()} is wearing thin. Make a spare (${K('craft')}).`);
+    else if (r === 'broke') {
+      audio.play('crunch', { gain: 0.7, rate: 1.3 });
+      flash(`Your ${ITEM_NAMES[id].toLowerCase()} broke.${inventory.counts[id] > 0 ? ' You take out a spare.' : ''}`);
+    }
+    const key = SLOTS.map((s) => (s === 'hands' ? '' : Math.round((inventory.condition(s) ?? 0) * 40))).join();
+    if (key !== durShown) { durShown = key; renderHotbar(); } // the bars move in 2.5% steps
   };
   const packFull = (id: ItemId) => { audio.deny(); flash(`No room for ${ITEM_NAMES[id].toLowerCase()}: your carry slots are full (${inventory.usedSlots()}/${inventory.slots()}). Craft a bag or drop things at camp.`); };
   let craftMsgTimer = 0;
@@ -684,12 +702,13 @@ async function main() {
     audio.play('ui_2', { bus: 'ui', gain: 0.5, rate: 0.8 });
   };
   const cells = (inv: Inventory, side: 'pack' | 'crate') => {
-    const ks = MATERIALS.filter((k) => inv.counts[k] > 0);
+    const ks = [...MATERIALS, ...TOOLS].filter((k) => inv.counts[k] > 0);
     if (!ks.length) return `<div class="stempty">${side === 'pack' ? 'Nothing carried' : 'Empty'}</div>`;
     return ks.map((k) => {
       const f = PERISHABLE.includes(k as Perishable) ? inv.freshness(k as Perishable) : null;
       const stale = f !== null && f < (SHELF_LIFE[k] ?? 0) * 0.25;
-      return `<button class="cell${stale ? ' stale' : ''}" data-side="${side}" data-k="${k}" title="${ITEM_NAMES[k]}${f !== null ? ' · next spoils in ' + fmtTime(f * (side === 'crate' ? 2 : 1)) : ''}">${ico(k)}<b>${inv.counts[k]}</b><i>${ITEM_NAMES[k]}</i></button>`;
+      const cond = inv.condition(k);
+      return `<button class="cell${stale || (cond !== null && cond < 0.25) ? ' stale' : ''}" data-side="${side}" data-k="${k}" title="${ITEM_NAMES[k]}${f !== null ? ' · next spoils in ' + fmtTime(f * (side === 'crate' ? 2 : 1)) : ''}${cond !== null ? ` · ${Math.round(cond * 100)}% condition` : ''}">${ico(k)}<b>${inv.counts[k]}</b><i>${ITEM_NAMES[k]}</i></button>`;
     }).join('');
   };
   function renderStore() {
@@ -804,6 +823,7 @@ async function main() {
       if (inventory.counts.stone_knife <= 0) { flash('You need a stone knife to harvest.'); return; }
       t.c.strip();
       const got: string[] = [];
+      useTool('stone_knife');
       for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { give(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
       if (audio.has('tear')) { audio.play('tear', { pos: t.c.position, offset: Math.random() * 9, dur: 1.4, gain: 0.9 }); audio.play('crunch', { pos: t.c.position, gain: 0.6, delay: 0.25 }); }
@@ -815,6 +835,7 @@ async function main() {
       props.pick(t.p);
       audio.pickup(t.p.kind);
       give(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
+      if (t.p.kind === 'fiber' && hotbar.slot === 'stone_knife') useTool('stone_knife');
       hotbar.swing();
     } else if (t.kind === 'fire') {
       if (t.f.fuel >= FUEL_MAX - 1) flash('The fire is fully stoked.');
@@ -839,6 +860,7 @@ async function main() {
       if (inventory.room('stalkwood') < 1) { packFull('stalkwood'); return; }
       const got = flora.harvest(t.s);
       if (got) {
+        useTool(hotbar.slot === 'stone_knife' || hotbar.slot === 'stone_pick' ? hotbar.slot : inventory.counts.stone_knife > 0 ? 'stone_knife' : 'stone_pick');
         give('stalkwood', got); hotbar.swing();
         audio.chop(t.s.base);
         particles.burst(t.s.base.clone().setY(t.s.base.y + 1.2), 8, 0xd9cfb8, { speed: 2.5 });
@@ -1012,6 +1034,7 @@ async function main() {
     if (!c.alive) return;
     const dmg = ATTACK[hotbar.slot].damage * (hotbar.slot === 'spear' && inventory.counts.chitin_spearhead > 0 ? 1.5 : 1);
     const hit = c.damage(dmg, player.position);
+    if (hit && hotbar.slot !== 'hands') useTool(hotbar.slot);
     const at = c.hitCentre();
     if (hit) {
       hitEl.className = c.alive ? 'on' : 'on kill';
@@ -1032,6 +1055,7 @@ async function main() {
     if (!aim) return;
     const hit = { point: aim.point.clone(), normal: aim.normal.clone() }; // the ray result object is reused
     const power = DIG_POWER[hotbar.slot];
+    if (hotbar.slot !== 'hands') useTool(hotbar.slot);
     const col = hit.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
     if (!fill) {
       world.brush(hit.point, power.radius, power.strength, -1);
@@ -1188,6 +1212,7 @@ async function main() {
       ${survival.fed > 0 ? `<div class="kv"><span>${corrupt('Fed')}</span><b>${fmtTime(survival.fed)}</b></div>` : ''}
       ${survival.wrapped ? `<div class="kv"><span>${corrupt('Hide wrap')}</span><b>worn</b></div>` : ''}
       ${goal ? `<div class="sec goal">\u25B8 ${goal}</div>` : ''}
+      ${TOOLS.filter((k) => inventory.counts[k] > 0).map((k) => `<div class="kv"><span>${corrupt(ITEM_NAMES[k])}</span><b>${Math.round((inventory.condition(k) ?? 0) * 100)}% condition${inventory.counts[k] > 1 ? ` \u00b7 +${inventory.counts[k] - 1} spare` : ''}</b></div>`).join('')}
       <div class="kv"><span>${corrupt('Load')}</span><b>${inventory.usedSlots()}/${inventory.slots()} slots \u00b7 ${inventory.weight().toFixed(1)} kg \u00b7 ${inventory.load_().name}</b></div>
       ${PERISHABLE.map((k) => { const f = inventory.freshness(k); return f === null ? '' : `<div class="kv"><span>${corrupt(ITEM_NAMES[k])}</span><b>next spoils in ${fmtTime(f)}</b></div>`; }).join('')}
       <div class="sec"><div class="kv"><span>${corrupt('CARRIED')}</span><span>${K('craft')}: craft</span></div>
@@ -1209,6 +1234,32 @@ async function main() {
   const updateWrist = (dt: number) => {
     if (state !== 'playing' && wristOpen) { wristPinned = false; setWrist(false); }
     if (wristOpen && (wristTimer -= dt) <= 0) { wristTimer = 0.25; renderWrist(); }
+  };
+
+  // --- Wrist scan: hold the scan key on a creature (alive or dead) to analyse it. Scans teach the advanced recipes.
+  const SCAN_TIME = 1.6, SCAN_RANGE = 14;
+  const setPrompt = (t: string) => { if (promptEl.textContent !== t) promptEl.textContent = t; };
+  let scanT = 0, scanTick = 0, scanning = false, scanDone = false, scanOf: Creature | null = null;
+  const updateScan = (dt: number) => {
+    if (state !== 'playing' || !input.down('scan')) { scanning = false; scanDone = false; scanOf = null; scanT = 0; return; }
+    if (scanDone) return;
+    scanning = true;
+    const c = fauna.lookAt(camera, SCAN_RANGE);
+    if (!c) { scanOf = null; scanT = 0; setPrompt('Scanning… no lifeform in view'); return; }
+    if (c !== scanOf) { scanOf = c; scanT = 0; }
+    scanT += dt;
+    if ((scanTick -= dt) <= 0) { scanTick = 0.18; audio.play('ui_2', { bus: 'ui', gain: 0.12, rate: 1.5 + scanT * 0.4 }); }
+    const n = Math.min(10, Math.floor((scanT / SCAN_TIME) * 10));
+    setPrompt(`Scanning ${c.species.name}  ${'▮'.repeat(n)}${'▯'.repeat(10 - n)}`);
+    if (scanT < SCAN_TIME) return;
+    scanDone = true; scanning = false;
+    const id = c.species.id;
+    if (scanned.has(id)) { flash(`${c.species.name}: already on file.`); return; }
+    scanned.add(id);
+    audio.play('ui_3', { bus: 'ui', gain: 0.6, rate: 1.2 });
+    if (id === 'tuko' || id === 'oomi') tutorial.milestone(id === 'tuko' ? 'scan_tuko' : 'scan_oomi');
+    flash(`Scan complete: ${c.species.name}.`);
+    recipeCheck?.();
   };
 
   // --- Unease leaks into the HUD: rare false readings (HUD distortion setting; never during real danger) -------
@@ -1329,6 +1380,7 @@ async function main() {
     // out there keep coming while you work.
     const live = state === 'playing' || (state === 'craft' && !settings.pauseCraft);
     updateWrist(dt);
+    updateScan(dt);
     const simulating = live || state === 'dead';
 
     let tm = performance.now();
@@ -1486,7 +1538,7 @@ async function main() {
       uiTimer = 0.1;
       if (state === 'playing') {
         milestones();
-        target = queryTarget(); if (!placing) promptEl.textContent = promptFor(target);
+        target = queryTarget(); if (!placing && !scanning) promptEl.textContent = promptFor(target);
         const cls = crosshairFor(target);
         if (crossEl.className !== cls) crossEl.className = cls;
       }

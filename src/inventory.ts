@@ -41,6 +41,8 @@ export const WEIGHT: Partial<Record<ItemId, number>> = {
   stone: 1.0, stalkwood: 0.7, fiber: 0.05, cordage: 0.1, chitin: 0.5, hide: 0.8, bone: 0.3, raw_meat: 0.6, cooked_meat: 0.45,
   stone_pick: 1.6, stone_knife: 0.4, spear: 1.3, fiber_pouch: 0.2, hide_pack: 0.9,
 };
+/** Uses before a tool breaks: a dig stroke, a cut, a harvest or a hit each count one. */
+export const DURABILITY: Partial<Record<ItemId, number>> = { stone_pick: 500, stone_knife: 160, spear: 120 };
 export const BASE_SLOTS = 8;
 /** Slots each bag adds. */
 export const BAG_SLOTS: Partial<Record<ItemId, number>> = { fiber_pouch: 4, hide_pack: 4 };
@@ -66,6 +68,8 @@ export class Inventory {
   readonly ages: Record<Perishable, number[]> = { raw_meat: [], cooked_meat: [] };
   /** Everything you have ever held: recipes unlock once you've held all their parts. */
   readonly seen = new Set<ItemId>();
+  /** Uses already spent on the tool in hand of each kind (spares are always fresh). */
+  readonly wear: Partial<Record<ItemId, number>> = {};
   onChange: () => void = () => {};
   /** `base` carry slots before bags (a crate has more and takes no bags). */
   constructor(readonly base = BASE_SLOTS) {}
@@ -122,6 +126,19 @@ export class Inventory {
     return spoiled;
   }
 
+  /** 0..1 condition of the tool of this kind you'd use next (1 = fresh), or null without one. */
+  condition(id: ItemId) { const d = DURABILITY[id]; return d && this.counts[id] > 0 ? 1 - (this.wear[id] ?? 0) / d : null; }
+
+  /** Spends one use of a tool. 'low' the first time it drops under 15%, 'broke' when it breaks (one fewer of them). */
+  wearOut(id: ItemId, n = 1): 'ok' | 'low' | 'broke' {
+    const d = DURABILITY[id];
+    if (!d || this.counts[id] <= 0) return 'ok';
+    const before = this.wear[id] ?? 0, after = before + n;
+    if (after >= d) { this.wear[id] = 0; this.counts[id]--; this.onChange(); return 'broke'; }
+    this.wear[id] = after;
+    return before < d * 0.85 && after >= d * 0.85 ? 'low' : 'ok';
+  }
+
   /** Moves up to `n` of `id` into `to` (as many as fit there), keeping meat ages. Returns how many moved. */
   moveTo(to: Inventory, id: ItemId, n: number) {
     const k = Math.min(n, this.counts[id], to.room(id));
@@ -130,6 +147,8 @@ export class Inventory {
     this.counts[id] -= k;
     if (id in this.ages) this.ages[id as Perishable].splice(0, k);
     to.counts[id] += k; to.seen.add(id);
+    // A worn tool travels with the last one moved (spares go first), so storing it can't make it new.
+    if (DURABILITY[id] && this.counts[id] === 0 && this.wear[id]) { to.wear[id] = Math.max(to.wear[id] ?? 0, this.wear[id]!); this.wear[id] = 0; }
     if (id in to.ages) { const a = to.ages[id as Perishable]; a.push(...ages); a.sort((x, y) => y - x); }
     this.onChange(); to.onChange();
     return k;
@@ -138,8 +157,9 @@ export class Inventory {
   /** Seconds until the oldest piece of `k` spoils, or null when you carry none. */
   freshness(k: Perishable) { const a = this.ages[k]; return a.length ? Math.max(0, (SHELF_LIFE[k] ?? 0) - a[0]) : null; }
 
-  load(c: Partial<Record<string, number>> | undefined, ages?: Partial<Record<string, number[]>>, seen?: string[]) {
+  load(c: Partial<Record<string, number>> | undefined, ages?: Partial<Record<string, number[]>>, seen?: string[], wear?: Partial<Record<string, number>>) {
     if (c) for (const k of Object.keys(this.counts) as ItemId[]) this.counts[k] = c[k] ?? 0;
+    for (const k of Object.keys(DURABILITY) as ItemId[]) this.wear[k] = Math.min(Math.max(0, wear?.[k] ?? 0), (DURABILITY[k] ?? 1) - 1);
     for (const k of PERISHABLE) {
       const a = (ages?.[k] ?? []).slice(0, this.counts[k]).sort((x, y) => y - x);
       while (a.length < this.counts[k]) a.push(0);

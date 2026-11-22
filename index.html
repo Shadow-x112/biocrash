@@ -98,6 +98,10 @@
       #hotbar .slot { width: 86px; padding: 6px 6px 7px; border-radius: 6px; background: rgba(0,0,0,0.4); color: #e8edf2;
                       font: 12px system-ui, sans-serif; text-align: center; border: 2px solid transparent; }
       #hotbar .slot b { display: block; font-size: 10px; color: #9aa6b2; }
+      #hotbar .slot { position: relative; }
+      #hotbar .slot .dur { position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; background: rgba(255,255,255,0.12); }
+      #hotbar .slot .dur i { display: block; height: 100%; background: #6fd6a8; transform-origin: left; }
+      #hotbar .slot .dur.low i { background: #ff7a4a; }
       #hotbar .slot.sel { border-color: #e07a2f; background: rgba(0,0,0,0.6); }
       #hotbar .slot.locked { opacity: 0.35; }
       #craft { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(8,10,14,0.55); }

@@ -39,3 +39,25 @@ describe('inventory carry slots, weight and spoilage', () => {
     expect(knows(RECIPES.find((r) => r.id === 'spear')!, old.seen)).toBe(true);
   });
 });
+
+describe('tool wear and scanned recipes', () => {
+  it('wears the tool in hand, warns once, breaks into a spare', () => {
+    const inv = new Inventory();
+    inv.add('spear', 2);
+    let low = 0, broke = 0;
+    for (let i = 0; i < 120; i++) { const r = inv.wearOut('spear'); if (r === 'low') low++; if (r === 'broke') broke++; }
+    expect([low, broke, inv.counts.spear, inv.condition('spear')]).toEqual([1, 1, 1, 1]);
+    inv.wearOut('spear', 30);
+    const crate = new Inventory(16);
+    inv.moveTo(crate, 'spear', 1);
+    expect(crate.wear.spear).toBe(30); // storing a worn tool doesn't repair it
+  });
+  it('advanced recipes need a scan, not parts', () => {
+    const inv = new Inventory();
+    inv.load(undefined);
+    for (const k of ['chitin', 'cordage', 'spear'] as const) inv.add(k);
+    const head = RECIPES.find((r) => r.id === 'chitin_spearhead')!;
+    expect(knows(head, inv.seen)).toBe(false);
+    expect(knows(head, inv.seen, new Set(['tuko']))).toBe(true);
+  });
+});

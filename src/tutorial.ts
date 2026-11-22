@@ -51,10 +51,12 @@ export const MILESTONES = {
   sunset: { say: 'Sunset in about three minutes. Make sure your fire has wood.', goal: '' },
   dawn: { say: 'Sunrise. You made it through a night here. The wreck’s med bay might still have power. Go and look.', goal: 'Return to the wreck' },
   wreck: { say: 'Med bay is dark. The distress beacon is still transmitting. Nobody has answered. Yet.', goal: '' },
+  scan_tuko: { say: 'Tuko scanned. That shell plate is harder than anything I have on file. Heated and lashed to a spear, it would bite deep. Added to crafting.', goal: '' },
+  scan_oomi: { say: 'Oomi scanned. Dense hide, long bones. Stitch three hides over a bone frame and you could carry a lot more. Added to crafting.', goal: '' },
   death: { say: 'I pulled your vitals back at the crash site. What you carried is where you fell: it’s on your compass.', goal: 'Recover your pack' },
 } as const;
 export type MilestoneId = keyof typeof MILESTONES;
-const URGENT = new Set<MilestoneId>(['cold', 'sunset']);
+const URGENT = new Set<MilestoneId>(['cold', 'sunset', 'scan_tuko', 'scan_oomi']);
 
 export class Tutorial {
   step = 0;

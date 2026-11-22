@@ -39,6 +39,10 @@ export interface SaveMeta {
   seen?: string[];
   /** Storage crates built at camp, with what's in them. */
   crates?: CrateSave[];
+  /** Uses spent on the tool in hand, per tool kind. */
+  wear?: Record<string, number>;
+  /** Creatures scanned with the wrist link (advanced recipes). */
+  scanned?: string[];
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -140,10 +144,17 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       const fresh: Record<string, number[]> = {};
       if (c.fresh && typeof c.fresh === 'object') for (const [k, a] of Object.entries(c.fresh as Record<string, unknown>))
         if (Array.isArray(a)) fresh[k.slice(0, 32)] = a.map((v) => num(v, 0, 1e6)).filter((v): v is number => v !== undefined).slice(0, 500);
-      if (x !== undefined && y !== undefined && z !== undefined) out.crates.push({ x, y, z, rot: num(c.rot, -10, 10) ?? 0, items, fresh });
+      const wear: Record<string, number> = {};
+      if (c.wear && typeof c.wear === 'object') for (const [k, n] of Object.entries(c.wear as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v) wear[k.slice(0, 32)] = Math.floor(v); }
+      if (x !== undefined && y !== undefined && z !== undefined) out.crates.push({ x, y, z, rot: num(c.rot, -10, 10) ?? 0, items, fresh, ...(Object.keys(wear).length ? { wear } : {}) });
     }
     out.crates = out.crates.slice(0, 60);
   }
+  if (m.wear && typeof m.wear === 'object') {
+    out.wear = {};
+    for (const [k, n] of Object.entries(m.wear as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v !== undefined) out.wear[k.slice(0, 32)] = Math.floor(v); }
+  }
+  if (Array.isArray(m.scanned)) out.scanned = m.scanned.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 50);
   if (Array.isArray(m.seen)) out.seen = m.seen.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 100);
   const step = num(m.tutorialStep, 0, 1000);
   if (step !== undefined) out.tutorialStep = Math.floor(step);
