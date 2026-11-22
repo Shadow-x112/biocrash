@@ -189,8 +189,9 @@ async function main() {
   const wreck = new Wreck(RAPIER, physics, renderer, spawnPoint, (x, z) => {
     const hit = world.raycast(groundRay.set(x, spawnPoint.y + 40, z), down, 120);
     return hit ? hit.point.y : null;
-  });
+  }, meta?.wreck);
   scene.add(wreck.group, wreck.debris);
+  const wreckPos = wreck; // (the compass code below has its own `wreck`)
   const props = new Props();
   props.blocked = (x, z) => wreck.covers(x, z) || flora.trunkAt(x, z); // not inside the wreck or a mushroom trunk
   for (const id of meta?.picked ?? []) props.picked.add(id);
@@ -229,7 +230,7 @@ async function main() {
   placeables.load(meta?.placed);
   const flarePreview = placeables.makePreview('flare'), solarPreview = placeables.makePreview('solar');
   scene.add(flarePreview.group, solarPreview.group);
-  const chips = new Chips(spawnPoint, (id) => scanned.has(id), (x, z) => wreck.covers(x, z));
+  const chips = new Chips(spawnPoint, (id) => scanned.has(id), wreck);
   scene.add(chips.group);
   void loadProps().then((m) => { placeables.setLooks(m); flarePreview.refresh(); solarPreview.refresh(); chips.setLook(m.Chip); });
   void loadProps().then((m) => { crates.setLooks(m); cratePreview.refresh(); });
@@ -333,7 +334,7 @@ async function main() {
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
-    crates: crates.save(), placed: placeables.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(),
+    crates: crates.save(), placed: placeables.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(), wreck: wreck.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
     player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
@@ -1443,8 +1444,8 @@ async function main() {
     const heading = -player.yaw * 180 / Math.PI + jitter;
     TICKS.forEach(([d], i) => place(tickEls[i], d, heading));
     const wreck = tickEls[TICKS.length], fire = tickEls[TICKS.length + 1];
-    const dw = player.position.distanceTo(spawnPoint);
-    if (dw > 12) { wreck.textContent = `\u25BC wreck ${Math.round(dw)} m`; place(wreck, bearingTo(spawnPoint), heading); } else wreck.style.display = 'none';
+    const dw = player.position.distanceTo(wreckPos.center); // the wreck itself (it lies 9-15 m from the spawn point)
+    if (dw > 12) { wreck.textContent = `\u25BC wreck ${Math.round(dw)} m`; place(wreck, bearingTo(wreckPos.center), heading); } else wreck.style.display = 'none';
     let best: THREE.Vector3 | null = null, bd = Infinity;
     for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f.position; } }
     if (best && bd > 8) { fire.textContent = `\u25B2 fire ${Math.round(bd)} m`; place(fire, bearingTo(best), heading); } else fire.style.display = 'none';
@@ -1616,6 +1617,7 @@ async function main() {
     audio.updateAmbience(dt, sky.night, camera.position.y, camera.position);
     tm = performance.now();
     renderer.info.reset(); // count every pass of the frame for the F3 readout
+    if (!wreck.placed) wreck.update(0); // settle it even behind the pause menu (it was missing from the menu backdrop)
     syncHandLights(dt);
     if (renderer.shadowMap.enabled && sky.sun.intensity > 0.02 && ++shadowTick % 3 === 0) renderer.shadowMap.needsUpdate = true; // none in the dusk gap
     post.render(scene, camera, dt, hands);

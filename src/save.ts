@@ -46,6 +46,8 @@ export interface SaveMeta {
   scanned?: string[];
   /** Solar panels and burning flares. */
   placed?: PlacedSave;
+  /** Where the wreck lies and which hull plates were cleared. */
+  wreck?: { x: number; y: number; z: number; rx: number; ry: number; rz: number; cleared?: number[] };
 }
 
 export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
@@ -158,6 +160,14 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
   if (m.wear && typeof m.wear === 'object') {
     out.wear = {};
     for (const [k, n] of Object.entries(m.wear as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v !== undefined) out.wear[k.slice(0, 32)] = Math.floor(v); }
+  }
+  const wr = m.wreck as Record<string, unknown> | undefined;
+  if (wr && typeof wr === 'object') {
+    const v = [num(wr.x, -1e6, 1e6), num(wr.y, -1e4, 1e4), num(wr.z, -1e6, 1e6), num(wr.rx, -7, 7), num(wr.ry, -7, 7), num(wr.rz, -7, 7)];
+    if (v.every((n) => n !== undefined)) {
+      const [x, y, z, rx, ry, rz] = v as number[];
+      out.wreck = { x, y, z, rx, ry, rz, cleared: (Array.isArray(wr.cleared) ? wr.cleared : []).filter((i): i is number => Number.isInteger(i) && i >= 0 && i < 100).slice(0, 100) };
+    }
   }
   if (Array.isArray(m.scanned)) out.scanned = m.scanned.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 50);
   const pl = m.placed as Record<string, unknown> | undefined;

@@ -8,6 +8,8 @@ import type RAPIER from '@dimforge/rapier3d';
 import { loadProps } from './assets';
 
 const HALF_LEN = 8.6, HALF_WIDTH = 3.6;
+/** Where the wreck came to rest, saved so it never moves between sessions (digging near it used to re-seat it). */
+export interface WreckSave { x: number; y: number; z: number; rx: number; ry: number; rz: number; cleared?: number[] }
 
 export class Wreck {
   readonly group = new THREE.Group();
@@ -16,15 +18,20 @@ export class Wreck {
   readonly center = new THREE.Vector3();
   private yaw: number;
   private beacons: THREE.PointLight[] = [];
+  private beaconMats: THREE.MeshStandardMaterial[] = [];
+  /** Hull plates cleared by digging (by scatter index; they stay gone). */
+  private cleared = new Set<number>();
+  private saved: WreckSave | null = null;
   private t = 0;
 
-  private placed = false;
+  placed = false;
   /** Called once it's in place (clear whatever grew where it now lies). */
   onSeated?: () => void;
   private pending: THREE.Mesh | null = null;
 
   constructor(private rapier: typeof RAPIER, private physics: RAPIER.World, renderer: THREE.WebGLRenderer, private spawn: THREE.Vector3,
-    private ground: (x: number, z: number) => number | null) {
+    private ground: (x: number, z: number) => number | null, saved?: WreckSave) {
+    if (saved) { this.saved = saved; for (const i of saved.cleared ?? []) this.cleared.add(i); }
     // Beside the spawn, nose torn open and pointing away from it. It's seated once the ground under it exists.
     this.yaw = 0.55;
     this.center.set(spawn.x + 7.5, spawn.y, spawn.z + 2.5);
@@ -40,7 +47,14 @@ export class Wreck {
         if (m.name.startsWith('COL_')) { this.pending = m; m.visible = false; return; }
         m.castShadow = m.name !== 'Wreck_Lights';
         m.receiveShadow = true;
-        const mat = m.material as THREE.MeshStandardMaterial;
+        let mat = m.material as THREE.MeshStandardMaterial;
+        // The interior lost its material in export: unnamed white metal that the env map lit bright white through the
+        // torn nose. Dark, grimy bulkhead instead.
+        if (m.name === 'Wreck_Interior' || (!mat.name && !mat.map)) {
+          mat = m.material = new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.8, metalness: 0.35, side: THREE.DoubleSide });
+          addDetail(mat, { scale: 1.2, normal: 0.4, moss: 0.15, wet: 0.2, macro: 0.5, rough: 0.4 });
+        }
+        if (mat.name.startsWith('BeaconRed')) this.beaconMats.push(mat); // pulses with its light
         // A faint reflection environment so the metal reads as metal at night (without one it renders black).
         mat.envMap = env; mat.envMapIntensity = 0.25;
       });
@@ -75,6 +89,16 @@ export class Wreck {
    *  once the terrain colliders exist. Rolled and pitched to the ground, a third of the hull below it. */
   private seat() {
     if (!this.pending) return;
+    if (this.saved) {
+      // Back where it was. Waits for the ground around it (the debris is seated on it).
+      const v = this.saved;
+      for (const [dx, dz] of [[0, 0], [16, 0], [-16, 0], [0, 16], [0, -16]]) if (this.ground(v.x + dx, v.z + dz) === null) return;
+      this.center.set(v.x, v.y, v.z);
+      this.group.position.copy(this.center);
+      this.group.rotation.set(v.rx, v.ry, v.rz, 'YXZ');
+      this.yaw = v.ry;
+      return this.finishSeat();
+    }
     let best: { x: number; z: number; yaw: number; mean: number; pitch: number; roll: number; score: number } | null = null;
     const sp = this.spawn;
     for (const r of [9, 12, 15]) for (let k = 0; k < 12; k++) for (const yaw of [0.2, 0.95, 1.7, 2.45]) {
@@ -102,8 +126,12 @@ export class Wreck {
     this.center.set(best.x, best.mean + 0.6, best.z);
     this.group.position.copy(this.center);
     this.group.rotation.set(-best.roll * 0.9 + 0.08, this.yaw, best.pitch * 0.9 - 0.05, 'YXZ');
+    this.finishSeat();
+  }
+
+  private finishSeat() {
     this.group.updateMatrixWorld(true);
-    this.collider(this.pending);
+    this.collider(this.pending!);
     this.group.visible = true;
     this.placed = true;
     this.onSeated?.();
@@ -112,7 +140,7 @@ export class Wreck {
 
   /** Digging or filling under a hull plate: it goes (it would float, or sink into the fill). */
   clearDebrisNear(p: THREE.Vector3, r: number) {
-    for (const d of [...this.debris.children]) if (d.position.distanceTo(p) < r + 0.8) this.debris.remove(d);
+    for (const d of [...this.debris.children]) if (d.position.distanceTo(p) < r + 0.8) { this.debris.remove(d); this.cleared.add(d.userData.i); }
   }
 
   private async scatterDebris() {
@@ -124,17 +152,29 @@ export class Wreck {
     let seed = 7;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (let i = 0; i < 22; i++) {
+      // Every random draw happens up front, so a plate keeps its look whether or not its ground has loaded yet.
       const a = rnd() * Math.PI * 2, d = 4 + rnd() * 14;
       const x = this.center.x + Math.cos(a) * d * 1.3, z = this.center.z + Math.sin(a) * d;
-      if (this.covers(x, z, 0.3)) continue;
+      const rx = (rnd() - 0.5) * 0.5, ry = rnd() * Math.PI * 2, rz = (rnd() - 0.5) * 0.5, sc = 0.7 + rnd() * 0.7;
+      if (this.covers(x, z, 0.3) || this.cleared.has(i)) continue;
+      this.debrisTodo.push({ i, x, z, rx, ry, rz, sc, k: kinds[i % kinds.length], splatMat, quad });
+    }
+    this.placeDebris();
+  }
+
+  /** Plates whose ground isn't built yet wait (they used to be dropped, so the count changed from load to load). */
+  private todoTimer = 0;
+  private debrisTodo: { i: number; x: number; z: number; rx: number; ry: number; rz: number; sc: number; k: { geometry: THREE.BufferGeometry; material: THREE.Material }; splatMat: THREE.Material; quad: THREE.BufferGeometry }[] = [];
+  private placeDebris() {
+    this.debrisTodo = this.debrisTodo.filter(({ i, x, z, rx, ry, rz, sc, k, splatMat, quad }) => {
       const h = this.ground(x, z);
-      if (h === null) continue;
-      const k = kinds[i % kinds.length];
+      if (h === null) return true;
       const piece = new THREE.Mesh(k.geometry, k.material);
       piece.position.set(x, h + 0.03, z);
-      piece.rotation.set((rnd() - 0.5) * 0.5, rnd() * Math.PI * 2, (rnd() - 0.5) * 0.5, 'YXZ');
-      piece.scale.setScalar(0.7 + rnd() * 0.7);
+      piece.rotation.set(rx, ry, rz, 'YXZ');
+      piece.scale.setScalar(sc);
       piece.castShadow = piece.receiveShadow = true;
+      piece.userData.i = i;
       // A scorched contact patch under the plate (a child: it goes when the plate is cleared).
       const sp = new THREE.Mesh(quad, splatMat);
       // Lie on the ground's own slope (a flat patch on a slope floats on one side and sinks on the other).
@@ -145,14 +185,23 @@ export class Wreck {
       sp.position.set(0, -0.025, 0).applyQuaternion(piece.quaternion.clone().invert()); sp.scale.set(1.5, 1, 1.15); sp.renderOrder = -1;
       piece.add(sp);
       this.debris.add(piece);
-    }
+      return false;
+    });
   }
 
   update(dt: number) {
     if (!this.placed) this.seat();
+    else if (this.debrisTodo.length && (this.todoTimer -= dt) <= 0) { this.todoTimer = 0.5; this.placeDebris(); }
     // The beacon pulses: a slow, uneven warning blink.
     this.t += dt;
     const k = Math.max(0, Math.sin(this.t * 2.1)) ** 3 * 0.85 + 0.15;
     for (const b of this.beacons) b.intensity = 6 * k;
+    for (const m of this.beaconMats) m.emissiveIntensity = 12 * k; // the lamp blinks with its light (it stayed lit)
+  }
+
+  save(): WreckSave | undefined {
+    if (!this.placed) return this.saved ?? undefined;
+    const r = this.group.rotation;
+    return { x: this.center.x, y: this.center.y, z: this.center.z, rx: r.x, ry: r.y, rz: r.z, cleared: [...this.cleared] };
   }
 }

@@ -25,8 +25,8 @@ export class Chips {
   private sphere = new THREE.Sphere(new THREE.Vector3(), 0.3);
   private t = 0;
 
-  /** `taken`: chips already read (they're gone from the world). `blocked`: ground the wreck covers. */
-  constructor(centre: THREE.Vector3, taken: (id: string) => boolean, private blocked?: (x: number, z: number) => boolean) {
+  /** `taken`: chips already read (they're gone from the world). `wreck`: chips wait for it to settle, then keep off it. */
+  constructor(centre: THREE.Vector3, taken: (id: string) => boolean, private wreck?: { placed: boolean; center: THREE.Vector3; covers: (x: number, z: number) => boolean }) {
     for (const c of CHIPS) {
       if (taken(c.id)) continue;
       const g = new THREE.Group(); g.visible = false;
@@ -48,8 +48,13 @@ export class Chips {
     this.t += dt;
     for (const [i, c] of this.list.entries()) {
       if (!c.placed) {
-        // Pushed out of the wreck's footprint if it landed on it (the wreck settles after load).
-        for (let k = 0; k < 8 && this.blocked?.(c.x, c.z); k++) { const d = Math.hypot(c.x, c.z) || 1; c.x += (c.x / d) * 3; c.z += (c.z / d) * 3; }
+        // Wait for the wreck to settle (it picks its spot after load), then push the chip out of its footprint, away
+        // from its centre (pushing away from the world origin could leave it under the hull).
+        if (this.wreck && !this.wreck.placed) continue;
+        for (let k = 0; k < 8 && this.wreck?.covers(c.x, c.z); k++) {
+          const dx = c.x - this.wreck.center.x, dz = c.z - this.wreck.center.z, d = Math.hypot(dx, dz) || 1;
+          c.x += (dx / d) * 3; c.z += (dz / d) * 3;
+        }
         const g = ground(c.x, c.z);
         if (!g) continue;
         // Lie flat on the slope (normal from two nearby ground samples).
