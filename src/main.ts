@@ -566,7 +566,9 @@ async function main() {
         if (craftableOnly) return '';
         const parts = [...Object.keys(r.cost), ...(r.needs ?? [])] as ItemId[];
         const found = parts.filter((k) => inventory.seen.has(k)).length;
-        const how = r.scan?.startsWith('chip') ? 'Station tech: find a data chip near the wreck and read it' : r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found`;
+        // A missing part you make rather than find (the bone needle) is named: "pick up" would send you hunting for it.
+        const make = parts.filter((k) => !inventory.seen.has(k) && RECIPES.some((x) => x.makes === k)).map((k) => ITEM_NAMES[k].toLowerCase());
+        const how = r.scan?.startsWith('chip') ? 'Station tech: find a data chip near the wreck and read it' : r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found${make.length ? ` \u00b7 make a ${make.join(' and a ')} first` : ''}`;
         return `<div class="recipe unknown"><div><div class="rname"><span class="key">${i + 1}</span><span class="ico q">?</span>Unknown recipe</div>
           <div class="rblurb">${how}</div></div><span class="hint">locked</span></div>`;
       }
@@ -649,7 +651,11 @@ async function main() {
       const feet = player.position.clone().setY(player.position.y - 0.9);
       const g = world.groundAt(feet.x, feet.z);
       if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
-      packs.add(feet, { [id]: n - got });
+      // Into the pack already lying here if there is one (each overflow used to drop a new pack, and past the pack cap
+      // the oldest, maybe the one you died with, was emptied into it).
+      const here = packs.near(feet, 2);
+      if (here) here.items[id] = (here.items[id] ?? 0) + n - got;
+      else packs.add(feet, { [id]: n - got });
       flash(`Pack full: left ${n - got} ${ITEM_NAMES[id].toLowerCase()} on the ground.`);
     }
     return got;
@@ -847,12 +853,13 @@ async function main() {
       t.c.strip();
       const got: string[] = [];
       useTool('stone_knife');
-      for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { give(k, n); got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
+      let spilled = false;
+      for (const [k, n] of Object.entries(t.c.species.drops) as [ItemId, number][]) { if (give(k, n) < n) spilled = true; got.push(`${n} ${ITEM_NAMES[k].toLowerCase()}`); }
       hotbar.swing();
       if (audio.has('tear')) { audio.play('tear', { pos: t.c.position, offset: Math.random() * 9, dur: 1.4, gain: 0.9 }); audio.play('crunch', { pos: t.c.position, gain: 0.6, delay: 0.25 }); }
       else audio.chop(t.c.position);
       particles.burst(t.c.hitCentre(), 10, 0x7a3a3a, { speed: 2 });
-      flash(`Harvested ${got.join(', ')}.`);
+      flash(`Harvested ${got.join(', ')}.${spilled ? ' Pack full: the rest is on the ground at your feet.' : ''}`); // (this replaced give's own note)
     } else if (t.kind === 'prop') {
       if (inventory.room(t.p.kind) < 1) { packFull(t.p.kind); return; }
       props.pick(t.p);
@@ -950,9 +957,9 @@ async function main() {
     flash(inventory.counts.raw_meat > 0 ? `Cook raw meat first: look at a lit fire and press ${K('eat')}.` : 'Nothing to eat. Hunt, then cook the meat at a fire.');
   };
   campfires.onCooked = (f) => {
-    give('cooked_meat', 1);
+    const got = give('cooked_meat', 1);
     tutorial.milestone('cooked');
-    if (f.position.distanceTo(player.position) < 12) { audio.pickup('fiber'); flash('Meat cooked.'); }
+    if (got && f.position.distanceTo(player.position) < 12) { audio.pickup('fiber'); flash('Meat cooked.'); } // (not over the pack-full note)
   };
 
   /** Station-core lines triggered by the world (the tutorial queues them and shows one at a time). */

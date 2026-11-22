@@ -100,7 +100,7 @@ CHITM = mat("Chitin", (0.02, 0.03, 0.035), 0.22, 0, 12, (0.06, 0.12, 0.12), emit
 HIDEM = mat("Hide", (0.12, 0.08, 0.09), 0.75, 0, 18, (0.2, 0.14, 0.13))
 BONEM = mat("Bone", (0.55, 0.5, 0.42), 0.55, 0, 10, (0.36, 0.32, 0.26))
 RAWM = mat("Raw", (0.32, 0.03, 0.05), 0.3, 0, 9, (0.55, 0.14, 0.16), sss=0.2)
-COOKM = mat("Cooked", (0.12, 0.05, 0.02), 0.55, 0, 9, (0.3, 0.13, 0.05))
+COOKM = mat("Cooked", (0.035, 0.012, 0.004), 0.5, 0, 9, (0.16, 0.055, 0.012))  # seared brown with charred patches (it read as raw)
 GLOWM = mat("Glow", (0.05, 0.3, 0.26), 0.3, emit=(0.2, 1.0, 0.85), emit_strength=6.0)
 REDM = mat("Red", (0.35, 0.03, 0.05), 0.35, 0, 7, (0.6, 0.08, 0.1), emit=(1.0, 0.1, 0.12), emit_strength=0.35, sss=0.3)
 FIREM = mat("Fire", (0.6, 0.12, 0.01), 0.4, 0, 6, (0.9, 0.35, 0.02), emit=(1.0, 0.25, 0.02), emit_strength=0.5)
@@ -253,7 +253,13 @@ camd = bpy.data.cameras.new("Cam"); camd.type = "ORTHO"; cam = bpy.data.objects.
 VIEW = Vector((0.55, -1.0, 0.7)).normalized()
 
 
+ONLY = set(os.environ.get("BC_ICONS_ONLY", "").split(",")) - {""}  # re-render just these (others are skipped)
+EXPOSURE = {"raw_meat": -0.5, "cooked_meat": -0.4, "hide": -0.9}  # dark materials that blew out to pale
+
+
 def shoot(name, objs, rot=(0, 0, 0), out=None, pad=1.12, zoom=1.0, shift=(0.0, 0.0), focus=None):
+    if ONLY and name not in ONLY: return
+    sc.view_settings.exposure = 0.6 + EXPOSURE.get(name, 0.0)
     for o in objs:
         o.hide_render = False
         o.rotation_mode = "XYZ"; o.rotation_euler = [math.radians(a) for a in rot]
@@ -316,7 +322,7 @@ shoot("spear", [sp], (60, -38, 0), zoom=0.5, focus=tip.lerp(grip, 0.13))  # the 
 shoot("hands", [VM["Hand_Open"]], (0, 0, 0))
 for k in ("cordage", "chitin", "hide", "bone", "raw_meat", "cooked_meat", "bone_needle", "hide_wrap", "chitin_spearhead", "fiber_pouch", "hide_pack", "lamp_cell", "st_health", "st_heat", "st_lamp"):
     rot = {"cordage": (20, 0, 0), "bone": (0, -35, 20), "bone_needle": (0, -45, 0), "chitin_spearhead": (0, -45, 0),
-           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38), "lamp_cell": (20, -30, 0)}.get(k, (0, 0, 0))
+           "hide_wrap": (0, -20, 25), "chitin": (25, 0, 15), "hide": (38, 0, 18), "raw_meat": (10, -15, 20), "cooked_meat": (10, -15, 20), "fiber_pouch": (0, 0, 25), "hide_pack": (-12, 0, 38), "lamp_cell": (20, -30, 0)}.get(k, (0, 0, 0))
     shoot(k, with_extra(EXTRA[k]), rot)
 if "Crate_Wood" in PROPS:  # the storage crate (placed, but its recipe row needs an icon)
     shoot("crate", [PROPS["Crate_Wood"], PROPS["Crate_Lid"]], (0, 0, 28))
