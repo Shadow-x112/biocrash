@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d';
 
 type Look = { geometry: THREE.BufferGeometry; material: THREE.Material };
-export interface PlacedSave { solars: { x: number; y: number; z: number; rot: number }[]; flares: { x: number; y: number; z: number; t: number }[] }
+export interface PlacedSave { solars: { x: number; y: number; z: number; rot: number; nx?: number; nz?: number }[]; flares: { x: number; y: number; z: number; t: number }[] }
 
 export const FLARE_TIME = 120;
 export const MAX_SOLARS = 12;
@@ -27,7 +27,7 @@ const glowSprite = (() => {
 export { glowSprite };
 
 interface Flare { pos: THREE.Vector3; t: number; group: THREE.Group; glow: THREE.Sprite }
-interface Solar { pos: THREE.Vector3; rot: number; group: THREE.Group; body: RAPIER.RigidBody }
+interface Solar { pos: THREE.Vector3; rot: number; n: THREE.Vector3; group: THREE.Group; body: RAPIER.RigidBody }
 
 let flareLook: Look = { geometry: new THREE.CylinderGeometry(0.02, 0.02, 0.7, 6).translate(0, 0.35, 0), material: new THREE.MeshStandardMaterial({ color: 0x3a2a2a, emissive: 0xff3010, emissiveIntensity: 0.4 }) };
 let frameLook: Look = { geometry: new THREE.BoxGeometry(0.9, 0.9, 0.55).translate(0, 0.45, 0), material: new THREE.MeshStandardMaterial({ color: 0x2a2228 }) };
@@ -63,15 +63,17 @@ export class Placeables {
     this.flares.push({ pos: pos.clone(), t, group: g, glow });
   }
 
-  addSolar(pos: THREE.Vector3, rot: number) {
-    const g = new THREE.Group(); g.position.copy(pos); g.rotation.y = rot;
+  addSolar(pos: THREE.Vector3, rot: number, nx = 0, nz = 0) {
+    const n = new THREE.Vector3(nx, Math.sqrt(Math.max(0.01, 1 - nx * nx - nz * nz)), nz).normalize();
+    const tq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot));
+    const g = new THREE.Group(); g.position.copy(pos); g.quaternion.copy(tq);
     const a = new THREE.Mesh(frameLook.geometry, frameLook.material), b = new THREE.Mesh(panelLook.geometry, panelLook.material);
     a.castShadow = b.castShadow = true; b.receiveShadow = true;
     g.add(a, b); this.group.add(g);
-    const R = this.rapier, q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot);
+    const R = this.rapier, q = tq;
     const body = this.physics.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation(q));
     this.physics.createCollider(R.ColliderDesc.cuboid(0.5, 0.5, 0.35).setTranslation(0, 0.5, 0), body);
-    this.solars.push({ pos: pos.clone(), rot, group: g, body });
+    this.solars.push({ pos: pos.clone(), rot, n, group: g, body });
   }
 
   /** 0..1: how much burning flare light is around `p` (fades out over ~12 m). */
@@ -118,13 +120,13 @@ export class Placeables {
 
   save(): PlacedSave {
     return {
-      solars: this.solars.map((s) => ({ x: s.pos.x, y: s.pos.y, z: s.pos.z, rot: s.rot })),
+      solars: this.solars.map((s) => ({ x: s.pos.x, y: s.pos.y, z: s.pos.z, rot: s.rot, nx: s.n.x, nz: s.n.z })),
       flares: this.flares.filter((f) => f.t > 0).map((f) => ({ x: f.pos.x, y: f.pos.y, z: f.pos.z, t: f.t })),
     };
   }
 
   load(s: PlacedSave | undefined) {
-    for (const p of s?.solars ?? []) this.addSolar(new THREE.Vector3(p.x, p.y, p.z), p.rot);
+    for (const p of s?.solars ?? []) this.addSolar(new THREE.Vector3(p.x, p.y, p.z), p.rot, p.nx ?? 0, p.nz ?? 0);
     for (const f of s?.flares ?? []) this.addFlare(new THREE.Vector3(f.x, f.y, f.z), f.t);
   }
 }

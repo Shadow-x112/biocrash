@@ -12,7 +12,10 @@ const HEAT_RADIUS = 8;
 const HEAT_C = 62; // a full fire keeps you comfortable to ~5 m, room to cook and craft beside it
 const MAX_LIGHTS = 2; // only the two nearest fires cast light: every light costs every lit pixel
 
-export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; }
+export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; /** Ground slope it sits on. */ nx?: number; nz?: number }
+/** Rotation that stands something on ground with normal (nx, ny, nz). */
+const tiltTo = (nx = 0, nz = 0) => { const ny = Math.sqrt(Math.max(0.01, 1 - nx * nx - nz * nz)); return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(nx, ny, nz).normalize()); };
+
 /** Seconds to cook one piece of meat over a lit fire. */
 export const COOK_TIME = 9;
 
@@ -37,11 +40,14 @@ class Campfire {
   /** Light jitter, so lit surfaces crawl. */
   readonly jitter = new THREE.Vector3();
 
-  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material>; scrap?: { geometry: THREE.BufferGeometry; material: THREE.Material } }) {
+  constructor(readonly position: THREE.Vector3, public fuel: number, parts: { ring: THREE.BufferGeometry; logs: THREE.BufferGeometry; flame: THREE.BufferGeometry; meat: THREE.BufferGeometry; mats: Record<string, THREE.Material>; scrap?: { geometry: THREE.BufferGeometry; material: THREE.Material } },
+    /** The stone ring, logs and windbreak lie with the slope; the flame and the spit stay upright. */
+    readonly tilt = new THREE.Quaternion()) {
     this.group.position.copy(position);
     // The stone ring and log pile are pre-merged (shared by every fire): 2 draw calls instead of 11.
     this.ringMesh = new THREE.Mesh(parts.ring, parts.mats.stone);
     this.logMesh = new THREE.Mesh(parts.logs, parts.mats.log);
+    this.ringMesh.quaternion.copy(tilt); this.logMesh.quaternion.copy(tilt);
     this.group.add(this.ringMesh, this.logMesh);
     if (parts.scrap) this.setScrap(parts.scrap);
     this.flame = new THREE.Mesh(parts.flame, parts.mats.flame);
@@ -63,7 +69,7 @@ class Campfire {
   setScrap(s: { geometry: THREE.BufferGeometry; material: THREE.Material }) {
     if (this.scrapMesh) return;
     this.scrapMesh = new THREE.Mesh(s.geometry, s.material);
-    this.scrapMesh.rotation.y = Math.random() * Math.PI * 2;
+    this.scrapMesh.quaternion.copy(this.tilt).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2));
     this.scrapMesh.castShadow = true;
     this.group.add(this.scrapMesh);
   }
@@ -211,8 +217,8 @@ export class Campfires {
     }
   }
 
-  add(position: THREE.Vector3, fuel = FUEL_START) {
-    const f = new Campfire(position, fuel, this.parts);
+  add(position: THREE.Vector3, fuel = FUEL_START, nx = 0, nz = 0) {
+    const f = new Campfire(position, fuel, this.parts, tiltTo(nx, nz));
     this.list.push(f);
     this.group.add(f.group);
     this.heatSources.push(f.heat);
@@ -278,10 +284,10 @@ export class Campfires {
   }
 
   save(): CampfireSave[] {
-    return this.list.map((f) => ({ x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel, cooking: [...f.cooking] }));
+    return this.list.map((f) => { const n = new THREE.Vector3(0, 1, 0).applyQuaternion(f.tilt); return { x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel, cooking: [...f.cooking], nx: n.x, nz: n.z }; });
   }
 
   load(list: CampfireSave[] | undefined) {
-    for (const s of list ?? []) { const f = this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel); f.cooking = [...(s.cooking ?? [])]; f.flare = 0; }
+    for (const s of list ?? []) { const f = this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel, s.nx ?? 0, s.nz ?? 0); f.cooking = [...(s.cooking ?? [])]; f.flare = 0; }
   }
 }

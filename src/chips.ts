@@ -52,7 +52,12 @@ export class Chips {
         for (let k = 0; k < 8 && this.blocked?.(c.x, c.z); k++) { const d = Math.hypot(c.x, c.z) || 1; c.x += (c.x / d) * 3; c.z += (c.z / d) * 3; }
         const g = ground(c.x, c.z);
         if (!g) continue;
-        c.group.position.set(c.x, g.y + 0.01, c.z); c.group.rotation.set(0.12, i * 2.1 + 0.6, -0.08); c.group.visible = true; c.placed = true;
+        // Lie flat on the slope (normal from two nearby ground samples).
+        const gx = ground(c.x + 0.3, c.z), gz = ground(c.x, c.z + 0.3), up = new THREE.Vector3(0, 1, 0);
+        const n = gx && gz ? new THREE.Vector3(-(gx.y - g.y) / 0.3, 1, -(gz.y - g.y) / 0.3).normalize() : up;
+        c.group.position.set(c.x, g.y + 0.005, c.z);
+        c.group.quaternion.setFromUnitVectors(up, n).multiply(new THREE.Quaternion().setFromAxisAngle(up, i * 2.1 + 0.6));
+        c.group.visible = true; c.placed = true;
       }
       const k = 0.55 + 0.45 * Math.sin(this.t * 2.2 + i * 1.7);
       c.glow.material.opacity = 0.35 + 0.5 * k;

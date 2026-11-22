@@ -21,7 +21,7 @@ import { Fauna, setCreatureModels, type Creature } from './creatures';
 import { Wreck } from './wreck';
 import { loadProps, propGlow, loadCreatures, loadViewmodels, loadFlora } from './assets';
 import { Flora } from './flora';
-import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
+import { Campfires, CAMPFIRE_COST, FUEL_MAX, FUEL_START, COOK_TIME } from './campfire';
 import { Crates, MAX_CRATES, CRATE_SLOTS, type Crate } from './crate';
 import { Placeables, MAX_SOLARS, FLARE_TIME } from './placeables';
 import { Chips, CHIPS } from './chips';
@@ -190,7 +190,7 @@ async function main() {
   });
   scene.add(wreck.group, wreck.debris);
   const props = new Props();
-  props.blocked = (x, z) => wreck.covers(x, z);
+  props.blocked = (x, z) => wreck.covers(x, z) || flora.trunkAt(x, z); // not inside the wreck or a mushroom trunk
   for (const id of meta?.picked ?? []) props.picked.add(id);
   scene.add(props.group);
   const flora = new Flora(RAPIER, physics, spawnPoint);
@@ -203,7 +203,7 @@ async function main() {
   void loadCreatures().then((m) => { setCreatureModels(m); if (m?.figure) horror.setFigure(m.figure); });
   for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
   scene.add(flora.group);
-  world.onChunkMesh = (key, _mesh, deco) => { props.onChunkMesh(key, deco); flora.onChunkMesh(key, deco); };
+  world.onChunkMesh = (key, _mesh, deco) => { flora.onChunkMesh(key, deco); props.onChunkMesh(key, deco); }; // trunks first: props avoid them
   world.onChunkUnload = (key) => { props.onChunkUnload(key); flora.onChunkUnload(key); };
   const inventory = new Inventory();
   const campfires = new Campfires(survival.heatSources);
@@ -1008,7 +1008,7 @@ async function main() {
       return '';
     }
     if (kind === 'solar') {
-      if (!hit || hit.normal.y < 0.75) return 'Look at flat ground nearby to set up the panel.';
+      if (!hit || hit.normal.y < 0.8) return 'Look at flatter ground nearby to set up the panel.';
       if ([...crates.list.map((c) => c.position), ...placeables.solars.map((s) => s.pos), ...campfires.list.map((f) => f.position)].some((p) => p.distanceTo(hit.point) < 1.4)) return 'Too close to something else.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to set it up here.';
       if (placeables.solars.length >= MAX_SOLARS) return `You have ${MAX_SOLARS} panels already.`;
@@ -1016,7 +1016,7 @@ async function main() {
       return '';
     }
     if (kind === 'crate') {
-      if (!hit || hit.normal.y < 0.75) return 'Look at flat ground nearby to place the crate.';
+      if (!hit || hit.normal.y < 0.8) return 'Look at flatter ground nearby to place the crate.';
       if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.1)) return 'Too close to another crate.';
       if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.3)) return 'Too close to the fire.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to place it here.';
@@ -1024,7 +1024,7 @@ async function main() {
       if (!inventory.has(crateCost)) return 'You no longer have the materials for a crate.';
       return '';
     }
-    if (!hit || hit.normal.y < 0.6) return 'Look at flat ground nearby to build a campfire.';
+    if (!hit || hit.normal.y < 0.7) return 'Look at flatter ground nearby to build a campfire.';
     // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
     if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
     if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) return 'Step back a little to build here.';
@@ -1056,21 +1056,21 @@ async function main() {
     }
     if (k === 'solar') {
       inventory.take(costOf('solar'));
-      placeables.addSolar(hit.point.clone(), player.yaw);
+      placeables.addSolar(hit.point.clone(), player.yaw, hit.normal.x, hit.normal.z);
       audio.place(hit.point);
       flash('Solar panel set up. In daylight, stand near it to charge your wrist lamp.');
       return;
     }
     if (k === 'crate') {
       inventory.take(crateCost);
-      crates.add(hit.point.clone(), player.yaw);
+      crates.add(hit.point.clone(), player.yaw, undefined, undefined, undefined, hit.normal.x, hit.normal.z);
       audio.place(hit.point);
       flash(`Crate built. ${K('use')} to open it: 16 slots, and meat keeps twice as long inside.`);
       return;
     }
     inventory.take(CAMPFIRE_COST);
     if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
-    campfires.add(hit.point.clone());
+    campfires.add(hit.point.clone(), FUEL_START, hit.normal.x, hit.normal.z);
     audio.place(hit.point);
     flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
   };
@@ -1080,7 +1080,13 @@ async function main() {
     const hit = aimAtTerrain(5);
     const pv = { fire: preview, crate: cratePreview, flare: flarePreview, solar: solarPreview }[placeKind];
     pv.group.visible = !!hit;
-    if (hit) { pv.group.position.copy(hit.point); pv.group.rotation.y = placeKind === 'crate' || placeKind === 'solar' ? player.yaw : 0; pv.setOk(!placeProblem(hit, placeKind)); }
+    if (hit) {
+      pv.group.position.copy(hit.point);
+      const yaw = placeKind === 'crate' || placeKind === 'solar' ? player.yaw : 0;
+      pv.group.quaternion.setFromUnitVectors(UP, hit.normal).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw)); // preview sits on the slope like the real thing
+      if (placeKind === 'flare') pv.group.quaternion.setFromAxisAngle(UP, 0);
+      pv.setOk(!placeProblem(hit, placeKind));
+    }
     promptEl.textContent = `${K('build')} or click: ${{ fire: 'build', crate: 'place crate', flare: 'plant flare', solar: 'set up panel' }[placeKind]} here  \u00b7  ${placeProblem(hit, placeKind) || 'fits'}`;
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */

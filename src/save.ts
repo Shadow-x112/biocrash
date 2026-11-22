@@ -80,6 +80,8 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
     const [x, y, z, yaw, pitch] = [num(p.x, -1e6, 1e6), num(p.y, -1e4, 1e4), num(p.z, -1e6, 1e6), num(p.yaw, -1e4, 1e4), num(p.pitch, -1.55, 1.55)];
     if (x !== undefined && y !== undefined && z !== undefined) out.player = { x, y, z, yaw: yaw ?? 0, pitch: pitch ?? 0 };
   }
+  /** The ground slope a placed thing stands on (only kept when the save has it). */
+  const tilt = (o: Record<string, unknown>) => (typeof o.nx === 'number' && typeof o.nz === 'number' ? { nx: num(o.nx, -0.8, 0.8) ?? 0, nz: num(o.nz, -0.8, 0.8) ?? 0 } : {});
   const tod = num(m.timeOfDay, 0, 1);
   if (tod !== undefined) out.timeOfDay = tod % 1;
   const v = m.vitals as Record<string, unknown> | undefined;
@@ -98,7 +100,7 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       if (!f || typeof f !== 'object') continue;
       const [x, y, z] = [num(f.x, -1e6, 1e6), num(f.y, -1e4, 1e4), num(f.z, -1e6, 1e6)];
       const cooking = Array.isArray(f.cooking) ? (f.cooking as unknown[]).map((c) => num(c, 0, 60)).filter((c): c is number => c !== undefined).slice(0, 20) : [];
-      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0, cooking });
+      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0, cooking, ...tilt(f) });
     }
     out.campfires = out.campfires.slice(0, 500);
   }
@@ -149,7 +151,7 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
         if (Array.isArray(a)) fresh[k.slice(0, 32)] = a.map((v) => num(v, 0, 1e6)).filter((v): v is number => v !== undefined).slice(0, 500);
       const wear: Record<string, number> = {};
       if (c.wear && typeof c.wear === 'object') for (const [k, n] of Object.entries(c.wear as Record<string, unknown>)) { const v = num(n, 0, 1e5); if (v) wear[k.slice(0, 32)] = Math.floor(v); }
-      if (x !== undefined && y !== undefined && z !== undefined) out.crates.push({ x, y, z, rot: num(c.rot, -10, 10) ?? 0, items, fresh, ...(Object.keys(wear).length ? { wear } : {}) });
+      if (x !== undefined && y !== undefined && z !== undefined) out.crates.push({ x, y, z, rot: num(c.rot, -10, 10) ?? 0, ...tilt(c), items, fresh, ...(Object.keys(wear).length ? { wear } : {}) });
     }
     out.crates = out.crates.slice(0, 60);
   }
@@ -164,9 +166,9 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       if (!o || typeof o !== 'object') return [];
       const [x, y, z] = [num(o.x, -1e6, 1e6), num(o.y, -1e4, 1e4), num(o.z, -1e6, 1e6)];
       if (x === undefined || y === undefined || z === undefined) return [];
-      return [{ x, y, z, v: extra === 'rot' ? num(o.rot, -10, 10) ?? 0 : num(o.t, 0, 600) ?? 0 }];
+      return [{ x, y, z, v: extra === 'rot' ? num(o.rot, -10, 10) ?? 0 : num(o.t, 0, 600) ?? 0, ...tilt(o) }];
     });
-    out.placed = { solars: pts(pl.solars, 'rot').map(({ x, y, z, v }) => ({ x, y, z, rot: v })), flares: pts(pl.flares, 't').map(({ x, y, z, v }) => ({ x, y, z, t: v })) };
+    out.placed = { solars: pts(pl.solars, 'rot').map(({ x, y, z, v, ...t }) => ({ x, y, z, rot: v, ...t })), flares: pts(pl.flares, 't').map(({ x, y, z, v }) => ({ x, y, z, t: v })) };
   }
   if (Array.isArray(m.seen)) out.seen = m.seen.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 32)).slice(0, 100);
   const step = num(m.tutorialStep, 0, 1000);

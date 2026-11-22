@@ -9,10 +9,10 @@ export const CRATE_SLOTS = 16;
 export const MAX_CRATES = 30;
 const HALF = new THREE.Vector3(0.47, 0.3, 0.32); // collider half-extents
 
-export interface CrateSave { x: number; y: number; z: number; rot: number; items: Record<string, number>; fresh?: Record<string, number[]>; wear?: Record<string, number> }
+export interface CrateSave { x: number; y: number; z: number; rot: number; nx?: number; nz?: number; items: Record<string, number>; fresh?: Record<string, number[]>; wear?: Record<string, number> }
 type Look = { geometry: THREE.BufferGeometry; material: THREE.Material };
 
-export interface Crate { position: THREE.Vector3; rot: number; inv: Inventory; group: THREE.Group; body: RAPIER.RigidBody }
+export interface Crate { position: THREE.Vector3; rot: number; n: THREE.Vector3; inv: Inventory; group: THREE.Group; body: RAPIER.RigidBody }
 
 // Until the Blender model loads: a plain box with a darker lid.
 let woodGeo: THREE.BufferGeometry = new THREE.BoxGeometry(0.92, 0.56, 0.62).translate(0, 0.28, 0);
@@ -37,20 +37,22 @@ export class Crates {
     }
   }
 
-  add(position: THREE.Vector3, rot: number, items?: Record<string, number>, fresh?: Record<string, number[]>, wear?: Record<string, number>) {
+  add(position: THREE.Vector3, rot: number, items?: Record<string, number>, fresh?: Record<string, number[]>, wear?: Record<string, number>, nx = 0, nz = 0) {
     const g = new THREE.Group();
-    g.position.copy(position); g.rotation.y = rot;
+    // Stands square on the slope it's placed on (a flat box on a hillside would hang a corner in the air).
+    const n = new THREE.Vector3(nx, Math.sqrt(Math.max(0.01, 1 - nx * nx - nz * nz)), nz).normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot));
+    g.position.copy(position); g.quaternion.copy(q);
     const w = new THREE.Mesh(woodGeo, woodMat), l = new THREE.Mesh(lidGeo, lidMat);
     w.castShadow = l.castShadow = true;
     g.add(w, l);
     this.group.add(g);
     const R = this.rapier;
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot);
     const body = this.physics.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z).setRotation(q));
     this.physics.createCollider(R.ColliderDesc.cuboid(HALF.x, HALF.y, HALF.z).setTranslation(0, HALF.y, 0), body);
     const inv = new Inventory(CRATE_SLOTS);
     inv.load(items ?? {}, fresh, [], wear);
-    const c: Crate = { position: position.clone(), rot, inv, group: g, body };
+    const c: Crate = { position: position.clone(), rot, n, inv, group: g, body };
     this.list.push(c);
     return c;
   }
@@ -93,7 +95,7 @@ export class Crates {
 
   save(): CrateSave[] {
     return this.list.map((c) => ({
-      x: c.position.x, y: c.position.y, z: c.position.z, rot: c.rot,
+      x: c.position.x, y: c.position.y, z: c.position.z, rot: c.rot, nx: c.n.x, nz: c.n.z,
       items: Object.fromEntries(Object.entries(c.inv.counts).filter(([, n]) => n > 0)),
       fresh: Object.fromEntries(PERISHABLE.map((k) => [k, [...c.inv.ages[k]]])),
       wear: Object.fromEntries(Object.entries(c.inv.wear).filter(([, n]) => n)) as Record<string, number>,
@@ -101,6 +103,6 @@ export class Crates {
   }
 
   load(list: CrateSave[] | undefined) {
-    for (const s of list ?? []) this.add(new THREE.Vector3(s.x, s.y, s.z), s.rot, s.items, s.fresh, s.wear);
+    for (const s of list ?? []) this.add(new THREE.Vector3(s.x, s.y, s.z), s.rot, s.items, s.fresh, s.wear, s.nx ?? 0, s.nz ?? 0);
   }
 }
