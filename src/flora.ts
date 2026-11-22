@@ -21,6 +21,10 @@ interface Shroom {
   q: THREE.Quaternion; capR: number; color: number; spin: number;
   /** Glow patch on the ground under the cap (-1: none, e.g. once felled), and the ground normal there. */
   card: number; n: THREE.Vector3;
+  /** Current pose and per-instance sizes, so it can move between the near (detailed) and far pools. */
+  pose: THREE.Matrix4; dims: [number, number, number];
+  /** Slot in the detailed near pool (-1: drawn with the light far mesh). */
+  near: number;
 }
 interface ChunkFlora {
   shrooms: Shroom[];
@@ -132,18 +136,32 @@ const SWAY = `
     mvPosition.xyz += (viewMatrix * vec4(sway, 0.0)).xyz;
     gl_Position = projectionMatrix * mvPosition;
   }`;
-const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.0 });
+const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.0 });
 const glowU = { value: 0.6 };
+// Tiling detail (art/blender/bc_flora.py): R blistered skin, G trunk fibres, B blotches. Sampled triplanar in metres,
+// so the stretched trunk and every cap size get the same texel density. Grey until it loads.
+const detailU = { value: (() => { const t = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1); t.needsUpdate = true; return t; })() as THREE.Texture };
+new THREE.TextureLoader().load('textures/fungus_detail.webp', (t) => {
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; detailU.value = t;
+});
 BODY.onBeforeCompile = (sh) => {
-  Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU });
+  Object.assign(sh.uniforms, fxUniforms, { uGlow: glowU, uDetail: detailU });
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; uniform float uFxTime; uniform float uBreath;')
-    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb;\n  vSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);')
+    .replace('#include <common>', '#include <common>\nattribute float aPart; attribute float aTint; attribute float aGlow; attribute float aTend; attribute vec3 iDims;\nvarying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; varying float vPart; varying vec3 vDP; varying vec3 vDN; varying mat3 vNM; uniform float uFxTime; uniform float uBreath;')
+    .replace('#include <begin_vertex>', BODY_VERT + '\n  vGlow = aGlow; vTint = aTint; vTend = aTend; vLocal = position; vVein = instanceColor.rgb; vPart = aPart; vDP = transformed; vDN = objectNormal; vNM = normalMatrix * mat3(instanceMatrix);\n  vSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);')
     .replace('#include <color_vertex>', 'vColor = vec4(1.0); vColor.rgb = color.rgb;')
     .replace('#include <project_vertex>', '#include <project_vertex>' + SWAY);
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>
       varying float vGlow; varying float vTint; varying float vTend; varying vec3 vLocal; varying vec3 vVein; varying float vSeed; uniform float uGlow; uniform vec3 uRim; uniform float uFxTime;
+      varying float vPart; varying vec3 vDP; varying vec3 vDN; varying mat3 vNM; uniform sampler2D uDetail;
+      // Height for this part: trunk fibres (G) or cap blisters (R, softer on the lining and gills).
+      float bcHt(vec2 uv, float skin) { vec4 t = texture2D(uDetail, uv); return vPart < 0.5 ? t.g : t.r * mix(0.55, 1.0, skin); }
+      // Height slope in texture space by central differences (smooth, unlike screen-space derivatives).
+      vec2 bcGrad(vec2 uv, float skin) {
+        const float E = 1.5 / 1024.0;
+        return vec2(bcHt(uv + vec2(E, 0.0), skin) - bcHt(uv - vec2(E, 0.0), skin), bcHt(uv + vec2(0.0, E), skin) - bcHt(uv - vec2(0.0, E), skin));
+      }
       vec3 h3(vec3 p) { p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
       // Distance to the nearest cell edge (F2 - F1): thin glowing veins along the cell borders.
       float veinEdge(vec3 p) {
@@ -153,6 +171,25 @@ BODY.onBeforeCompile = (sh) => {
           if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
         }
         return sqrt(d2) - sqrt(d1);
+      }`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      vec3 bcW = pow(abs(normalize(vDN)), vec3(4.0)); bcW /= bcW.x + bcW.y + bcW.z;
+      vec3 bcP = vDP * (vPart < 0.5 ? vec3(0.45, 0.16, 0.45) : vec3(0.32));
+      vec4 bcD = texture2D(uDetail, bcP.zy) * bcW.x + texture2D(uDetail, bcP.xz) * bcW.y + texture2D(uDetail, bcP.xy) * bcW.z;
+      float bcSkin = step(0.5, vTint) * step(vTint, 1.5);
+      float bcH = vPart < 0.5 ? bcD.g : mix(bcD.r * 0.6, bcD.r, bcSkin);
+      diffuseColor.rgb *= mix(0.6, 1.3, bcD.b) * mix(0.7, 1.05, bcH);`)
+    .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      // Matte fibrous trunk and gills; the cap skin is mostly dull with slick, wet-looking patches.
+      roughnessFactor = vPart < 0.5 ? mix(0.72, 0.92, bcD.b) : mix(0.88, mix(0.32, 0.78, smoothstep(0.25, 0.6, bcD.b)) - (1.0 - bcH) * 0.08, bcSkin);`)
+    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      {
+        // Triplanar bump, whiteout-blended in object space, then into view space with the instance's normal matrix.
+        vec3 n0 = normalize(vDN); float k = vPart < 0.5 ? 3.0 : 2.0;
+        vec3 tx = vec3(-bcGrad(bcP.zy, bcSkin) * k, 1.0), ty = vec3(-bcGrad(bcP.xz, bcSkin) * k, 1.0), tz = vec3(-bcGrad(bcP.xy, bcSkin) * k, 1.0);
+        tx = vec3(tx.xy + n0.zy, abs(tx.z) * n0.x); ty = vec3(ty.xy + n0.xz, abs(ty.z) * n0.y); tz = vec3(tz.xy + n0.xy, abs(tz.z) * n0.z);
+        vec3 np = normalize(tx.zyx * bcW.x + ty.xzy * bcW.y + tz.xyz * bcW.z);
+        normal = normalize(vNM * np) * faceDirection;
       }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       // Each fungus breathes on its own slow cycle (seeded by where it stands), so a grove never pulses in step.
@@ -198,6 +235,7 @@ const sproutGeo = (() => {
   return out;
 })();
 
+const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 /** Real lights lent to the nearest glowing fungi (a fixed pool: no shader recompiles). */
 const GLOW_LIGHTS = 4;
 const BULB_GLOW = new THREE.Color(0x4fe8c8).multiplyScalar(0.55);
@@ -218,6 +256,9 @@ export class Flora {
   blocked?: (x: number, z: number) => boolean;
   private chunks = new Map<string, ChunkFlora>();
   private bodies: InstancePool;
+  /** The Blender fungus, for the closest fungi only (LOD): far ones keep the light code-built mesh. */
+  private nearPool: InstancePool | null = null;
+  private lodTimer = 0;
   private sprouts: InstancePool;
   private bulbs: InstancePool;
   private cards: InstancePool;
@@ -303,7 +344,7 @@ export class Flora {
       const slot = this.bodies.alloc(m.compose(o.p, q, one), CAP_COLORS[o.color]);
       this.bodies.setExtra(slot, o.r, o.h, o.cap);
       const s: Shroom = { id: o.id, source: o.source, kind: o.kind, base: o.p, radius: o.r, height: o.h, body: null, slot, alive: true,
-        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n };
+        q: q.clone(), capR: o.cap, color: o.color, spin: o.spin, card: -1, n: o.n, pose: m.clone(), dims: [o.r, o.h, o.cap], near: -1 };
       c.shrooms.push(s);
       this.shape(s); // physics, and the harvested state if it was already cut
       if (this.usesLeft(s) > 0) s.card = this.cards.alloc(this.cardMatrix(s, m), CAP_COLORS[o.color]);
@@ -331,6 +372,7 @@ export class Flora {
     s.alive = false;
     this.clearBody(s);
     this.bodies.release(s.slot);
+    if (s.near >= 0) { this.nearPool!.release(s.near); s.near = -1; }
     this.dropCard(s);
   }
 
@@ -346,6 +388,23 @@ export class Flora {
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), s.n);
     const w = s.capR * 2.7;
     return m.compose(s.base.clone().addScaledVector(s.n, 0.05), q, new THREE.Vector3(w, 1, w));
+  }
+
+  /** Swap in the Blender-built fungus (bc_flora.py): same unit layout and per-vertex tags as the code-built one. */
+  setFungus(m: { geometry: THREE.BufferGeometry } | undefined) {
+    if (!m) return;
+    const g = m.geometry;
+    for (const [from, to] of [['_apart', 'aPart'], ['_atint', 'aTint'], ['_aglow', 'aGlow'], ['_atend', 'aTend']] as const) {
+      const at = g.getAttribute(from) ?? g.getAttribute(from.toUpperCase());
+      if (!at) return; // an older export without the tags: keep the code-built fungus
+      g.setAttribute(to, at);
+    }
+    const part = g.getAttribute('aPart'), glow = g.getAttribute('aGlow'), n = part.count, col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) (part.getX(i) < 0.5 ? TRUNK_COL : glow.getX(i) < 0 ? LINING_COL : BODY_COL).toArray(col, i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    this.nearPool = new InstancePool(g, BODY, this.group, 128, true, true, { extra: { name: 'iDims', size: 3 }, depth: BODY_DEPTH });
+    this.lodTimer = 0;
   }
 
   /** Use the Blender-built sprout and bulb models once loaded. */
@@ -401,6 +460,31 @@ export class Flora {
       }
     }
     return best;
+  }
+
+  /** Writes a fungus's pose to whichever pool draws it (the far slot is kept but hidden while it's near). */
+  private place(s: Shroom) {
+    if (s.near >= 0 && this.nearPool) {
+      this.nearPool.set(s.near, s.pose); this.nearPool.setExtra(s.near, ...s.dims);
+      this.bodies.set(s.slot, HIDDEN);
+    } else this.bodies.set(s.slot, s.pose);
+    this.bodies.setExtra(s.slot, ...s.dims);
+  }
+
+  /** LOD: the closest fungi (giants reach further) are drawn with the detailed mesh; the rest with the light one. */
+  private assignLod(viewer: THREE.Vector3) {
+    const pool = this.nearPool!, want = new Set<Shroom>(), cand: { s: Shroom; d: number }[] = [];
+    for (const c of this.chunks.values()) for (const s of c.shrooms) {
+      if (!s.alive) continue;
+      const d = s.base.distanceTo(viewer) - s.capR * 4;
+      if (d < 45) cand.push({ s, d });
+    }
+    cand.sort((a, b) => a.d - b.d);
+    for (const { s } of cand.slice(0, 120)) want.add(s);
+    for (const c of this.chunks.values()) for (const s of c.shrooms) {
+      if (s.near >= 0 && !want.has(s)) { pool.release(s.near); s.near = -1; this.place(s); }
+    }
+    for (const s of want) if (s.near < 0) { s.near = pool.alloc(s.pose, CAP_COLORS[s.color]); this.place(s); }
   }
 
   /** The nearest standing fungi within 35 m get the real lights (giants count double in reach). */
@@ -462,7 +546,7 @@ export class Flora {
    *  leaving the trunk propped at an angle. */
   private shape(s: Shroom) {
     const n = Math.min(STALK_HARVESTS, this.harvested.get(s.id) ?? 0);
-    const m = new THREE.Matrix4(), pos = s.base.clone(), one = new THREE.Vector3(1, 1, 1);
+    const pos = s.base.clone(), one = new THREE.Vector3(1, 1, 1);
     let rot = s.q, h = s.height * (1 - 0.18 * n);
     if (n >= STALK_HARVESTS) {
       this.dropCard(s); // felled: its cap no longer hangs over the ground
@@ -471,8 +555,8 @@ export class Flora {
       rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(Math.cos(s.spin), 0, Math.sin(s.spin)), lean);
       pos.y += s.radius * 0.6;
     }
-    this.bodies.set(s.slot, m.compose(pos, rot, one));
-    this.bodies.setExtra(s.slot, s.radius, h, s.capR);
+    s.pose.compose(pos, rot, one); s.dims = [s.radius, h, s.capR];
+    this.place(s);
     this.solid(s, pos, rot, h);
   }
 
@@ -482,6 +566,7 @@ export class Flora {
     SPROUT.emissiveIntensity = glow * 1.1;
     CARD.color.setScalar(0.015 + night * 0.11);
     if ((this.lightTimer -= dt) <= 0) { this.lightTimer = 0.5; this.assignLights(viewer); }
+    if (this.nearPool && (this.lodTimer -= dt) <= 0) { this.lodTimer = 0.3; this.assignLod(viewer); }
     for (const l of this.lights) if (l.userData.s) l.intensity = (0.4 + night * 5.5) * (0.8 + 0.2 * Math.sin(performance.now() * 0.0007 + l.userData.ph));
     const pos = this.spores.geometry.getAttribute('position') as THREE.BufferAttribute;
     if (night > 0.02) {

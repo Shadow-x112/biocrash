@@ -288,6 +288,10 @@ let viewmodels: Promise<PropMeshes> | null = null;
 /** First-person arm, gloves and held tools (art/blender/bc_viewmodels.py). */
 export function loadViewmodels(): Promise<PropMeshes> { return (viewmodels ??= loadMeshes('models/viewmodels.json')); }
 
+let flora: Promise<PropMeshes> | null = null;
+/** The giant bell fungus (art/blender/bc_flora.py). */
+export function loadFlora(): Promise<PropMeshes> { return (flora ??= loadMeshes('models/flora.json')); }
+
 export interface CreatureModels {
   rigs: Record<'tuko' | 'oomi', THREE.Object3D>;
   clips: THREE.AnimationClip[];

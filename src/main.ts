@@ -19,7 +19,7 @@ import { RECIPES, knows } from './crafting';
 import { Hotbar, SLOTS, SLOT_NAMES, DIG_POWER, type Slot } from './tools';
 import { Fauna, setCreatureModels, type Creature } from './creatures';
 import { Wreck } from './wreck';
-import { loadProps, propGlow, loadCreatures, loadViewmodels } from './assets';
+import { loadProps, propGlow, loadCreatures, loadViewmodels, loadFlora } from './assets';
 import { Flora } from './flora';
 import { Campfires, CAMPFIRE_COST, FUEL_MAX, COOK_TIME } from './campfire';
 import { Crates, MAX_CRATES, CRATE_SLOTS, type Crate } from './crate';
@@ -197,6 +197,7 @@ async function main() {
   // The Blender-built props replace the placeholder shapes as soon as they load.
   void loadProps().then((m) => { props.setLooks(m); flora.setLooks(m); campfires.setLooks(m); packs.setLook(m.Pack); });
   void loadViewmodels().then((m) => hotbar.setLooks(m));
+  void loadFlora().then((m) => flora.setFungus(m.Fungus));
   void loadCreatures().then((m) => { setCreatureModels(m); if (m?.figure) horror.setFigure(m.figure); });
   for (const [k, v] of Object.entries(meta?.stalks ?? {})) flora.harvested.set(k, v);
   scene.add(flora.group);
