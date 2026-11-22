@@ -219,6 +219,8 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           vec3 hw = vec3(wS * (cS.a + 0.4), wA * (cA.a + 0.4), wR * (cR.a + 0.4));
           float mx = max(hw.x, max(hw.y, hw.z));
           hw = max(hw - mx + 0.25, 0.0); hw /= (hw.x + hw.y + hw.z + 1e-4);
+          // The soil photo is Earth forest floor (orange pine needles): mostly desaturate it so it reads as alien ground.
+          cS.rgb = mix(vec3(dot(cS.rgb, vec3(0.3, 0.55, 0.15))), cS.rgb, 0.35);
           vec3 alb = cS.rgb * vec3(0.52, 0.58, 0.6) * hw.x + cA.rgb * vec3(0.62, 0.56, 0.62) * hw.y + cR.rgb * vec3(0.55, 0.55, 0.62) * hw.z;
           alb *= mix(0.8, 1.1, macro);
           alb *= 1.0 - gDeep * 0.55;
@@ -229,7 +231,9 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           float mossZone = smoothstep(0.55, 0.75, zone) * hw.x * gFlat;
           float moss = mossZone * (0.55 + 0.45 * smoothstep(0.2, 0.85, gX.r));
           alb = mix(alb, vec3(0.032, 0.042, 0.04) * mix(0.75, 1.2, gX.r), moss);
-          float wet = smoothstep(0.58, 0.8, gX.g * 0.75 + gDeep * 0.35 + (macro - 0.5) * 0.35) * gFlat * (1.0 - hw.z * 0.8) * (1.0 - moss);
+          // Wet patches: the same noise sampled ~5x larger than the detail tile, so they form coherent puddles, not speckle.
+          float wetN = triC(tAlien, p * 0.065 + 1.3, w).g;
+          float wet = smoothstep(0.7, 0.86, wetN + gDeep * 0.35 + (macro - 0.5) * 0.25) * gFlat * (1.0 - hw.z * 0.8) * (1.0 - moss);
           alb *= 1.0 - wet * 0.45;
           gMyc = pow(1.0 - gX.a, 2.0) * (hw.x + hw.y) * (1.0 - wet) * (1.0 - moss * 0.6) * smoothstep(0.5, 0.78, 1.0 - zone);
           gSpeck = (1.0 - gX.b) * smoothstep(0.75, 0.95, moss) * step(0.5, triC(tAlien, p * 0.11, w).r);
@@ -237,7 +241,8 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
           vec4 nS = triN(tSoilN, p * 0.26, w, n), nA = triN(tAshN, p * 0.3, w, n), nR = triN(tRockN, p * 0.19, w, n);
           vec4 nn = nS * hw.x + nA * hw.y + nR * hw.z;
           gN = normalize(mix(nn.xyz, n, wet * 0.85 + moss * 0.35)); gRough = clamp(nn.w * 1.05, 0.35, 1.0);
-          gRough = mix(mix(gRough, 0.12, wet), 0.97, moss); // puddle sheen; moss is dead matte
+          // Puddle sheen (rougher with distance so far-off puddles don't flash white sun glints); moss is dead matte.
+          gRough = mix(mix(gRough, mix(0.3, 0.6, smoothstep(8.0, 60.0, length(vViewPosition))), wet), 0.97, moss);
         }`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = gRough;')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -252,7 +257,7 @@ export function addTerrainSurface(mat: THREE.Material, aniso: number) {
         gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, clamp(uMist * mistH * mistD * (0.5 + 0.5 * drift), 0.0, 0.85));
       #endif`);
   };
-  mat.customProgramCacheKey = () => 'ground4';
+  mat.customProgramCacheKey = () => 'ground5';
   mat.needsUpdate = true;
 }
 
