@@ -367,6 +367,7 @@ async function main() {
     overlay.style.display = s === 'menu' ? 'flex' : 'none';
     if (s !== 'menu') overlay.classList.remove('showsettings', 'showlog');
     craftEl.style.display = s === 'craft' ? 'flex' : 'none';
+    canvas.classList.toggle('soft', s === 'craft'); // the world blurs a little behind the panel (it keeps running)
     if (s !== 'craft') storeCrate = null;
     $('craftview').hidden = !!storeCrate; $('storeview').hidden = !storeCrate;
     if (s === 'craft') { if (storeCrate) renderStore(); else renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
@@ -439,7 +440,7 @@ async function main() {
       `${K('use')} pick up / use \u00b7 ${K('craft')} crafting \u00b7 1-4 tools\n` +
       `${K('build')} build campfire \u00b7 ${K('eat')} cook at a fire / eat \u00b7 ${K('lamp')} wrist lamp\n` +
       `${K('dig')} / left click dig \u00b7 ${K('fill')} / right click fill\n` +
-      'Arrow keys also look around\nF3 debug info \u00b7 F5 save now \u00b7 Esc pause';
+      'Arrow keys also look around\nF1 hide the HUD \u00b7 F3 debug info \u00b7 F5 save now \u00b7 Esc pause';
     $('craftsub').textContent = `Number keys or click to craft \u00b7 Shift+click makes up to 5 \u00b7 ${K('craft')} or Esc to close`;
   };
   renderKeyList();
@@ -1049,6 +1050,7 @@ async function main() {
 
   // --- Keys that aren't held actions --------------------------------------------------------------
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'F1') { e.preventDefault(); document.body.classList.toggle('nohud'); return; } // screenshots: hide every HUD element
     if (e.code === 'F3') { e.preventDefault(); hud.style.display = hud.style.display === 'none' ? '' : 'none'; return; }
     if (e.code === 'F5') { e.preventDefault(); void saveNow().then((ok) => flash(ok ? 'Saved' : 'Not saved')); return; }
     if (input.is(e.code, 'craft') && (state === 'playing' || state === 'craft')) { // Tab stays free for menu focus
@@ -1161,7 +1163,7 @@ async function main() {
   const setWrist = (on: boolean) => {
     if (on === wristOpen) return;
     wristOpen = on;
-    wristEl.classList.toggle('open', on); dimmerEl.classList.toggle('on', on); vitalsEl.classList.toggle('under-wrist', on);
+    wristEl.classList.toggle('open', on); dimmerEl.classList.toggle('on', on); canvas.classList.toggle('soft', on || state === 'craft'); vitalsEl.classList.toggle('under-wrist', on);
     audio.play('ui_2', { bus: 'ui', gain: 0.25, rate: on ? 1.25 : 0.9 });
     if (on) renderWrist();
   };

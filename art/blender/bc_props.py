@@ -570,7 +570,7 @@ for side in (-1, 1):
         merge_into(bm, p)
 for x in (-0.25, 0.0, 0.25):  # floor slats
     p = trunk_bm(0.6, 0.05, 0.05, 60 + x * 10, rings=24, segs=16, ridges=6, torn=0.02)
-    bmesh.ops.scale(p, vec=(1, 1, 0.5), verts=p.verts)
+    bmesh.ops.scale(p, vec=(1, 0.5, 1), verts=p.verts)  # flatten across, not along: after the turn this is the height
     bmesh.ops.transform(p, matrix=Matrix.Rotation(math.radians(90), 4, "X"), verts=p.verts)
     bmesh.ops.translate(p, verts=p.verts, vec=(x, 0, 0.03))
     merge_into(bm, p)
