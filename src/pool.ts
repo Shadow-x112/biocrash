@@ -48,6 +48,8 @@ export class InstancePool {
     if (this.colored && old.instanceColor && next.instanceColor) (next.instanceColor.array as Float32Array).set(old.instanceColor.array as Float32Array);
     next.count = old.count;
     next.userData = old.userData;
+    // Settings callers changed on the mesh after it was made must survive the swap.
+    next.castShadow = old.castShadow; next.receiveShadow = old.receiveShadow; next.renderOrder = old.renderOrder;
     this.parent.remove(old);
     old.dispose();
     this.parent.add(next);

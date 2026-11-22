@@ -13,7 +13,9 @@ interface PropKind {
   lying: boolean; // rotate to lie flat on the ground
 }
 
-type Entry = { kind: PropKind; slot: number; splat: number; id: string; source: number; x: number; z: number };
+type Entry = { kind: PropKind; slot: number; splat: number; id: string; source: number; x: number; z: number;
+  /** Logs still to be settled onto the real ground at both ends (centre, rotation, scale). */
+  settle?: { c: THREE.Vector3; q: THREE.Quaternion; sc: number } };
 
 interface ChunkProps {
   /** Live instances: pool slot and prop id per kind. */
@@ -161,8 +163,9 @@ export class Props {
         if (this.picked.has(id)) continue;
         if (this.blocked?.(d[o], d[o + 2])) continue; // not inside the wreck
         const sc = kind.scale[0] + d[o + 5] * (kind.scale[1] - kind.scale[0]);
-        // Lie with the slope (the true surface normal).
+        // Lie with the slope (the true surface normal). Tufts mostly grow upward, leaning only a little with it.
         this.n.set(d[o + 9], d[o + 3], d[o + 10]).normalize();
+        if (kind.id === 'fiber') this.n.lerp(this.up, 0.65).normalize();
         this.q.setFromUnitVectors(this.up, this.n);
         this.spin.setFromAxisAngle(this.up, d[o + 4] * Math.PI * 2);
         if (kind.lying) this.spin.multiply(this.lie);
@@ -176,13 +179,43 @@ export class Props {
         this.p.set(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, 0.015);
         this.m.compose(this.p, this.gq, this.gs.set(sx * sc, 1, sz * sc));
         const splat = this.splats.alloc(this.m);
-        c.slots.push({ kind, slot, splat, id, source: i, x: d[o], z: d[o + 2] });
+        c.slots.push({ kind, slot, splat, id, source: i, x: d[o], z: d[o + 2],
+          settle: kind.lying ? { c: new THREE.Vector3(d[o], d[o + 1], d[o + 2]).addScaledVector(this.n, kind.yOffset * sc), q: this.q.clone(), sc } : undefined });
       }
     }
     this.chunks.set(key, c);
     // If a pool grew it now has a new mesh, so the owner maps must be rebuilt; otherwise just add ours.
     if ([...this.pools.values()].some((p, i) => p.mesh !== meshesBefore[i])) this.rebuildOwners();
     else for (const e of c.slots) this.ownerMap(e.kind).set(e.slot, { key, id: e.id });
+  }
+
+  /** Logs are placed on the slope at their centre, so on bumps and dips one end could hang in the air. Once the
+   *  ground's collision mesh is there, each log is turned so both ends rest on it (lifted if a bump is under the
+   *  middle). Runs a few logs at a time. */
+  settleLogs(ground: (x: number, z: number) => { y: number } | null, budget = 48) {
+    const kind = KINDS.find((k) => k.lying)!, pool = this.pools.get(kind.id)!;
+    pool.mesh.geometry.computeBoundingBox();
+    const half = (pool.mesh.geometry.boundingBox!.max.y - pool.mesh.geometry.boundingBox!.min.y) * 0.46;
+    const a = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), na = new THREE.Vector3(), qd = new THREE.Quaternion();
+    for (const c of this.chunks.values()) for (const e of c.slots) {
+      const s = e.settle;
+      if (!s) continue;
+      if (budget-- <= 0) return;
+      a.set(0, 1, 0).applyQuaternion(s.q);
+      e1.copy(s.c).addScaledVector(a, half * s.sc); e2.copy(s.c).addScaledVector(a, -half * s.sc);
+      const g1 = ground(e1.x, e1.z), g2 = ground(e2.x, e2.z), gc = ground(s.c.x, s.c.z);
+      if (!g1 || !g2 || !gc) continue; // collision not built yet: try again later
+      e.settle = undefined;
+      if (Math.abs(gc.y - s.c.y) > 1 || Math.abs(g1.y - e1.y) > 1.5 || Math.abs(g2.y - e2.y) > 1.5) continue; // under an overhang: leave it
+      const r = 0.05 * s.sc;
+      e1.y = g1.y + r; e2.y = g2.y + r;
+      na.subVectors(e1, e2).normalize();
+      const mid = e1.clone().add(e2).multiplyScalar(0.5);
+      mid.y = Math.max(mid.y, gc.y + r);
+      qd.setFromUnitVectors(a, na);
+      this.m.compose(mid, qd.multiply(s.q), this.s.setScalar(s.sc));
+      pool.set(e.slot, this.m);
+    }
   }
 
   /** Owner lookup is keyed by the current pool meshes (which change when a pool grows). */

@@ -84,7 +84,8 @@ export function computeDeco(
         const wx = cx * CHUNK + lx, wy = cy * CHUNK + s.y, wz = cz * CHUNK + lz;
         if (rule.openSky && wy < openSkyHeight(wx, wz) - 3.5) continue; // no forests in caves
         let valid = 1;
-        if (edited) valid = sampleDensity(edited, lx, s.y - 0.45, lz) > 0 && sampleDensity(edited, lx, s.y + 0.7, lz) <= 0 ? 1 : 0;
+        // Tight enough that shaving a little ground off under a prop removes it instead of leaving it floating.
+        if (edited) valid = sampleDensity(edited, lx, s.y - 0.2, lz) > 0 && sampleDensity(edited, lx, s.y + 0.5, lz) <= 0 ? 1 : 0;
         buf.push(wx, wy, wz, s.ny, r0, r1, r2, r3, valid, s.nx, s.nz);
       }
     }

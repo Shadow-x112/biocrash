@@ -1629,6 +1629,7 @@ async function main() {
       if (state === 'playing') {
         milestones();
         target = queryTarget(); if (!placing && !scanning) promptEl.textContent = promptFor(target);
+        props.settleLogs((x, z) => world.groundAt(x, z));
         const cls = crosshairFor(target);
         if (crossEl.className !== cls) crossEl.className = cls;
       }

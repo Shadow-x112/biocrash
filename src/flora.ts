@@ -358,7 +358,17 @@ export class Flora {
       if (!sd[o + 8]) continue;
       // One in nine is a cluster of glowing bulbs instead of a single sprout.
       const bulb = i % 9 === 0;
-      m.compose(p.set(sd[o], sd[o + 1], sd[o + 2]), q.setFromAxisAngle(up, sd[o + 5] * 6.28), sc.setScalar(bulb ? 1.2 + sd[o + 4] * 1.6 : 0.6 + sd[o + 4] * 0.9));
+      const s = bulb ? 1.2 + sd[o + 4] * 1.6 : 0.6 + sd[o + 4] * 0.9;
+      q.setFromAxisAngle(up, sd[o + 5] * 6.28);
+      p.set(sd[o], sd[o + 1], sd[o + 2]);
+      if (bulb) {
+        // The root knot is wide: tilt it most of the way with the slope and sink it a little, or on hillsides its
+        // downhill edge hangs in the air.
+        const n = new THREE.Vector3(sd[o + 9], sd[o + 3], sd[o + 10]).normalize();
+        q.premultiply(new THREE.Quaternion().setFromUnitVectors(up, n.clone().lerp(up, 0.25).normalize()));
+        p.y -= (1 - n.y) * 0.18 * s;
+      }
+      m.compose(p, q, sc.setScalar(s));
       const slot = (bulb ? this.bulbs : this.sprouts).alloc(m);
       // Bulb clusters throw a small teal glow on the ground.
       const card = bulb ? this.cards.alloc(m.compose(p.set(sd[o], sd[o + 1] + 0.04, sd[o + 2]), q.identity(), sc.set(1.6 + sd[o + 4], 1, 1.6 + sd[o + 4])), BULB_GLOW) : -1;
