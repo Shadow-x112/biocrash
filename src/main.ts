@@ -1160,6 +1160,15 @@ async function main() {
     if (!aim) return;
     const hit = { point: aim.point.clone(), normal: aim.normal.clone() }; // the ray result object is reused
     const power = DIG_POWER[hotbar.slot];
+    const at = fill ? hit.point.clone().addScaledVector(hit.normal, 0.6) : hit.point;
+    // Not out from under (or on top of) things you've placed: a crate, fire or panel was left floating over the hole,
+    // or buried by the fill, and a pack or chip could vanish into the ground.
+    const near = (q: THREE.Vector3, pad: number) => Math.hypot(q.x - at.x, q.z - at.z) < power.radius + pad && Math.abs(q.y - at.y) < power.radius + 1.5;
+    const inWay = crates.list.some((c) => near(c.position, 0.6)) ? 'A crate' : campfires.list.some((f) => near(f.position, 0.7)) ? 'Your campfire'
+      : placeables.solars.some((p) => near(p.pos, 0.8)) ? 'The solar panel' : placeables.flares.some((f) => near(f.pos, 0.3)) ? 'The flare'
+      : packs.list.some((p) => near(p.position, 0.4)) ? 'A pack' : chips.list.some((c) => c.placed && near(c.group.position, 0.3)) ? 'A data chip' : '';
+    if (inWay) { audio.deny(); flash(`${inWay} is in the way.`); return; }
+    if (fill && at.distanceTo(player.position) < power.radius + 0.9) { audio.deny(); flash('Too close: step back to fill.'); return; } // don't bury yourself
     if (hotbar.slot !== 'hands') useTool(hotbar.slot);
     const col = hit.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
     if (!fill) {
@@ -1168,8 +1177,7 @@ async function main() {
       audio.dig(hit.point, hotbar.slot === 'stone_pick');
       particles.burst(hit.point, hotbar.slot === 'stone_pick' ? 12 : 8, col, { up: hit.normal.clone(), speed: 3 });
     } else {
-      const p = hit.point.clone().addScaledVector(hit.normal, 0.6);
-      if (p.distanceTo(player.position) < power.radius + 0.9) return; // don't bury yourself
+      const p = at;
       world.brush(p, power.radius, power.strength, +1);
       wreck.clearDebrisNear(p, power.radius);
       audio.fill(p);
