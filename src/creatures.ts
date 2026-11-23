@@ -145,6 +145,7 @@ export const SPECIES: Record<Species['id'], Species> = {
 
 type Built = { root: THREE.Group; legs: THREE.Object3D[]; body: THREE.Object3D; glow: THREE.MeshStandardMaterial; ball?: THREE.Object3D };
 const TEMPLATES = new Map<string, Built>();
+const UP = new THREE.Vector3(0, 1, 0), Q = new THREE.Quaternion();
 const CARCASS = new THREE.MeshStandardMaterial({ color: 0x3a2a2c, roughness: 1, flatShading: true });
 
 export class Creature {
@@ -167,6 +168,11 @@ export class Creature {
   private gait = Math.random() * 10;
   private hurtFlash = 0;
   private speed = 0;
+  /** Facing (radians) and the ground's lean under it (smoothed). */
+  private yaw = this.heading;
+  private slopeT = 0;
+  private slopeN = new THREE.Vector3(0, 1, 0);
+  private tiltN = new THREE.Vector3(0, 1, 0);
   harvested = false;
   /** Seconds since it was stripped (-1: not yet). */
   strippedT = -1;
@@ -334,7 +340,10 @@ export class Creature {
       if (g && g.ny > 0.62 && Math.abs(g.y - this.position.y) < 1.2 && !ctx.blocked?.(nx, nz, sp.radius)) {
         this.position.set(nx, g.y, nz);
       } else {
-        this.heading += Math.PI * (0.5 + Math.random() * 0.5); // too steep or a drop: turn away
+        // Too steep, a drop or something solid: turn away. A fleeing one keeps its back to you (a random turn sent it
+        // running back towards you).
+        if (this.state === 'flee') this.heading = Math.atan2(this.position.x - ctx.player.x, this.position.z - ctx.player.z) + (Math.random() < 0.5 ? -1 : 1) * (0.7 + Math.random() * 0.9);
+        else this.heading += Math.PI * (0.5 + Math.random() * 0.5);
       }
     } else {
       const g = ctx.ground(this.position.x, this.position.z, this.position.y);
@@ -356,8 +365,18 @@ export class Creature {
 
     // Animate.
     this.root.position.copy(this.position);
-    const yawDiff = Math.atan2(Math.sin(this.heading - this.root.rotation.y), Math.cos(this.heading - this.root.rotation.y));
-    this.root.rotation.y += yawDiff * Math.min(1, dt * 6);
+    const yawDiff = Math.atan2(Math.sin(this.heading - this.yaw), Math.cos(this.heading - this.yaw));
+    this.yaw += yawDiff * Math.min(1, dt * 6);
+    // Leans with the slope (it stood bolt upright on hillsides, legs in the air on the downhill side). The low Tuko
+    // follows the ground fully; the tall Oomi only partly.
+    if ((this.slopeT -= dt) <= 0) {
+      this.slopeT = 0.2;
+      const e = 0.4, gx0 = ctx.ground(this.position.x - e, this.position.z, this.position.y), gx1 = ctx.ground(this.position.x + e, this.position.z, this.position.y);
+      const gz0 = ctx.ground(this.position.x, this.position.z - e, this.position.y), gz1 = ctx.ground(this.position.x, this.position.z + e, this.position.y);
+      if (gx0 && gx1 && gz0 && gz1) this.slopeN.set(-(gx1.y - gx0.y) / (2 * e), 1, -(gz1.y - gz0.y) / (2 * e)).normalize().lerp(UP, sp.id === 'tuko' ? 0 : 0.6).normalize();
+    }
+    this.tiltN.lerp(this.slopeN, Math.min(1, dt * 5)).normalize();
+    this.root.quaternion.setFromUnitVectors(UP, this.tiltN).multiply(Q.setFromAxisAngle(UP, this.yaw));
     if (this.mixer) {
       // Animation by state; walk and run play at the speed the creature is actually moving.
       const clip = this.state === 'curl' ? 'Curl' : this.state === 'sleep' ? 'Sleep' : this.speed > 2.2 ? 'Run' : this.speed > 0.15 ? 'Walk' : 'Idle';
@@ -414,7 +433,10 @@ export class Fauna {
   private addTrail(p: THREE.Vector3) {
     const i = this.trailNext++ % 60;
     this.trailAge[i] = 0;
-    this.m4.makeTranslation(p.x, p.y + 0.04, p.z);
+    // Flat on the slope (a level disc half-sank into hillsides).
+    const e = 0.3, gx0 = this.ground(p.x - e, p.z, p.y), gx1 = this.ground(p.x + e, p.z, p.y), gz0 = this.ground(p.x, p.z - e, p.y), gz1 = this.ground(p.x, p.z + e, p.y);
+    const n = gx0 && gx1 && gz0 && gz1 ? new THREE.Vector3(-(gx1.y - gx0.y) / (2 * e), 1, -(gz1.y - gz0.y) / (2 * e)).normalize() : UP;
+    this.m4.makeRotationFromQuaternion(Q.setFromUnitVectors(UP, n)).setPosition(p.x + n.x * 0.04, p.y + n.y * 0.04, p.z + n.z * 0.04);
     this.trail.setMatrixAt(i, this.m4);
     this.trail.instanceMatrix.needsUpdate = true;
   }
