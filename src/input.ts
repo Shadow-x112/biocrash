@@ -21,7 +21,7 @@ export const REMAPPABLE: [Action, string][] = [
 ];
 
 /** Keys the game keeps for itself (menus, debug, hotbar and recipe numbers). */
-export const RESERVED = new Set(['Escape', 'F3', 'F5', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7',
+export const RESERVED = new Set(['Escape', 'F1', 'F3', 'F5', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7',
   ...(import.meta.env.DEV ? ['KeyT'] : [])]);
 
 const KEY = 'biocrash-keys';

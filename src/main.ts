@@ -138,13 +138,19 @@ async function main() {
   const input = new Input(canvas);
   const player = new Player(RAPIER, physics, camera, input);
   const audio = new Audio();
+  let hullRef: { blocks: (o: THREE.Vector3, d: THREE.Vector3, m: number) => boolean } | null = null; // the wreck, once built
   { // Sound obstruction: one terrain ray from the listener to the sound (stopping short of the sound itself).
     const a = new THREE.Vector3(), d = new THREE.Vector3();
     audio.occluder = (from, to) => {
       a.set(from.x, from.y, from.z); d.set(to.x - from.x, to.y - from.y, to.z - from.z);
       const len = d.length();
       if (len < 4) return false;
-      return world.raycast(a, d.divideScalar(len), len - 1.5) !== null;
+      // Aimed 0.6 m above the source: most sounds sit on the ground (feet, footsteps, calls from a crouch), and a ray to
+      // the ground itself grazed every bump on the way, muffling sounds in plain view down a slope.
+      d.y += 0.6;
+      const len2 = d.length();
+      d.divideScalar(len2);
+      return world.raycast(a, d, len2 - 1.5) !== null || (hullRef?.blocks(a, d, len2 - 1.5) ?? false); // the hull muffles too
     };
   }
   const particles = new Particles(scene);
@@ -192,6 +198,7 @@ async function main() {
   }, meta?.wreck);
   scene.add(wreck.group, wreck.debris);
   const wreckPos = wreck; // (the compass code below has its own `wreck`)
+  hullRef = wreck;
   const props = new Props();
   props.blocked = (x, z) => wreck.covers(x, z) || wreck.debrisAt(x, z) || flora.trunkAt(x, z); // not inside the wreck or a mushroom trunk
   for (const id of meta?.picked ?? []) props.picked.add(id);
@@ -239,6 +246,7 @@ async function main() {
   const flarePreview = placeables.makePreview('flare'), solarPreview = placeables.makePreview('solar');
   scene.add(flarePreview.group, solarPreview.group);
   const chips = new Chips(spawnPoint, (id) => scanned.has(id), wreck);
+  chips.blocked = (x, z) => flora.trunkAt(x, z, 0.3);
   scene.add(chips.group);
   void loadProps().then((m) => { placeables.setLooks(m); flarePreview.refresh(); solarPreview.refresh(); chips.setLook(m.Chip); });
   void loadProps().then((m) => { crates.setLooks(m); cratePreview.refresh(); });
@@ -257,14 +265,17 @@ async function main() {
 
   // --- Settings (per browser) and the station core's first-night objectives ------------------------
   const settings = loadSettings();
+  /** The world goes quiet when it stops: in the pause menu, and at the crafting panel only if that pauses the game. It
+   *  was muted at the panel either way, while the night and whatever is out there kept coming unheard. */
+  const worldPaused = (s: GameState) => s === 'menu' || (s === 'craft' && settings.pauseCraft);
   const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0, meta?.milestones);
   tutorial.goalMet = (id: MilestoneId) => {
     switch (id) {
       case 'raw_meat': return inventory.counts.cooked_meat > 0 || survival.fed > 0 || campfires.list.some((f) => f.cooking.length > 0 || f.ready.length > 0);
       case 'cooked': return survival.fed > 0;
       case 'hide': return inventory.counts.hide_wrap > 0;
-      case 'dawn': return player.position.distanceTo(spawnPoint) < 15;
-      case 'death': return packs.list.length === 0;
+      case 'dawn': return player.position.distanceTo(wreckPos.center) < 15; // the hull (it lies 9-15 m from the spawn point)
+      case 'death': return !packs.latestDeath(); // your death pack, not every overflow pack lying about
       default: return false;
     }
   };
@@ -289,12 +300,12 @@ async function main() {
     while (captionsEl.children.length > 3) captionsEl.firstElementChild!.remove();
     setTimeout(() => el.remove(), 4500);
   };
-  let uiBlip = 0;
+  let uiBlip = 0, appliedQuality = -1;
   const applySetting = (k: keyof Settings) => {
     if (k === 'master' || k === 'sfx' || k === 'ambience' || k === 'ui') {
       Object.assign(audio.volumes, { master: settings.master, sfx: settings.sfx, ambience: settings.ambience, ui: settings.ui });
       audio.applyVolumes();
-      audio.setWorldPaused(state !== 'playing' && state !== 'dead');
+      audio.setWorldPaused(worldPaused(state));
       if ((k === 'ui' || k === 'master') && performance.now() - uiBlip > 150 && audio.has('ui_1')) { uiBlip = performance.now(); audio.play('ui_1', { bus: 'ui', gain: 0.5 }); }
     }
     player.sensitivity = 0.0022 * settings.sensitivity;
@@ -314,11 +325,14 @@ async function main() {
     if (!captionsOn) captionsEl.innerHTML = '';
     compassEl.style.display = settings.compass ? '' : 'none';
     post.setEnabled(settings.post);
-    applyQuality();
+    // Only when the level changes: every slider tick (volume, sensitivity...) used to redo the shadow map and recompile
+    // every material, a hitch on each step of the drag.
+    if (settings.quality !== appliedQuality) { appliedQuality = settings.quality; applyQuality(); }
     // With post-processing on, its vignette and grain replace the CSS overlays.
     for (const id of ['unease', 'static']) $(id).style.display = settings.post ? 'none' : '';
     if (k === 'resolution' || k === 'autoRes' || k === 'fov') { resScale = settings.resolution; applyRes(); } // 'fov' = the startup pass
     tutorial.enabled = settings.tutorial;
+    if (k === 'pauseCraft') audio.setWorldPaused(worldPaused(state));
   };
 
   // --- Messages ----------------------------------------------------------------------------------
@@ -403,7 +417,7 @@ async function main() {
     $('craftview').hidden = !!storeCrate; $('storeview').hidden = !storeCrate;
     if (s === 'craft') { if (storeCrate) renderStore(); else renderCraft(); audio.play('ui_1', { bus: 'ui', gain: 0.6 }); }
     if (s !== 'playing') $('prompt').textContent = '';
-    audio.setWorldPaused(s !== 'playing' && s !== 'dead');
+    audio.setWorldPaused(worldPaused(s));
   };
   /** Captures the mouse. Resolves/rejects from the pointerlockchange/pointerlockerror events, because the Promise form
    *  of requestPointerLock() isn't available in every browser; unadjustedMovement (raw input) is Chromium-only. */
@@ -575,6 +589,8 @@ async function main() {
       return `<div class="slot${s === hotbar.slot ? ' sel' : ''}${owned ? '' : ' locked'}">${ico(s)}<b>${i + 1}${n > 1 ? ' · ×' + n : ''}</b>${SLOT_NAMES[s]}${dur}</div>`;
     }).join('');
   }
+  /** Number keys reach the first ten recipes (0 is the tenth); the list showed 10-13, which no key could press. */
+  const keyLabel = (i: number) => i < 10 ? `<span class="key">${(i + 1) % 10}</span>` : '<span class="key blank"></span>';
   function renderCraft() {
     const ld = inventory.load_();
     $('craftinv').innerHTML = `<span class="load ${ld.name.toLowerCase()}">${inventory.usedSlots()}/${inventory.slots()} slots \u00b7 ${inventory.weight().toFixed(1)} kg \u00b7 ${ld.name}</span> \u00b7 Carrying: ` + (MATERIALS.filter((k) => inventory.counts[k] > 0).map((k) => `${ico(k)}<b>${inventory.counts[k]}</b> ${ITEM_NAMES[k].toLowerCase()}`).join(' · ') || 'nothing yet');
@@ -588,7 +604,7 @@ async function main() {
         // A missing part you make rather than find (the bone needle) is named: "pick up" would send you hunting for it.
         const make = parts.filter((k) => !inventory.seen.has(k) && RECIPES.some((x) => x.makes === k)).map((k) => ITEM_NAMES[k].toLowerCase());
         const how = r.scan?.startsWith('chip') ? 'Station tech: find a data chip near the wreck and read it' : r.scan ? `Scan a ${r.scan === 'tuko' ? 'Tuko' : 'Oomi'} with the wrist link (hold ${K('scan')}) to work it out` : `Pick up its materials to work it out \u00b7 ${found}/${parts.length} found${make.length ? ` \u00b7 make a ${make.join(' and a ')} first` : ''}`;
-        return `<div class="recipe unknown"><div><div class="rname"><span class="key">${i + 1}</span><span class="ico q">?</span>Unknown recipe</div>
+        return `<div class="recipe unknown"><div><div class="rname">${keyLabel(i)}<span class="ico q">?</span>Unknown recipe</div>
           <div class="rblurb">${how}</div></div><span class="hint">locked</span></div>`;
       }
       const costs = (Object.keys(r.cost) as ItemId[]).map((k) => {
@@ -604,7 +620,7 @@ async function main() {
       const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
       const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>${r.place ? 'Place' : 'Craft'}</button>`;
       if (craftableOnly && !can) return '';
-      return `<div class="recipe${done ? ' done' : ''}"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
+      return `<div class="recipe${done ? ' done' : ''}"><div><div class="rname">${keyLabel(i)}${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
         ${done ? '' : `<div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div>`}<div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
@@ -703,7 +719,13 @@ async function main() {
     if (!known.has(r.id)) { audio.deny(); craftNote('You haven\u2019t worked that one out yet: pick up its materials first.'); return; }
     if (r.place) { // built in the world: close the panel and show where it would go
       if (!inventory.has(r.cost)) { audio.deny(); craftNote(`Need ${(Object.keys(r.cost) as ItemId[]).filter((k) => inventory.counts[k] < (r.cost[k] ?? 0)).map((k) => `${(r.cost[k] ?? 0) - inventory.counts[k]} more ${ITEM_NAMES[k].toLowerCase()}`).join(' and ')}.`); return; }
+      // At the cap, say so here instead of after you've walked out to place it.
+      if (r.id === 'crate' && crates.list.length >= MAX_CRATES) { audio.deny(); craftNote(`You have ${MAX_CRATES} crates already.`); return; }
+      if (r.id === 'solar' && placeables.solars.length >= MAX_SOLARS) { audio.deny(); craftNote(`You have ${MAX_SOLARS} panels already.`); return; }
       setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.'));
+      // A preview still open from before the panel (Tab skips the cancel-on-any-key) made this call build *that* thing
+      // on the spot: start this placement fresh.
+      cancelPlacing();
       build(r.id as PlaceKind);
       flash(`Place the ${ITEM_NAMES[r.makes].toLowerCase()}: ${K('build')} or click where it should go. Any other key cancels.`);
       return;
@@ -952,13 +974,18 @@ async function main() {
   };
   /** Drains in 5 minutes, so trips away from the fire need planning; refills by a fire (1 minute) or slowly in daylight. Flickers when low or when the core glitches. */
   let solarHinted = false;
+  const panelV = new THREE.Vector3();
   const updateLamp = (dt: number, fireNear: number) => {
     const cell = inventory.counts.lamp_cell > 0; // the salvaged power cell: half the drain, faster recharge
     if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 300) * (cell ? 0.5 : 1)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
     // Daylight charging needs the sky: not in a cave or under the wreck (it charged deep underground at noon).
     else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 && !survival.sheltered ? 100 / 300 : 0) * (cell ? 1.5 : 1));
     // A solar panel in daylight charges it fast even while it's on.
-    if (sky.daylight > 0.25 && lampCharge < 100 && placeables.solarNear(player.position, 6)) {
+    // ...if the panel itself can see the sky: one set up in a cave, under the hull or under a cap charged like any other.
+    const panelTop = (s: { pos: THREE.Vector3 }) => panelV.copy(s.pos).setY(s.pos.y + 1.2);
+    const sunlit = sky.daylight > 0.25 && lampCharge < 100
+      && placeables.solarsNear(player.position, 6).some((s) => !world.raycast(panelTop(s), UP, 40) && !wreck.blocks(panelTop(s), UP, 40) && !flora.capOver(panelTop(s), UP));
+    if (sunlit) {
       lampCharge = Math.min(100, lampCharge + dt * (100 / 20));
       if (!solarHinted) { solarHinted = true; flash('The solar panel is charging your lamp.'); }
     } else if (!placeables.solarNear(player.position, 8)) solarHinted = false;
@@ -1027,7 +1054,7 @@ async function main() {
       nights++; tutorial.milestone('dawn'); wasNight = false;
       if (fireNearPlayer() > 0.5) audio.safeMotif(); // the reward cue: you kept the fire through the night
     }
-    if (tutorial.seen.has('dawn') && player.position.distanceTo(spawnPoint) < 15) tutorial.milestone('wreck');
+    if (tutorial.seen.has('dawn') && player.position.distanceTo(wreckPos.center) < 15) tutorial.milestone('wreck');
   };
 
   // --- Resting by the fire: the night passes ~6x faster, but the fire burns just as fast and the dark doesn't sleep ----
@@ -1088,6 +1115,7 @@ async function main() {
       if (flora.trunkAt(hit.point.x, hit.point.z, 0.7)) return 'A mushroom is in the way.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to set it up here.';
       if (placeables.solars.length >= MAX_SOLARS) return `You have ${MAX_SOLARS} panels already.`;
+      { const top = hit.point.clone().setY(hit.point.y + 1.2); if (world.raycast(top, UP, 40) || wreck.blocks(top, UP, 40) || flora.capOver(top, UP)) return 'It needs open sky to charge.'; }
       if (!inventory.has(costOf('solar'))) return 'You no longer have the materials for a panel.';
       return '';
     }
@@ -1307,8 +1335,7 @@ async function main() {
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
   const hpBar = document.querySelector('#hp > div') as HTMLElement, heatBar = document.querySelector('#heat > div') as HTMLElement;
-  const fahrenheit = navigator.language === 'en-US';
-  const fmtTemp = (c: number) => (fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
+  const fmtTemp = (c: number) => (settings.fahrenheit ? `${Math.round(c * 9 / 5 + 32)}°F` : `${Math.round(c)}°C`);
   const goalEl = $('goal'), buffsEl = $('buffs'), deathText = $('deathtext'), deathHint = $('deathhint');
   // Only touch the DOM when a value actually changes (no per-frame style writes).
   const domCache = new Map<HTMLElement, string>();
@@ -1380,7 +1407,8 @@ async function main() {
   const meter = (cls: string, v: number) => `<div class="meter ${cls}"><i style="transform:scaleX(${Math.max(0, Math.min(1, v)).toFixed(3)})"></i></div>`;
   function renderWrist() {
     const until = (to: number) => fmtTime((((to - sky.time) % 1) + 1) % 1 * DAY_LENGTH);
-    const clock = isNightTime() ? `dawn in ${until(0.25)}` : `dark in ${until(0.7)}`;
+    // Sunset is at 0.75 (the sky's own horizon crossing): "dark in" counted to 0.7, two minutes early.
+    const clock = sky.time >= 0.75 || sky.time < 0.25 ? `dawn in ${until(0.25)}` : `sunset in ${until(0.75)}`;
     const carried = [...MATERIALS, ...TOOLS, ...GEAR].filter((k) => inventory.counts[k] > 0);
     const goal = tutorial.currentGoal();
     wristBody.innerHTML = `
@@ -1434,6 +1462,7 @@ async function main() {
       if (ang > (c === scanOf ? 16 : 9) || ang >= bestA) continue;
       const hit = world.raycast(camera.position, scanTo, d); // terrain in the way blocks the scan
       if (hit && hit.point.distanceTo(camera.position) < d - 0.4) continue;
+      if (wreck.blocks(camera.position, scanTo, d - 0.4)) continue; // ...and so does the hull
       best = c; bestA = ang;
     }
     return best;
@@ -1705,7 +1734,7 @@ async function main() {
         for (const f of campfires.list) if (f.lit) fireNear = Math.max(fireNear, 1 - f.position.distanceTo(player.position) / 12);
         const g = world.groundAt(camera.position.x, camera.position.z);
         horror.update({ dt: wdt, camera, night: sky.night, daylight: sky.daylight, fireNear: Math.max(fireNear, placeables.flareNear(player.position) * 0.8), warmth: survival.warmth, health: survival.health,
-          underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: spawnPoint,
+          underground: !!g && camera.position.y < g.y - 3, ground: (x, z) => world.groundAt(x, z), crashSite: wreckPos.center, // the hull itself, not the spawn point 8 m off
           nights, running: input.moving && input.down('run') && !player.crouching, moving: input.moving,
           litFiresNear: campfires.list.filter((f) => f.lit && f.position.distanceToSquared(player.position) < 40 * 40).length,
           fogNear: (scene.fog as THREE.Fog).near, camp: campNear() });

@@ -20,15 +20,18 @@ export interface Settings {
   runToggle: boolean;  // press run once instead of holding it
   sneakToggle: boolean;
   compass: boolean;
-  fullHud: boolean;
+  fullHud: boolean;     // always show vitals and inventory (instead of only when they change)
   hudDistortion: boolean; // the HUD misbehaves as unease rises (drifting compass, false readings)
   captionSize: number;  // 0.8..1.8 caption text size
-  pauseCraft: boolean;  // pause the world while the crafting panel is open (off: it keeps running)    // always show vitals and inventory (instead of only when they change)
+  pauseCraft: boolean;  // pause the world while the crafting panel is open (off: it keeps running)
   tutorial: boolean;   // station-core objectives panel
+  fahrenheit: boolean; // air temperature in °F (off: °C)
 }
 
 export const DEFAULTS: Settings = {
   master: 0.8, sfx: 1, ambience: 0.7, ui: 0.8, sensitivity: 1, invertY: false, fov: 75, quality: 1, resolution: 1, autoRes: true, post: true, headBob: true, shakeAmt: 1, horrorAmt: 1, reduceFlash: false, captions: false, uiScale: 1, runToggle: false, sneakToggle: false, compass: true, fullHud: false, hudDistortion: true, captionSize: 1, pauseCraft: false, tutorial: true,
+  // °F for US English browsers until the player chooses (the unit used to follow the browser language with no setting).
+  fahrenheit: typeof navigator !== 'undefined' && navigator.language === 'en-US',
 };
 
 const KEY = 'biocrash-settings';
@@ -94,6 +97,7 @@ const ROWS: { group: string; rows: Row[] }[] = [
     { key: 'hudDistortion', label: 'HUD distortion with unease', kind: 'check' },
     { key: 'pauseCraft', label: 'Pause while crafting', kind: 'check' },
     { key: 'tutorial', label: 'Station core objectives', kind: 'check' },
+    { key: 'fahrenheit', label: 'Temperature in °F', kind: 'check' },
   ] },
 ];
 

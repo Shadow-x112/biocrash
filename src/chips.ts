@@ -24,6 +24,8 @@ export class Chips {
   private ray = new THREE.Ray();
   private sphere = new THREE.Sphere(new THREE.Vector3(), 0.3);
   private t = 0;
+  /** Spots a chip can't lie on (inside a mushroom trunk: it couldn't be reached or read). */
+  blocked?: (x: number, z: number) => boolean;
 
   /** `taken`: chips already read (they're gone from the world). `wreck`: chips wait for it to settle, then keep off it. */
   constructor(centre: THREE.Vector3, taken: (id: string) => boolean, private wreck?: { placed: boolean; center: THREE.Vector3; covers: (x: number, z: number) => boolean }) {
@@ -54,6 +56,14 @@ export class Chips {
         for (let k = 0; k < 8 && this.wreck?.covers(c.x, c.z); k++) {
           const dx = c.x - this.wreck.center.x, dz = c.z - this.wreck.center.z, d = Math.hypot(dx, dz) || 1;
           c.x += (dx / d) * 3; c.z += (dz / d) * 3;
+        }
+        // Out of a mushroom foot: try a ring of spots around it, nearest first.
+        if (this.blocked?.(c.x, c.z)) {
+          let moved = false;
+          for (let r = 1; r <= 4 && !moved; r++) for (let a = 0; a < 8 && !moved; a++) {
+            const x = c.x + Math.cos(a * Math.PI / 4) * r * 1.5, z = c.z + Math.sin(a * Math.PI / 4) * r * 1.5;
+            if (!this.blocked(x, z) && !this.wreck?.covers(x, z)) { c.x = x; c.z = z; moved = true; }
+          }
         }
         const g = ground(c.x, c.z);
         if (!g) continue;

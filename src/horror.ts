@@ -5,7 +5,10 @@
 //
 // Pacing (after Left 4 Dead's director and Alien: Isolation's menace gauge): calm -> build -> one big event (peak) -> a real
 // rest of 1-2 minutes. Big events come from a shuffled deck, so none repeats until all have played, and they unlock over the
-// first nights: nights 1-2 have only distant calls, the wreck and drips; the figure comes later, and a stinger only after it.
+// first nights. Night 1: only distant calls, the wreck groaning and cave drips. Night 2: Earth memories, camp events (eyes,
+// circling steps, a guttering fire) and unease that never quite settles at night. Night 3: whispers, breathing, the voice,
+// false alarms and wrist glitches. Night 4: the figure, first seen in a staged sighting on the way to the wreck (it joins
+// the deck after that, or from night 6 if the staging never got its chance). Stingers only once the figure has been seen.
 import * as THREE from 'three';
 import type { Audio, Loop } from './audio';
 
@@ -146,7 +149,8 @@ export class Horror {
    *  cycle, never the one that just played. When every playable event has had its turn, the cycle restarts. Cards that
    *  can't play are simply skipped (they used to be pushed to the back and jam the deck for good). */
   private candidates(nights: number, u: number): Major[] {
-    const open = MAJORS.filter((k) => nights >= UNLOCK[k] && u >= NEED[k]);
+    // The figure's first appearance is the staged one; the deck only gets it after that (or from night 6 as a fallback).
+    const open = MAJORS.filter((k) => nights >= UNLOCK[k] && u >= NEED[k] && (k !== 'figure' || this.figureSeen || nights >= 5));
     let fresh = open.filter((k) => !this.played.has(k) && k !== this.last);
     if (!fresh.length && open.some((k) => this.played.has(k))) {
       for (const k of open) this.played.delete(k);
@@ -236,8 +240,9 @@ export class Horror {
     // --- Pacing ---------------------------------------------------------------------------------
     this.phaseT -= dt;
     if (this.phase === 'calm' && u > 0.35) { this.phase = 'build'; this.timers.major = Math.max(this.timers.major, rand(20, 45)); }
+    // (The prefetch used to head this else-if chain, so from night 2 a build-up could never fall back to calm.)
     if (this.phase === 'build' && i.nights >= UNLOCK.memory) this.audio.prefetch(this.nextMemory); // decoded before its card comes up
-    else if (this.phase === 'build' && u < 0.25) this.phase = 'calm';
+    if (this.phase === 'build' && u < 0.25) this.phase = 'calm';
     else if (this.phase === 'peak' && this.phaseT <= 0) { this.phase = 'relax'; this.phaseT = rand(60, 120); }
     else if (this.phase === 'relax' && this.phaseT <= 0) this.phase = 'calm';
     const resting = this.phase === 'relax' || this.phase === 'peak';
@@ -445,7 +450,8 @@ export class Horror {
   /** Stands the figure on bearing `yaw` from the player, at the fog's near edge or further. */
   private placeFigure(i: HorrorInput, yaw: number) {
     const cam = i.camera.position;
-    if (this.figure.visible || i.underground || this.figureNight === i.nights) return false;
+    // Night only: a black cut-out in daylight (cold and hurt can raise unease by day) reads as a prop, not a threat.
+    if (this.figure.visible || i.underground || i.night < 0.5 || this.figureNight === i.nights) return false;
     const d = Math.max(i.fogNear, rand(16, 26));
     const p = new THREE.Vector3(cam.x + Math.sin(yaw) * d, 0, cam.z + Math.cos(yaw) * d);
     const g = i.ground(p.x, p.z);

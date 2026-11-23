@@ -84,6 +84,8 @@ export class Placeables {
   }
 
   solarNear(p: THREE.Vector3, r: number) { return this.solars.some((s) => s.pos.distanceToSquared(p) < r * r); }
+  /** Panels within `r` of `p` (to check which of them can see the sky). */
+  solarsNear(p: THREE.Vector3, r: number) { return this.solars.filter((s) => s.pos.distanceToSquared(p) < r * r); }
 
   update(dt: number, viewer: THREE.Vector3) {
     this.t += dt;
