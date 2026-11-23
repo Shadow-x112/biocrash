@@ -1484,7 +1484,8 @@ async function main() {
     let best: THREE.Vector3 | null = null, bd = Infinity;
     for (const f of campfires.list) { const d = f.position.distanceTo(player.position); if (f.lit && d < bd) { bd = d; best = f.position; } }
     if (best && bd > 8) { fire.textContent = `\u25B2 fire ${Math.round(bd)} m`; place(fire, bearingTo(best), heading); } else fire.style.display = 'none';
-    const packEl = tickEls[TICKS.length + 2], pk = packs.nearest(player.position);
+    // The pack you died with, as the death screen promises (the nearest one could be an old overflow pack).
+    const packEl = tickEls[TICKS.length + 2], pk = packs.latestDeath() ?? packs.nearest(player.position);
     if (pk && pk.position.distanceTo(player.position) > 3) { packEl.textContent = `\u25C6 pack ${Math.round(pk.position.distanceTo(player.position))} m`; place(packEl, bearingTo(pk.position), heading); }
     else packEl.style.display = 'none';
   };
@@ -1571,7 +1572,7 @@ async function main() {
           if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
           // Meat keeps its age in the pack (oldest pieces go first, as take() removes them).
           const ages = Object.fromEntries(PERISHABLE.filter((k) => items[k]).map((k) => [k, inventory.ages[k].slice(0, items[k])]));
-          if (dropped) { packs.add(feet, items, ages); inventory.take(items as Partial<Record<ItemId, number>>); }
+          if (dropped) { packs.add(feet, items, ages, Date.now()); inventory.take(items as Partial<Record<ItemId, number>>); }
           deathText.textContent = 'You froze.';
           // Wake at the nearest fire you built that will keep burning a while (one about to gutter out only chained
           // the deaths); with none, at the crash site.

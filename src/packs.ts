@@ -4,7 +4,9 @@ import type { PackSave } from './save';
 
 export interface Pack { position: THREE.Vector3; items: Record<string, number>; group: THREE.Group;
   /** Age in seconds of each piece of meat in it (so a death can't refresh rotting meat). */
-  ages?: Record<string, number[]> }
+  ages?: Record<string, number[]>;
+  /** When you died and dropped it (ms since epoch); overflow packs have none. The compass leads to the latest. */
+  died?: number }
 
 let sackGeo: THREE.BufferGeometry = new THREE.DodecahedronGeometry(0.28, 0).scale(1, 0.75, 0.85);
 const strapGeo = new THREE.TorusGeometry(0.2, 0.025, 4, 10);
@@ -28,13 +30,14 @@ export class Packs {
     for (const p of this.list) { const s = p.group.children[0] as THREE.Mesh; s.geometry = sackGeo; s.material = sackMat; s.position.y = 0; p.group.children[1].visible = false; }
   }
 
-  add(position: THREE.Vector3, items: Record<string, number>, ages?: Record<string, number[]>) {
+  add(position: THREE.Vector3, items: Record<string, number>, ages?: Record<string, number[]>, died?: number) {
     // Repeated deaths can't pile up packs forever: past the cap, the oldest pack's contents move into the new one
     // (nothing is lost, it just isn't where it was).
     items = { ...items };
     ages = Object.fromEntries(Object.entries(ages ?? {}).map(([k, a]) => [k, [...a]]));
     while (this.list.length >= MAX_PACKS) {
       const old = this.list[0];
+      if (old.died && !died) died = old.died; // merged into this one: it still holds what you died with
       for (const [k, n] of Object.entries(old.items)) items[k] = (items[k] ?? 0) + n;
       for (const [k, a] of Object.entries(old.ages ?? {})) (ages[k] ??= []).push(...a);
       this.remove(old);
@@ -51,7 +54,7 @@ export class Packs {
     strap.visible = !modelled; // the modelled pack has its own strap
     g.add(sack, strap, beacon);
     this.group.add(g);
-    const p: Pack = { position: position.clone(), items: { ...items }, group: g, ages };
+    const p: Pack = { position: position.clone(), items: { ...items }, group: g, ages, died };
     this.list.push(p);
     return p;
   }
@@ -70,12 +73,15 @@ export class Packs {
 
   nearest(pos: THREE.Vector3) { return this.near(pos, 1e6); }
 
+  /** The pack from your latest death, if it's still out there. */
+  latestDeath() { let best: Pack | null = null; for (const p of this.list) if (p.died && (!best || p.died > best.died!)) best = p; return best; }
+
   update(dt: number) {
     this.t += dt;
     beaconMat.opacity = 0.35 + 0.25 * Math.sin(this.t * 2.2);
   }
 
-  save(): PackSave[] { return this.list.map((p) => ({ x: p.position.x, y: p.position.y, z: p.position.z, items: { ...p.items }, ...(p.ages && Object.keys(p.ages).length ? { ages: p.ages } : {}) })); }
+  save(): PackSave[] { return this.list.map((p) => ({ x: p.position.x, y: p.position.y, z: p.position.z, items: { ...p.items }, ...(p.ages && Object.keys(p.ages).length ? { ages: p.ages } : {}), ...(p.died ? { died: p.died } : {}) })); }
 
-  load(list: PackSave[] | undefined) { for (const p of list ?? []) this.add(new THREE.Vector3(p.x, p.y, p.z), p.items, p.ages); }
+  load(list: PackSave[] | undefined) { for (const p of list ?? []) this.add(new THREE.Vector3(p.x, p.y, p.z), p.items, p.ages, p.died); }
 }

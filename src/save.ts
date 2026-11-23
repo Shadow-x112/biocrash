@@ -50,7 +50,7 @@ export interface SaveMeta {
   wreck?: { x: number; y: number; z: number; rx: number; ry: number; rz: number; cleared?: number[] };
 }
 
-export interface PackSave { x: number; y: number; z: number; items: Record<string, number>; ages?: Record<string, number[]> }
+export interface PackSave { x: number; y: number; z: number; items: Record<string, number>; ages?: Record<string, number[]>; died?: number }
 
 interface ExportFile extends SaveMeta {
   chunks: Record<string, string>; // key -> base64 Float32Array
@@ -126,7 +126,8 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
         ages = {};
         for (const [k, a] of Object.entries(pk.ages as Record<string, unknown>)) if (Array.isArray(a)) ages[k.slice(0, 32)] = a.map((v) => num(v, 0, 1e6)).filter((v): v is number => v !== undefined).slice(0, 1000);
       }
-      if (x !== undefined && y !== undefined && z !== undefined) out.packs.push({ x, y, z, items, ...(ages ? { ages } : {}) });
+      const died = num(pk.died, 0, 1e15);
+      if (x !== undefined && y !== undefined && z !== undefined) out.packs.push({ x, y, z, items, ...(ages ? { ages } : {}), ...(died ? { died } : {}) });
     }
     out.packs = out.packs.slice(0, 50);
   }
