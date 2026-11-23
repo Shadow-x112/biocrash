@@ -185,7 +185,7 @@ async function main() {
   const survival = new Survival();
   if (meta?.vitals) { survival.health = meta.vitals.health; survival.warmth = meta.vitals.warmth; survival.fed = meta.vitals.fed ?? 0; survival.afterglow = meta.vitals.afterglow ?? 0; }
   // The wreck of the station, beside the spawn point.
-  const groundRay = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0);
+  const groundRay = new THREE.Vector3(), down = new THREE.Vector3(0, -1, 0), heatRay = new THREE.Vector3();
   const wreck = new Wreck(RAPIER, physics, renderer, spawnPoint, (x, z) => {
     const hit = world.raycast(groundRay.set(x, spawnPoint.y + 40, z), down, 120);
     return hit ? hit.point.y : null;
@@ -1534,7 +1534,8 @@ async function main() {
       sky.update(wdt, camera);
       if (live && !player.frozen) {
         survival.update(wdt, { eye: camera.position, sunDir: sky.sunDir, daylight: sky.daylight, roof: (e) => !!world.raycast(e, UP, 40) || wreck.blocks(e, UP, 40), // the wreck shelters you too
-          caps: (e, d) => flora.capOver(e, d) || wreck.blocks(e, d, 40), ground: (x, z) => world.groundAt(x, z) });
+          caps: (e, d) => flora.capOver(e, d) || wreck.blocks(e, d, 40),
+          blocked: (a, b) => { const d = heatRay.subVectors(b, a), len = d.length(); return len > 1.2 && (world.raycast(a, d.divideScalar(len), len - 0.6) !== null || wreck.blocks(a, d, len - 0.6)); }, ground: (x, z) => world.groundAt(x, z) });
         player.speedMul = survival.moveFactor() * inventory.load_().speed;
         for (const k of inventory.tick(wdt)) flash(`${ITEM_NAMES[k]} has spoiled. You throw it away.`);
         crates.update(wdt);

@@ -50,13 +50,20 @@ export class Survival {
   /** Speed multiplier for the player (cold makes you sluggish). */
   moveFactor() { return this.cold ? 0.7 + (this.warmth / 30) * 0.3 : 1; }
 
-  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; roof: (eye: THREE.Vector3) => boolean; caps?: (eye: THREE.Vector3, dir: THREE.Vector3) => boolean;
+  /** Fires whose warmth a hill or wall between you blocks (re-checked with the shade probe). */
+  private walled = new Set<HeatSource>();
+
+  update(dt: number, ctx: { eye: THREE.Vector3; sunDir: THREE.Vector3; daylight: number; roof: (eye: THREE.Vector3) => boolean;
+    blocked?: (a: THREE.Vector3, b: THREE.Vector3) => boolean; caps?: (eye: THREE.Vector3, dir: THREE.Vector3) => boolean;
     ground: (x: number, z: number) => { y: number } | null }) {
     // Is there anything over your head, and is the sun behind terrain? A few times a second. The roof uses the physics
     // ray (fast); the shade check walks along the sun's direction against the height map instead of raycasting meshes.
     if ((this.probeTimer -= dt) <= 0) {
       this.probeTimer = 0.4;
       this.sheltered = ctx.roof(ctx.eye);
+      // A fire on the other side of a ridge or cave wall used to warm you just as well as one in front of you.
+      this.walled.clear();
+      if (ctx.blocked) for (const h of this.heatSources) if (h.heatC > 0 && h.position.distanceTo(ctx.eye) < h.radius && ctx.blocked(ctx.eye, h.position)) this.walled.add(h);
       this.shaded = false;
       if (ctx.sunDir.y > 0) {
         for (let d = 3; d <= 120; d += 3) {
@@ -76,6 +83,7 @@ export class Survival {
     if (this.sheltered) t = Math.max(t, THREE.MathUtils.lerp(t, TEMP.shelterC, 0.85));
     t -= Math.max(0, ctx.eye.y - TEMP.lapseFrom) * TEMP.lapseCPerM;
     for (const h of this.heatSources) {
+      if (this.walled.has(h)) continue;
       const d = h.position.distanceTo(ctx.eye);
       if (d < h.radius) t += h.heatC * (1 - d / h.radius);
     }
