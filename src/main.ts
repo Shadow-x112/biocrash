@@ -334,13 +334,16 @@ async function main() {
   SaveStore.onVersionChange = () => { stopSaving(); flash('A newer Biocrash opened in another tab. This tab stopped saving: reload it.'); };
 
   // --- Saving --------------------------------------------------------------------------------------
+  let respawnTo: THREE.Vector3 | null = null;
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
-    vitals: { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
+    // Saved on the death screen: store where and how you wake (it stored 0 health, clamped to 1, at the spot you froze,
+    // so the reload froze you again at once).
+    vitals: respawnTo ? { health: 50, warmth: 60, fed: 0, afterglow: 120 } : { health: survival.health, warmth: survival.warmth, fed: survival.fed, afterglow: survival.afterglow },
     milestones: [...tutorial.seen], packs: packs.save(), wasNight, nights, horror: horror.save(), lamp: lampCharge,
     crates: crates.save(), placed: placeables.save(), wear: { ...inventory.wear } as Record<string, number>, scanned: [...scanned], inventory: { ...inventory.counts }, fresh: { raw_meat: [...inventory.ages.raw_meat], cooked_meat: [...inventory.ages.cooked_meat] }, seen: [...inventory.seen], picked: [...props.picked], campfires: campfires.save(), wreck: wreck.save(),
     stalks: Object.fromEntries(flora.harvested), tutorialStep: tutorial.step,
-    player: { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
+    player: respawnTo ? { x: respawnTo.x, y: respawnTo.y, z: respawnTo.z, yaw: player.yaw, pitch: 0 } : { x: player.position.x, y: player.position.y, z: player.position.z, yaw: player.yaw, pitch: player.pitch },
   });
   let lastSaveMs = 0, saveErrorShown = false;
   const saveNow = async () => {
@@ -501,7 +504,7 @@ async function main() {
     a.href = URL.createObjectURL(store.exportRaw() ?? store.exportFile(currentMeta(), world.edits));
     a.download = `biocrash-save-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000); // revoking at once cancels the download in Firefox and Safari
     flash(store.incompatible ? 'Old world exported (unchanged)' : 'Save exported');
   };
   // The graphics driver can drop the WebGL context (driver reset, GPU switch). three.js restores it; pause meanwhile.
@@ -1570,7 +1573,9 @@ async function main() {
           deathHint.textContent = dropped ? `Your materials are where you fell, marked on the compass. You kept a fire kit. Waking ${atFire ? 'at your fire' : 'at the crash site'}\u2026`
             : 'Fire and shelter keep your core temperature up. Cooked meat and a hide wrap help you last the night.';
           deathEl.style.display = 'flex';
+          respawnTo = wake.clone(); // a save in the next 3 s (tab closed on the death screen) stores the wake-up, not the corpse
           setTimeout(() => {
+            respawnTo = null;
             player.teleport(wake);
             survival.respawn();
             if (dropped) tutorial.milestone('death');
