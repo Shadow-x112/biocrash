@@ -585,8 +585,8 @@ async function main() {
       const can = !done && inventory.has(r.cost) && (r.needs ?? []).every((k) => inventory.counts[k] > 0) && (!r.heat || warm);
       const btn = done ? '<span class="hint">made</span>' : `<button data-r="${r.id}"${can ? '' : ' class="off"'}>${r.place ? 'Place' : 'Craft'}</button>`;
       if (craftableOnly && !can) return '';
-      return `<div class="recipe"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
-        <div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div><div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
+      return `<div class="recipe${done ? ' done' : ''}"><div><div class="rname"><span class="key">${i + 1}</span>${ico(r.makes)}${name}${r.amount > 1 ? ' ×' + r.amount : ''}${have && !r.unique ? ` <span class="hint">(have ${have})</span>` : ''}</div>
+        ${done ? '' : `<div class="rcost">${costs}${needs ? ' · ' + needs : ''}</div>`}<div class="rblurb">${r.blurb}</div></div>${btn}</div>`;
     }).join('');
   }
   const lastCounts: Partial<Record<ItemId, number>> = {};
@@ -733,6 +733,7 @@ async function main() {
       return `<button class="cell${stale || (cond !== null && cond < 0.25) ? ' stale' : ''}" data-side="${side}" data-k="${k}" title="${ITEM_NAMES[k]}${f !== null ? ' · next spoils in ' + fmtTime(f * (side === 'crate' ? 2 : 1)) : ''}${cond !== null ? ` · ${Math.round(cond * 100)}% condition` : ''}">${ico(k)}<b>${inv.counts[k]}</b><i>${ITEM_NAMES[k]}</i></button>`;
     }).join('');
   };
+  const crateFull = (c: { inv: Inventory }) => [...MATERIALS, ...TOOLS].some((k) => c.inv.counts[k] > 0);
   function renderStore() {
     const c = storeCrate;
     if (!c) return;
@@ -745,7 +746,7 @@ async function main() {
         <div class="stcol"><div class="sth"><span>Crate</span><span>${c.inv.usedSlots()}/${CRATE_SLOTS}</span></div>
           <div class="stgrid">${cells(c.inv, 'crate')}</div><button class="stall" data-act="takeall">◂ Take all that fits</button></div>
       </div>
-      <div class="stfoot"><span class="hint">Meat keeps twice as long in a crate.</span><button class="stdis" data-act="dismantle"${c.inv.usedSlots() ? ' disabled title="Empty it first"' : ''}>Dismantle</button></div>
+      <div class="stfoot"><span class="hint">Meat keeps twice as long in a crate.</span><button class="stdis" data-act="dismantle"${crateFull(c) ? ' disabled title="Empty it first"' : ''}>Dismantle</button></div>
       <div id="storemsg"></div>`;
   }
   $('storeview').addEventListener('click', (e) => {
@@ -763,12 +764,13 @@ async function main() {
     } else if (b.dataset.act === 'storeall' || b.dataset.act === 'takeall') {
       const from = b.dataset.act === 'storeall' ? inventory : c.inv, to = from === inventory ? c.inv : inventory;
       let moved = 0, left = 0;
-      for (const k of MATERIALS) if (from.counts[k] > 0) { moved += from.moveTo(to, k, from.counts[k]); left += from.counts[k]; }
+      // Taking all brings stored tools too (they stayed behind, so the crate never emptied); storing all keeps yours.
+      for (const k of from === inventory ? MATERIALS : [...MATERIALS, ...TOOLS]) if (from.counts[k] > 0) { moved += from.moveTo(to, k, from.counts[k]); left += from.counts[k]; }
       if (moved) audio.play('ui_3', { bus: 'ui', gain: 0.4 }); else audio.deny();
       storeMsg(left ? `${to === inventory ? 'Your carry slots are' : 'The crate is'} full: ${left} left behind.` : moved ? `Moved ${moved}.` : 'Nothing to move.');
       renderStore();
     } else if (b.dataset.act === 'dismantle') {
-      if (c.inv.usedSlots()) { audio.deny(); storeMsg('Empty the crate first.'); return; }
+      if (crateFull(c)) { audio.deny(); storeMsg('Empty the crate first.'); return; } // tools take no slots: they counted as empty and were lost
       crates.remove(c);
       give('stalkwood', 3); give('cordage', 1); give('stone', 2);
       setState('playing'); if (!player.dragLook) void requestLock().catch(() => flash('Click to resume mouse look.'));
@@ -883,16 +885,23 @@ async function main() {
       openStore(t.cr);
     } else if (t.kind === 'pack') {
       const got: string[] = [];
+      let rotten = 0;
       // Take what fits; the rest stays in the pack. Meat that sat out comes back half-spoiled.
       for (const [k, n] of Object.entries(t.pk.items)) if (Object.hasOwn(inventory.counts, k) && n > 0) {
-        const id = k as ItemId, took = inventory.add(id, n, (SHELF_LIFE[id] ?? 0) * 0.5);
-        if (took) got.push(`${took} ${ITEM_NAMES[id].toLowerCase()}`);
+        const id = k as ItemId, half = (SHELF_LIFE[id] ?? 0) * 0.5, ages = t.pk.ages?.[k] ?? [];
+        // Each piece comes back at least half-spoiled, never fresher than it went in (dying used to refresh rotting meat).
+        let took = 0, rot = 0;
+        if (SHELF_LIFE[id]) { for (let j = 0; j < n; j++) { const a = Math.max(half, ages[j] ?? 0); if (a >= (SHELF_LIFE[id] ?? 0)) { took++; rot++; continue; } if (!inventory.add(id, 1, a)) break; took++; } ages.splice(0, took); }
+        else took = inventory.add(id, n);
+        if (took - rot) got.push(`${took - rot} ${ITEM_NAMES[id].toLowerCase()}`);
+        if (rot) rotten += rot;
         if (took >= n) delete t.pk.items[k]; else t.pk.items[k] = n - took;
       }
       const left = Object.keys(t.pk.items).length > 0;
       if (!left) packs.remove(t.pk);
       if (got.length) audio.pickup('fiber'); else audio.deny();
-      flash(got.length ? `Recovered ${got.join(', ')}.${left ? ' Your slots are full: the rest is still in the pack.' : ''}` : left ? 'No room: your carry slots are full.' : 'The pack was empty.');
+      const rotNote = rotten ? ` ${rotten} piece${rotten > 1 ? 's' : ''} of meat had rotted: you throw ${rotten > 1 ? 'them' : 'it'} away.` : '';
+      flash((got.length ? `Recovered ${got.join(', ')}.${left ? ' Your slots are full: the rest is still in the pack.' : ''}` : left ? 'No room: your carry slots are full.' : rotten ? '' : 'The pack was empty.') + rotNote);
     } else if (t.kind === 'stalk') {
       if (inventory.counts.stone_knife <= 0 && inventory.counts.stone_pick <= 0) { flash('Cut stalkwood with a stone knife or pick.'); return; }
       if (inventory.room('stalkwood') < 1) { packFull('stalkwood'); return; }
@@ -1213,7 +1222,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { wreck, world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, post, renderer, scene, getState: () => state, setNights: (n: number) => { nights = n; } } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { wreck, packs, crates, world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, post, renderer, scene, getState: () => state, setNights: (n: number) => { nights = n; } } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
@@ -1536,7 +1545,9 @@ async function main() {
           const feet = player.position.clone().setY(player.position.y - 0.9);
           const g = world.groundAt(feet.x, feet.z);
           if (g && Math.abs(g.y - feet.y) < 1.5) feet.y = g.y;
-          if (dropped) { packs.add(feet, items); inventory.take(items as Partial<Record<ItemId, number>>); }
+          // Meat keeps its age in the pack (oldest pieces go first, as take() removes them).
+          const ages = Object.fromEntries(PERISHABLE.filter((k) => items[k]).map((k) => [k, inventory.ages[k].slice(0, items[k])]));
+          if (dropped) { packs.add(feet, items, ages); inventory.take(items as Partial<Record<ItemId, number>>); }
           deathText.textContent = 'You froze.';
           // Wake at the nearest fire you built that's still burning; with none, at the crash site.
           let wake: THREE.Vector3 = spawnPoint, best = Infinity;

@@ -50,7 +50,7 @@ export interface SaveMeta {
   wreck?: { x: number; y: number; z: number; rx: number; ry: number; rz: number; cleared?: number[] };
 }
 
-export interface PackSave { x: number; y: number; z: number; items: Record<string, number> }
+export interface PackSave { x: number; y: number; z: number; items: Record<string, number>; ages?: Record<string, number[]> }
 
 interface ExportFile extends SaveMeta {
   chunks: Record<string, string>; // key -> base64 Float32Array
@@ -121,7 +121,12 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       const [x, y, z] = [num(pk.x, -1e6, 1e6), num(pk.y, -1e4, 1e4), num(pk.z, -1e6, 1e6)];
       const items: Record<string, number> = {};
       if (pk.items && typeof pk.items === 'object') for (const [k, n] of Object.entries(pk.items as Record<string, unknown>)) { const c = num(n, 0, 1e6); if (c) items[k] = Math.floor(c); }
-      if (x !== undefined && y !== undefined && z !== undefined) out.packs.push({ x, y, z, items });
+      let ages: Record<string, number[]> | undefined;
+      if (pk.ages && typeof pk.ages === 'object') {
+        ages = {};
+        for (const [k, a] of Object.entries(pk.ages as Record<string, unknown>)) if (Array.isArray(a)) ages[k.slice(0, 32)] = a.map((v) => num(v, 0, 1e6)).filter((v): v is number => v !== undefined).slice(0, 1000);
+      }
+      if (x !== undefined && y !== undefined && z !== undefined) out.packs.push({ x, y, z, items, ...(ages ? { ages } : {}) });
     }
     out.packs = out.packs.slice(0, 50);
   }

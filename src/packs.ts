@@ -2,7 +2,9 @@
 import * as THREE from 'three';
 import type { PackSave } from './save';
 
-export interface Pack { position: THREE.Vector3; items: Record<string, number>; group: THREE.Group }
+export interface Pack { position: THREE.Vector3; items: Record<string, number>; group: THREE.Group;
+  /** Age in seconds of each piece of meat in it (so a death can't refresh rotting meat). */
+  ages?: Record<string, number[]> }
 
 let sackGeo: THREE.BufferGeometry = new THREE.DodecahedronGeometry(0.28, 0).scale(1, 0.75, 0.85);
 const strapGeo = new THREE.TorusGeometry(0.2, 0.025, 4, 10);
@@ -26,13 +28,15 @@ export class Packs {
     for (const p of this.list) { const s = p.group.children[0] as THREE.Mesh; s.geometry = sackGeo; s.material = sackMat; s.position.y = 0; p.group.children[1].visible = false; }
   }
 
-  add(position: THREE.Vector3, items: Record<string, number>) {
+  add(position: THREE.Vector3, items: Record<string, number>, ages?: Record<string, number[]>) {
     // Repeated deaths can't pile up packs forever: past the cap, the oldest pack's contents move into the new one
     // (nothing is lost, it just isn't where it was).
     items = { ...items };
+    ages = Object.fromEntries(Object.entries(ages ?? {}).map(([k, a]) => [k, [...a]]));
     while (this.list.length >= MAX_PACKS) {
       const old = this.list[0];
       for (const [k, n] of Object.entries(old.items)) items[k] = (items[k] ?? 0) + n;
+      for (const [k, a] of Object.entries(old.ages ?? {})) (ages[k] ??= []).push(...a);
       this.remove(old);
     }
     const g = new THREE.Group();
@@ -47,7 +51,7 @@ export class Packs {
     strap.visible = !modelled; // the modelled pack has its own strap
     g.add(sack, strap, beacon);
     this.group.add(g);
-    const p = { position: position.clone(), items: { ...items }, group: g };
+    const p: Pack = { position: position.clone(), items: { ...items }, group: g, ages };
     this.list.push(p);
     return p;
   }
@@ -71,7 +75,7 @@ export class Packs {
     beaconMat.opacity = 0.35 + 0.25 * Math.sin(this.t * 2.2);
   }
 
-  save(): PackSave[] { return this.list.map((p) => ({ x: p.position.x, y: p.position.y, z: p.position.z, items: { ...p.items } })); }
+  save(): PackSave[] { return this.list.map((p) => ({ x: p.position.x, y: p.position.y, z: p.position.z, items: { ...p.items }, ...(p.ages && Object.keys(p.ages).length ? { ages: p.ages } : {}) })); }
 
-  load(list: PackSave[] | undefined) { for (const p of list ?? []) this.add(new THREE.Vector3(p.x, p.y, p.z), p.items); }
+  load(list: PackSave[] | undefined) { for (const p of list ?? []) this.add(new THREE.Vector3(p.x, p.y, p.z), p.items, p.ages); }
 }
