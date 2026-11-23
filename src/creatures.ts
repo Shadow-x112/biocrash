@@ -306,10 +306,12 @@ export class Creature {
     if (!this.alive) {
       this.mixer?.update(dt);
       this.deadTime += dt;
-      if (this.strippedT >= 0) { // a stripped carcass sinks into the moss over a minute and a half
-        this.strippedT += dt;
-        this.root.position.y = this.position.y - Math.min(1, this.strippedT / 90) * 0.35;
-      }
+      // A carcass stays on the ground: dig under it and it drops, fill over it and it rises (it hung in the air or
+      // was buried). Only nearby ground counts, so it never jumps onto a cliff top.
+      const g = ctx.ground(this.position.x, this.position.z, this.position.y);
+      if (g && Math.abs(g.y - this.position.y) < 3) this.position.y += (g.y - this.position.y) * Math.min(1, dt * 8);
+      if (this.strippedT >= 0) this.strippedT += dt; // a stripped carcass sinks into the moss over a minute and a half
+      this.root.position.y = this.position.y - (this.strippedT >= 0 ? Math.min(1, this.strippedT / 90) * 0.35 : 0);
       return;
     }
 
@@ -511,6 +513,8 @@ export class Fauna {
   private lookRay = new THREE.Ray();
   private lookSphere = new THREE.Sphere();
   private lookHit = new THREE.Vector3();
+  /** Distance along the view ray to the last creature lookAt found. */
+  lastDist = 0;
   lookAt(camera: THREE.Camera, reach: number) {
     camera.getWorldPosition(this.lookRay.origin);
     camera.getWorldDirection(this.lookRay.direction);
@@ -524,6 +528,7 @@ export class Fauna {
         if (t < bestT) { bestT = t; best = c; }
       }
     }
+    this.lastDist = bestT;
     return best;
   }
 }

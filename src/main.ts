@@ -809,7 +809,7 @@ async function main() {
     | null;
   let target: Target = null;
   const queryTarget = (): Target => {
-    const c = fauna.lookAt(camera, ATTACK.spear.reach);
+    const c = preyInSight(ATTACK.spear.reach);
     if (c) return { kind: 'creature', c };
     const pk = packs.near(player.position, 2.5);
     if (pk) return { kind: 'pack', pk };
@@ -860,7 +860,7 @@ async function main() {
   const hitEl = $('hitmark'), crossEl = $('crosshair');
   /** Crosshair state: enemy in reach, something to use, a creature out of reach, terrain to dig, or nothing. */
   const crosshairFor = (t: Target): string => {
-    const prey = fauna.lookAt(camera, ATTACK[hotbar.slot].reach);
+    const prey = preyInSight(ATTACK[hotbar.slot].reach);
     if (prey?.alive) return 'enemy';
     if (t && t.kind !== 'creature') return 'use';
     if (t?.kind === 'creature') return !t.c.alive && t.c.position.distanceTo(player.position) <= USE_REACH + 1 ? 'use' : 'far';
@@ -1173,17 +1173,32 @@ async function main() {
     promptEl.textContent = `${K('build')} or click: ${{ fire: 'build', crate: 'place crate', flare: 'plant flare', solar: 'set up panel' }[placeKind]} here  \u00b7  ${placeProblem(hit, placeKind) || 'fits'}`;
   };
   /** Hits land when the swing connects (~0.12 s in), not when it starts. */
-  const pendingHits: { t: number; c: Creature }[] = [];
+  // The hit is for the tool that swung (switching tools mid-swing changed its damage and wore the new one) and only
+  // if the target is still within reach when it lands (a bolting tuko was hit from twice the reach).
+  const pendingHits: { t: number; c: Creature; slot: Slot }[] = [];
   let hitStop = 0;
   const attack = (c: Creature) => {
     hotbar.swing();
-    pendingHits.push({ t: 0.12, c });
+    pendingHits.push({ t: 0.12, c, slot: hotbar.slot });
   };
-  const landHit = (c: Creature) => {
+  /** The live creature in your sights within `reach`, if nothing solid is in between (you hit them through hillsides,
+   *  mushroom trunks and the hull). */
+  const losDir = new THREE.Vector3();
+  const preyInSight = (reach: number) => {
+    const c = fauna.lookAt(camera, reach);
+    if (!c) return null;
+    const d = Math.max(0, fauna.lastDist - 0.15);
+    camera.getWorldDirection(losDir);
+    if (world.raycast(camera.position, losDir, d) || wreck.blocks(camera.position, losDir, d)) return null;
+    for (let s = 0.5; s < d; s += 0.5) if (flora.trunkAt(camera.position.x + losDir.x * s, camera.position.z + losDir.z * s, 0)) return null;
+    return c;
+  };
+  const landHit = (c: Creature, slot: Slot) => {
     if (!c.alive) return;
-    const dmg = ATTACK[hotbar.slot].damage * (hotbar.slot === 'spear' && inventory.counts.chitin_spearhead > 0 ? 1.5 : 1);
+    if (c.hitCentre().distanceTo(camera.position) > ATTACK[slot].reach + c.species.radius + 0.4) { audio.swing(); return; } // it got away
+    const dmg = ATTACK[slot].damage * (slot === 'spear' && inventory.counts.chitin_spearhead > 0 ? 1.5 : 1);
     const hit = c.damage(dmg, player.position);
-    if (hit && hotbar.slot !== 'hands') useTool(hotbar.slot);
+    if (hit && slot !== 'hands') useTool(slot);
     const at = c.hitCentre();
     if (hit) {
       hitEl.className = c.alive ? 'on' : 'on kill';
@@ -1214,7 +1229,7 @@ async function main() {
       : wreck.placed && wreck.covers(at.x, at.z, power.radius * 0.5) && at.y < wreck.center.y + 1 ? 'The wreck' : ''; // it would hang over the hole
     if (inWay) { audio.deny(); flash(`${inWay} is in the way.`); return; }
     if (fill && at.distanceTo(player.position) < power.radius + 0.9) { audio.deny(); flash('Too close: step back to fill.'); return; } // don't bury yourself
-    if (hotbar.slot !== 'hands') useTool(hotbar.slot);
+    if (hotbar.slot === 'stone_pick') useTool('stone_pick'); // only the pick digs (the others dig by hand)
     const col = hit.normal.y < 0.6 ? 0x8a6d86 : 0x4f8a7a; // rock on slopes, moss on flat ground
     if (!fill) {
       world.brush(hit.point, power.radius, power.strength, -1);
@@ -1675,7 +1690,7 @@ async function main() {
       skyEnv.update(dt, sky.hemi);
       const simDt = hitStop > 0 ? dt * 0.05 : dt;
       hitStop = Math.max(0, hitStop - dt);
-      for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }
+      for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c, h.slot); }
       fauna.update(simDt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night, camera.getWorldDirection(fauna.viewTmp));
       hotbar.update(simDt, input.moving, { yaw: player.yaw, pitch: player.pitch });
       particles.update(simDt);
@@ -1705,12 +1720,15 @@ async function main() {
       if (!dig) digBlock = false;
       if (placing && dig && !digBlock) { build(); digBlock = true; } // a click while placing builds instead of digging
       else if (digBlock) { /* that click was the build: no digging until it's released */ }
-      else if ((dig || fill) && (actionCooldown -= dt) <= 0) {
-        const prey = dig ? fauna.lookAt(camera, ATTACK[hotbar.slot].reach) : null;
+      // The cooldown runs whether or not the button is held: it was reset on release, so clicking fast attacked (and
+      // dug) as often as you could click.
+      actionCooldown = Math.max(0, actionCooldown - dt);
+      if (!digBlock && !(placing && dig) && (dig || fill) && actionCooldown <= 0) {
+        const prey = dig ? preyInSight(ATTACK[hotbar.slot].reach) : null;
         if (prey?.alive) { attack(prey); actionCooldown = 0.55; }
         else if (dig && hotbar.slot === 'spear') { hotbar.swing(); audio.swing(); actionCooldown = 0.55; } // a jab at nothing
-        else { brush(fill && !dig); hotbar.swing(); actionCooldown = DIG_POWER[hotbar.slot].interval; }
-      } else if (!dig && !fill) actionCooldown = 0;
+        else { brush(fill && !dig); hotbar.swingDig(); actionCooldown = DIG_POWER[hotbar.slot].interval; }
+      }
       smooth('sim', performance.now() - tm);
     } else {
       player.update(0); // keep the camera placed while paused

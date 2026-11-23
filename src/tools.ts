@@ -10,8 +10,10 @@ export const SLOT_NAMES: Record<Slot, string> = { hands: 'Hands', stone_pick: 'S
 export const DIG_POWER: Record<Slot, { strength: number; radius: number; interval: number }> = {
   hands: { strength: 1.1, radius: 1.5, interval: 0.25 },
   stone_pick: { strength: 3.2, radius: 2.2, interval: 0.12 },
-  stone_knife: { strength: 0.8, radius: 1.3, interval: 0.25 },
-  spear: { strength: 0.8, radius: 1.3, interval: 0.25 },
+  // Only the pick is a digging tool. The knife dug worse than bare hands and wore itself out doing it: you dig with
+  // your free hand instead (hands power, no wear on the knife).
+  stone_knife: { strength: 1.1, radius: 1.5, interval: 0.25 },
+  spear: { strength: 1.1, radius: 1.5, interval: 0.25 },
 };
 
 /** Where the fist closes around a handle (viewmodel space). */
@@ -20,9 +22,6 @@ const GRIP: [number, number, number] = [0, -0.09, -0.14];
 const wood = new THREE.MeshStandardMaterial({ color: 0xcdbfa3, roughness: 0.9, flatShading: true });
 const rock = new THREE.MeshStandardMaterial({ color: 0x8a857c, roughness: 1, flatShading: true });
 const cord = new THREE.MeshStandardMaterial({ color: 0x8aa46f, roughness: 1, flatShading: true });
-const skin = new THREE.MeshStandardMaterial({ color: 0x4d535b, roughness: 0.85 }); // suit glove
-const suit = new THREE.MeshStandardMaterial({ color: 0xe6e8ea, roughness: 0.6 });
-const hazard = new THREE.MeshStandardMaterial({ color: 0xe07a2f, roughness: 0.6 });
 
 function mesh(g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0) {
   const o = new THREE.Mesh(g, m);
@@ -32,13 +31,7 @@ function mesh(g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0) {
 
 function buildModel(slot: Slot) {
   const g = new THREE.Group();
-  // A suited forearm and glove are always visible: the survivor's own hand.
-  const arm = mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.42, 8), suit, 0, -0.2, 0.08);
-  arm.rotation.x = 1.25;
-  const band = mesh(new THREE.CylinderGeometry(0.057, 0.057, 0.04, 8), hazard, 0, -0.13, -0.04);
-  band.rotation.x = 1.25;
-  const hand = mesh(new THREE.BoxGeometry(0.08, 0.06, 0.1), skin, 0, -0.1, -0.12);
-  g.add(arm, band, hand);
+  // Stand-ins until the Blender tools load: the tool alone, no hand or arm (bare hands show nothing).
   if (slot === 'stone_pick') {
     g.add(mesh(new THREE.CylinderGeometry(0.015, 0.018, 0.5, 6), wood, 0, 0.1, -0.14));
     const head = mesh(new THREE.ConeGeometry(0.035, 0.26, 5), rock, 0.06, 0.33, -0.14);
@@ -120,6 +113,9 @@ export class Hotbar {
   }
 
   swing() { this.swingT = 0; }
+  /** Held digging: restarts the swing only once the strike has landed. The pick digs every 0.12 s but a swing takes
+   *  0.31 s, so restarting each stroke froze it in the wind-up and it never struck. */
+  swingDig() { if (this.swingT >= 0.45) this.swingT = 0; }
 
   /** A heavy landing pushes the hand down for a moment (0..1). */
   dip(amount: number) { this.dipV = Math.max(this.dipV, amount * 0.08); }
