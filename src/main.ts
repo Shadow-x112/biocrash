@@ -334,7 +334,7 @@ async function main() {
   SaveStore.onVersionChange = () => { stopSaving(); flash('A newer Biocrash opened in another tab. This tab stopped saving: reload it.'); };
 
   // --- Saving --------------------------------------------------------------------------------------
-  let respawnTo: THREE.Vector3 | null = null;
+  let respawnTo: THREE.Vector3 | null = null, loadCheck = true;
   const currentMeta = (): SaveMeta => ({
     saveVersion: SAVE_VERSION, genVersion: GEN_VERSION, seed, savedAt: Date.now(), timeOfDay: sky.time,
     // Saved on the death screen: store where and how you wake (it stored 0 health, clamped to 1, at the spot you froze,
@@ -1523,6 +1523,15 @@ async function main() {
     world.update(player.position);
     smooth('world', performance.now() - tm);
     player.frozen = !world.isReadyAt(player.position) || state === 'dead';
+    // Loaded buried (a save made while clipped into the ground, or after a fill landed on you): lift to the surface.
+    if (loadCheck && !player.frozen) {
+      loadCheck = false;
+      const head = player.position.clone().setY(player.position.y + 0.6);
+      if (world.solidAt(head) || world.solidAt(player.position)) {
+        const top = world.groundAt(player.position.x, player.position.z);
+        if (top) { player.teleport(new THREE.Vector3(player.position.x, top.y + 1.2, player.position.z)); flash('You were stuck in the ground: moved you up to the surface.'); }
+      }
+    }
     if (simulating) {
       tm = performance.now();
       player.update(dt);

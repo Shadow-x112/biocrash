@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d';
 import { CHUNK, PAD, MIN_CY, MAX_CY, VIEW_RADIUS, COLLIDER_RADIUS, chunkKey } from '../config';
 import type { MeshRequest, MeshResponse } from './mesher.worker';
-import type { DecoData } from './deco';
+import { sampleDensity, type DecoData } from './deco';
+import { createGenerator, type Generator } from './density';
 
 interface Chunk {
   key: string;
@@ -255,6 +256,18 @@ export class World {
     if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh = null; }
     this.removeCollider(c);
     this.onChunkUnload(c.key);
+  }
+
+  private gen: Generator | null = null;
+  /** Is this point inside solid ground (edits included)? For catching a save that left you buried. */
+  solidAt(p: THREE.Vector3) {
+    this.gen ??= createGenerator(this.seed);
+    const cx = floorDiv(p.x, CHUNK), cy = floorDiv(p.y, CHUNK), cz = floorDiv(p.z, CHUNK);
+    const d = new Float32Array(PAD * PAD * PAD);
+    this.gen.fillChunk(cx, cy, cz, d);
+    const e = this.paddedEdits(cx, cy, cz);
+    if (e) for (let i = 0; i < d.length; i++) d[i] += e[i];
+    return sampleDensity(d, p.x - cx * CHUNK, p.y - cy * CHUNK, p.z - cz * CHUNK) > 0;
   }
 
   /** True once the chunk under this point is meshed and has physics (or is empty air). */
