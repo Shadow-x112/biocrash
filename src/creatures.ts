@@ -147,7 +147,7 @@ type Built = { root: THREE.Group; legs: THREE.Object3D[]; body: THREE.Object3D; 
 const TEMPLATES = new Map<string, Built>();
 const UP = new THREE.Vector3(0, 1, 0), Q = new THREE.Quaternion();
 /** Ground speed (m/s) each clip's planted feet move at when played at normal rate. */
-const STRIDE: Record<Species['id'], { Walk: number; Run: number }> = { tuko: { Walk: 0.54, Run: 1.18 }, oomi: { Walk: 0.9, Run: 3.8 } };
+const STRIDE: Record<Species['id'], { Walk: number; Run: number }> = { tuko: { Walk: 0.54, Run: 1.18 }, oomi: { Walk: 0.54, Run: 1.78 } };
 const CARCASS = new THREE.MeshStandardMaterial({ color: 0x3a2a2c, roughness: 1, flatShading: true });
 
 export class Creature {
@@ -394,7 +394,7 @@ export class Creature {
       this.play(clip);
       // Played at the rate its planted feet keep pace with the ground (measured from the clips). Scaling by the
       // species' walk/run speed made a Tuko's feet skate: its walk cycle covers 0.54 m/s, not 1.1.
-      if (this.current && (clip === 'Walk' || clip === 'Run')) this.current.timeScale = Math.max(0.4, this.speed / STRIDE[sp.id][clip]);
+      if (this.current && (clip === 'Walk' || clip === 'Run')) this.current.timeScale = Math.max(0.2, this.speed / STRIDE[sp.id][clip]);
       else if (this.current) this.current.timeScale = 1;
       this.mixer.update(dt);
       if (this.skinMat) { if (this.skinMat.emissiveMap) this.skinMat.color.setHex(this.hurtFlash > 0 ? 0xff5040 : 0xffffff); else this.skinMat.emissive.setHex(this.hurtFlash > 0 ? 0x701010 : 0x000000); }

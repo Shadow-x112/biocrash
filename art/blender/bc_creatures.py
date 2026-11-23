@@ -1,4 +1,4 @@
-# Biocrash creatures: Tuko (small armoured six-legged grazer that curls into a ball) and Oomi (tall tripod grazer),
+﻿# Biocrash creatures: Tuko (small armoured six-legged grazer that curls into a ball) and Oomi (tall tripod grazer),
 # rigged and animated, plus the horror Figure (static silhouette). One glTF: two armatures with skinned meshes and
 # their clips (Tuko_Idle/Walk/Run/Curl/Death, Oomi_Idle/Walk/Run/Sleep/Death) and a Figure mesh.
 # Facing: Blender -Y (= +Z in three.js). Colour (and glow, via bright vertex colours) is per vertex.
@@ -107,6 +107,12 @@ def rot(arm, bone, axis, ang):
     pb.rotation_quaternion = q @ pb.rotation_quaternion
 
 
+def move(arm, bone, vec):
+    """Translation in armature space, written into the bone's local pose."""
+    bone = PFX[arm.name] + bone
+    arm.pose.bones[bone].location = arm.data.bones[bone].matrix_local.to_3x3().inverted() @ Vector(vec)
+
+
 def clip(arm, name, frames, pose_fn, loop=True):
     act = bpy.data.actions.new(name); act.use_fake_user = True
     arm.animation_data_create(); arm.animation_data.action = act
@@ -194,7 +200,9 @@ def tuko_curl(t):
 def tuko_death(t):
     k = min(1, t * 1.5)
     rot(tuko, "root", (0, 1, 0), math.pi * 0.95 * k)
-    tuko.pose.bones["t_root"].location = (0, 0, 0.12 * math.sin(k * math.pi) + 0.18 * k)
+    # Up in armature space (the bone-local Z this wrote is sideways): flipped on its back, its shell top ends up under
+    # the root, so it has to rise by the shell's height or the carcass lay buried.
+    move(tuko, "root", (0, 0, 0.12 * math.sin(k * math.pi) + 0.3 * k))
     for (u, l, sx, si) in LEGS:
         tw = math.sin(t * 40 + si) * (1 - k) * 0.3
         rot(tuko, u, (0, 1, 0), (-0.6 * k + tw) * sx); rot(tuko, l, (0, 1, 0), -1.0 * k * sx)
@@ -243,17 +251,38 @@ for dx in (-0.06, 0.06):  # side eyes
     B.add(ellipsoid(0.028, seg=10, ring=8), "head", GLOW, Matrix.Translation((OX + dx, -0.86, 1.63)), grit=0)
 OOMI_SRC = B.finish(oomi)
 
-def oomi_walk(speed):
+OOMI_GAIT = {"walk": (0.5, 0.62, 0.12), "run": (0.6, 0.45, 0.24)}  # stride (m), stance share, foot lift (m)
+OOMI_CROUCH = 0.1  # the legs are nearly straight at rest: walking a little lower gives the knees room to reach
+def oomi_walk(kind):
+    """Feet follow a planted-then-swing path and a two-bone IK in each leg's side plane finds the joint angles, so a
+    planted foot stays put while the body passes over it. (Swinging the joints with sines lifted the feet on the
+    backstroke: the Oomi moonwalked.) Ground speed of the clip = stride / (stance share * cycle time)."""
+    D, s, lift = OOMI_GAIT[kind]
     def f(t):
         for i, (n, a, k, ft) in enumerate(OLEGS):
-            ph = t * math.tau + i * math.tau / 3
-            rot(oomi, n + "_u", (1, 0, 0), math.sin(ph) * 0.35 * speed)
-            # The knee lifts the foot while it swings forward (foot moves forward as sin(ph) falls). It lifted on the
-            # backstroke, so planted feet slid forward: the Oomi moonwalked.
-            rot(oomi, n + "_l", (1, 0, 0), -max(0, -math.cos(ph)) * 0.55 * speed)
-        oomi.pose.bones["o_body"].location = (0, 0, 0)
-        rot(oomi, "body", (0, 1, 0), math.sin(t * math.tau) * 0.05 * speed)
-        rot(oomi, "neck1", (1, 0, 0), math.sin(t * math.tau * 2) * 0.06 * speed)
+            u = (t + i / 3.0) % 1.0
+            if u < s: dy, dz = -D / 2 + D * (u / s), 0.0                      # planted: slides back under the body
+            else:
+                v = (u - s) / (1 - s); e = v * v * (3 - 2 * v)
+                dy, dz = D / 2 - D * e, lift * math.sin(math.pi * v)         # swing: up and forward
+            H, K, F = Vector(a), Vector(k), Vector(ft)
+            L1, L2 = (K - H).yz.length, (F - K).yz.length
+            T = Vector((F.y + dy, F.z + OOMI_CROUCH + dz))  # (hips lowered by the crouch = feet relatively higher)
+            d = T - H.yz; dl = min(d.length, (L1 + L2) * 0.999)
+            # Knee bends the way it does at rest: forward for the front leg, back for the rear ones.
+            bend = 1 if (K.y - H.y) * (F.z - H.z) - (K.z - H.z) * (F.y - H.y) > 0 else -1
+            cosA = max(-1, min(1, (L1 * L1 + dl * dl - L2 * L2) / (2 * L1 * dl)))
+            ang_hip = math.atan2(d.y, d.x) + bend * math.acos(cosA)
+            Kn = H.yz + Vector((math.cos(ang_hip), math.sin(ang_hip))) * L1
+            ang_low = math.atan2((T - Kn).y, (T - Kn).x)
+            rest_u = math.atan2(K.z - H.z, K.y - H.y); rest_l = math.atan2(F.z - K.z, F.y - K.y)
+            du = ang_hip - rest_u; dlow = ang_low - rest_l - du
+            rot(oomi, n + "_u", (1, 0, 0), du)
+            rot(oomi, n + "_l", (1, 0, 0), dlow)
+        move(oomi, "root", (0, 0, -OOMI_CROUCH))
+        sp = 1.0 if kind == "walk" else 1.7
+        rot(oomi, "body", (0, 1, 0), math.sin(t * math.tau) * 0.05 * sp)
+        rot(oomi, "neck1", (1, 0, 0), math.sin(t * math.tau * 2) * 0.06 * sp)
         rot(oomi, "head", (0, 0, 1), math.sin(t * math.tau) * 0.1)
     return f
 def oomi_idle(t):
@@ -262,7 +291,7 @@ def oomi_idle(t):
     rot(oomi, "head", (1, 0, 0), math.sin(t * math.tau * 2) * 0.1)
 def oomi_sleep(t):
     k = min(1, t * 1.3)
-    root = oomi.pose.bones["o_root"]; root.location = (0, 0, -0.42 * k)
+    move(oomi, "root", (0, 0, -0.25 * k))  # settles down onto its folded legs (it slid backwards and hovered)
     for n, a, kk, f in OLEGS:
         out = 1 if n == "legL" else -1 if n == "legR" else 0
         rot(oomi, n + "_u", (1, 0, 0), (0.9 if n == "legF" else -0.9) * k)
@@ -272,12 +301,12 @@ def oomi_sleep(t):
 def oomi_death(t):
     k = min(1, t * 1.4) ** 1.5
     rot(oomi, "root", (0, 1, 0), math.pi / 2 * 0.95 * k)
-    oomi.pose.bones["o_root"].location = (0, 0, 0.35 * k)
+    move(oomi, "root", (0, 0, 0.45 * k))  # lying on its side, the body would sink half into the ground
     rot(oomi, "neck1", (1, 0, 0), 0.5 * k); rot(oomi, "head", (1, 0, 0), 0.6 * k)
     for n, a, kk, f in OLEGS: rot(oomi, n + "_l", (1, 0, 0), -0.7 * k)
 clip(oomi, "Oomi_Idle", 72, oomi_idle)
-clip(oomi, "Oomi_Walk", 36, oomi_walk(1.0))
-clip(oomi, "Oomi_Run", 18, oomi_walk(1.7))
+clip(oomi, "Oomi_Walk", 36, oomi_walk("walk"))
+clip(oomi, "Oomi_Run", 18, oomi_walk("run"))
 clip(oomi, "Oomi_Sleep", 30, oomi_sleep, loop=False)
 clip(oomi, "Oomi_Death", 30, oomi_death, loop=False)
 
