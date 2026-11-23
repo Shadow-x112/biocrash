@@ -481,18 +481,24 @@ async function main() {
   // Soft-lock escape: wedged in terrain, buried by a fill, or down a shaft you can't climb. Moves you to the surface
   // straight above, or to the nearest open ground; not to the wreck, so it's no free trip home. Once a minute.
   let lastUnstuck = -Infinity;
+  /** Somewhere to stand near `p`: the surface straight above if you're under it (when `up`), else the nearest open,
+   *  walkable ground within 10 m. Never inside a mushroom trunk, the wreck, a crate or a fire (it could put you right
+   *  back into what you were stuck in). */
+  const openGround = (p: THREE.Vector3, up: boolean): THREE.Vector3 | null => {
+    const free = (x: number, z: number) => !(fauna.blocked?.(x, z, 0.45));
+    const top = world.groundAt(p.x, p.z);
+    if (up && top && top.y > p.y - 0.9 + 1.5 && free(p.x, p.z)) return new THREE.Vector3(p.x, top.y + 1.2, p.z); // underground: up to the surface
+    for (let r = 2; r <= 10; r += 1)
+      for (let a = 0; a < 12; a++) {
+        const x = p.x + Math.cos(a * Math.PI / 6) * r, z = p.z + Math.sin(a * Math.PI / 6) * r;
+        const g = world.groundAt(x, z);
+        if (g && g.ny > 0.7 && free(x, z)) return new THREE.Vector3(x, g.y + 1.2, z);
+      }
+    return null;
+  };
   $('unstuck').onclick = () => {
     if (performance.now() - lastUnstuck < 60_000) { flash('You just did that. Try again in a minute.'); return; }
-    const p = player.position;
-    let dest: THREE.Vector3 | null = null;
-    const top = world.groundAt(p.x, p.z);
-    if (top && top.y > p.y - 0.9 + 1.5) dest = new THREE.Vector3(p.x, top.y + 1.2, p.z); // underground: up to the surface
-    for (let r = 2; !dest && r <= 10; r += 2)
-      for (let a = 0; a < 8 && !dest; a++) {
-        const x = p.x + Math.cos(a * Math.PI / 4) * r, z = p.z + Math.sin(a * Math.PI / 4) * r;
-        const g = world.groundAt(x, z);
-        if (g && g.ny > 0.7) dest = new THREE.Vector3(x, g.y + 1.2, z);
-      }
+    const dest = openGround(player.position, true);
     if (!dest) { flash('No open ground found nearby. Dig or fill your way out, or try again somewhere else.'); return; }
     lastUnstuck = performance.now();
     player.teleport(dest);
@@ -1540,6 +1546,10 @@ async function main() {
       if (world.solidAt(head) || world.solidAt(player.position)) {
         const top = world.groundAt(player.position.x, player.position.z);
         if (top) { player.teleport(new THREE.Vector3(player.position.x, top.y + 1.2, player.position.z)); flash('You were stuck in the ground: moved you up to the surface.'); }
+      } else if (fauna.blocked?.(player.position.x, player.position.z, 0) && !player.position.equals(spawnPoint)) {
+        // ...or inside a mushroom trunk, the wreck or a crate (a mushroom can grow where you saved).
+        const dest = openGround(player.position, false);
+        if (dest) { player.teleport(dest); flash('You were stuck inside something: moved you to open ground.'); }
       }
     }
     if (simulating) {
@@ -1550,7 +1560,10 @@ async function main() {
       world.afterPhysics();
       smooth('physics', performance.now() - tm);
       tm = performance.now();
-      if (player.position.y < floorY) player.teleport(spawnPoint); // fell out of the world
+      if (player.position.y < floorY) { // fell out of the world: back on the surface above, not a free trip to the crash site
+        const top = world.groundAt(player.position.x, player.position.z);
+        player.teleport(top ? new THREE.Vector3(player.position.x, top.y + 1.2, player.position.z) : spawnPoint);
+      }
 
       const wdt = resting ? dt * 6 : dt; // world time while resting
       sky.update(wdt, camera);
