@@ -935,7 +935,8 @@ async function main() {
   const updateLamp = (dt: number, fireNear: number) => {
     const cell = inventory.counts.lamp_cell > 0; // the salvaged power cell: half the drain, faster recharge
     if (lampOn) { lampCharge = Math.max(0, lampCharge - dt * (100 / 300) * (cell ? 0.5 : 1)); if (lampCharge <= 0) { lampOn = false; flash('Lamp charge depleted.'); } }
-    else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 ? 100 / 300 : 0) * (cell ? 1.5 : 1));
+    // Daylight charging needs the sky: not in a cave or under the wreck (it charged deep underground at noon).
+    else lampCharge = Math.min(100, lampCharge + dt * (fireNear > 0.3 ? 100 / 60 : sky.daylight > 0.5 && !survival.sheltered ? 100 / 300 : 0) * (cell ? 1.5 : 1));
     // A solar panel in daylight charges it fast even while it's on.
     if (sky.daylight > 0.25 && lampCharge < 100 && placeables.solarNear(player.position, 6)) {
       lampCharge = Math.min(100, lampCharge + dt * (100 / 20));
@@ -959,6 +960,8 @@ async function main() {
       return;
     }
     if (inventory.counts.cooked_meat > 0) {
+      // Fed tops out at two meals: eating at the cap used to burn the meat for nothing.
+      if (survival.fed > TEMP.fedTime * 2 - 30) { audio.deny(); flash(`You're full. Fed for ${fmtTime(survival.fed)}.`); return; }
       inventory.take({ cooked_meat: 1 });
       survival.fed = Math.min(TEMP.fedTime * 2, survival.fed + TEMP.fedTime);
       audio.pickup('fiber');
@@ -1243,12 +1246,14 @@ async function main() {
   // Contextual vitals: health shows when hurt or for a few seconds after it changes; body heat only while you're
   // losing it or cold. The "Always show vitals and inventory" setting keeps everything up.
   const hpGroup = $('hpgroup'), heatGroup = $('heatgroup'), hpvEl = $('hpv'), heatLabelEl = $('heatlabel'), tempvEl = $('tempv');
-  let lastHp = -1, lastHeat = -1, hpShowT = 0, heatShowT = 0, vitalsClock = performance.now();
+  let lastHp = -1, lastHeat = -1, hpShowT = 0, heatShowT = 0, vitalsClock = performance.now(), heatTrend = 0, heatPrev = survival.warmth;
   const showGroup = (el: HTMLElement, on: boolean) => { if (el.classList.contains('faded') === on) el.classList.toggle('faded', !on); };
   const updateVitals = () => {
     const now = performance.now(), dtv = (now - vitalsClock) / 1000; vitalsClock = now;
-    if (Math.abs(survival.health - lastHp) > 0.25) { if (lastHp >= 0) hpShowT = 4; lastHp = survival.health; }
+    // Pops up on a loss, not while healing (slow regen kept the bar on screen the whole time).
+    if (survival.health < lastHp - 0.25) { hpShowT = 4; lastHp = survival.health; } else if (survival.health > lastHp || lastHp < 0) lastHp = survival.health;
     if (survival.warmth < lastHeat - 0.4) { heatShowT = 4; lastHeat = survival.warmth; } else if (survival.warmth > lastHeat) lastHeat = survival.warmth;
+    heatTrend = heatTrend * 0.8 + (survival.warmth - heatPrev) * 0.2; heatPrev = survival.warmth;
     hpShowT = Math.max(0, hpShowT - dtv); heatShowT = Math.max(0, heatShowT - dtv);
     showGroup(hpGroup, settings.fullHud || survival.health < 75 || hpShowT > 0);
     showGroup(heatGroup, settings.fullHud || survival.cold || survival.warmth < 60 || heatShowT > 0);
@@ -1256,7 +1261,8 @@ async function main() {
     setStyle(heatBar, 'transform', `scaleX(${(survival.warmth / 100).toFixed(3)})`);
     setStyle(heatBar, 'backgroundColor', survival.warmth > 60 ? '#e0a050' : survival.warmth > 30 ? '#c9b98a' : '#8fc3e8');
     setText(hpvEl, String(Math.ceil(survival.health)));
-    setText(heatLabelEl, survival.cold ? '\u2744 Body heat \u00b7 freezing' : survival.warmth < 60 ? 'Body heat \u00b7 cooling' : 'Body heat');
+    // By the trend: "cooling" while you warm up at a fire was wrong.
+    setText(heatLabelEl, heatTrend > 0.02 && survival.warmth < 100 ? (survival.cold ? '\u2744 Body heat \u00b7 warming' : 'Body heat \u00b7 warming') : survival.cold ? '\u2744 Body heat \u00b7 freezing' : survival.warmth < 60 ? 'Body heat \u00b7 cooling' : 'Body heat');
     setText(tempvEl, `air ${fmtTemp(survival.ambientC)}${survival.sheltered ? ' · sheltered' : survival.shaded ? ' · shade' : ''}`);
     setStyle(frostEl, 'opacity', Math.max(0, (45 - survival.warmth) / 45).toFixed(2));
     // Inventory list: only for a few seconds after something changes (or always, with the setting on).

@@ -30,7 +30,7 @@ export class Survival {
   readonly heatSources: HeatSource[] = [];
   /** Seconds of "fed" left: faster healing and slower heat loss. */
   fed = 0;
-  /** Wearing a hide wrap: heat loss x0.6. */
+  /** Wearing a hide wrap: heat loss x0.75 ("25% slower", as its recipe says). */
   wrapped = false;
   /** Seconds after a respawn with slower heat loss, so penalties don't stack up. */
   afterglow = 0;
