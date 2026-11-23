@@ -282,7 +282,8 @@ export class Creature {
     this.timer = seconds;
   }
 
-  update(dt: number, ctx: { player: THREE.Vector3; playerRunning: boolean; playerSneaking: boolean; night: number; ground: (x: number, z: number, y: number) => { y: number; ny: number } | null; trail: (p: THREE.Vector3) => void }) {
+  update(dt: number, ctx: { player: THREE.Vector3; playerRunning: boolean; playerSneaking: boolean; night: number; ground: (x: number, z: number, y: number) => { y: number; ny: number } | null; trail: (p: THREE.Vector3) => void;
+    blocked?: (x: number, z: number, r: number) => boolean }) {
     this.gait += dt;
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
     if (!this.alive) {
@@ -318,6 +319,10 @@ export class Creature {
       else { this.state = 'wander'; this.timer = 3 + Math.random() * 6; this.heading += (Math.random() - 0.5) * 2.2; }
     }
 
+    // Don't stand inside the player: an Oomi you walk into steps aside (you passed straight through it).
+    const px = this.position.x - ctx.player.x, pz = this.position.z - ctx.player.z, pd = Math.hypot(px, pz);
+    if (pd < sp.radius + 0.4 && pd > 1e-3 && Math.abs(ctx.player.y - 0.9 - this.position.y) < sp.height * 2 + 0.5) this.knock.set((px / pd) * 1.5, (pz / pd) * 1.5);
+
     // Move.
     const target = this.state === 'flee' ? sp.run : this.state === 'wander' ? sp.walk : 0;
     this.speed += (target - this.speed) * Math.min(1, dt * 4);
@@ -325,7 +330,8 @@ export class Creature {
       const nx = this.position.x + Math.sin(this.heading) * this.speed * dt;
       const nz = this.position.z + Math.cos(this.heading) * this.speed * dt;
       const g = ctx.ground(nx, nz, this.position.y);
-      if (g && g.ny > 0.62 && Math.abs(g.y - this.position.y) < 1.2) {
+      // Not through trunks, the wreck, crates or fires (they walked straight through all of them).
+      if (g && g.ny > 0.62 && Math.abs(g.y - this.position.y) < 1.2 && !ctx.blocked?.(nx, nz, sp.radius)) {
         this.position.set(nx, g.y, nz);
       } else {
         this.heading += Math.PI * (0.5 + Math.random() * 0.5); // too steep or a drop: turn away
@@ -338,7 +344,8 @@ export class Creature {
     if (this.knock.lengthSq() > 0.01) {
       const nx = this.position.x + this.knock.x * dt, nz = this.position.z + this.knock.y * dt;
       const g = ctx.ground(nx, nz, this.position.y);
-      if (g && Math.abs(g.y - this.position.y) < 1.2) this.position.set(nx, g.y, nz);
+      if (g && g.ny > 0.62 && Math.abs(g.y - this.position.y) < 1.2 && !ctx.blocked?.(nx, nz, sp.radius)) this.position.set(nx, g.y, nz);
+      else this.knock.set(0, 0); // knocked into a wall or over an edge: it stops
       this.knock.multiplyScalar(Math.max(0, 1 - dt * 6));
     }
 
@@ -426,7 +433,11 @@ export class Fauna {
     this.list.splice(this.list.indexOf(c), 1);
   }
 
-  update(dt: number, player: THREE.Vector3, playerRunning: boolean, playerSneaking: boolean, night: number) {
+  /** Ground creatures can't walk into (trunks, the wreck, crates, fires); set by the game. */
+  blocked?: (x: number, z: number, r: number) => boolean;
+  readonly viewTmp = new THREE.Vector3();
+
+  update(dt: number, player: THREE.Vector3, playerRunning: boolean, playerSneaking: boolean, night: number, view?: THREE.Vector3) {
     // Keep a modest population around the player: ~8 Tuko, ~3 Oomi.
     if ((this.spawnTimer -= dt) <= 0) {
       this.spawnTimer = 1.5;
@@ -436,14 +447,19 @@ export class Fauna {
         const a = Math.random() * Math.PI * 2, d = 25 + Math.random() * 40;
         const x = player.x + Math.cos(a) * d, z = player.z + Math.sin(a) * d;
         const g = this.ground(x, z, player.y);
-        if (g && g.ny > 0.7) {
+        // Not where you're looking unless it's far (they popped into view 25 m ahead), nor inside something solid.
+        const inView = view && d < 50 && (Math.cos(a) * view.x + Math.sin(a) * view.z) / (Math.hypot(view.x, view.z) || 1) > 0.5;
+        if (g && g.ny > 0.7 && !inView && !this.blocked?.(x, z, 1)) {
           const n = want === 'oomi' ? 1 + Math.floor(Math.random() * 2) : 1; // Oomi wander in pairs
-          for (let i = 0; i < n; i++) this.spawn(want, new THREE.Vector3(x + i * 1.5, g.y, z + i));
+          for (let i = 0; i < n; i++) {
+            const gi = i ? this.ground(x + i * 1.5, z + i, g.y) : g; // the second of a pair on its own ground (it floated or sank)
+            if (gi && !this.blocked?.(x + i * 1.5, z + i, 1)) this.spawn(want, new THREE.Vector3(x + i * 1.5, gi.y, z + i));
+          }
         }
       }
     }
     for (const c of [...this.list]) {
-      c.update(dt, { player, playerRunning, playerSneaking, night, ground: this.ground, trail: (p) => this.addTrail(p) });
+      c.update(dt, { player, playerRunning, playerSneaking, night, ground: this.ground, trail: (p) => this.addTrail(p), blocked: this.blocked });
       const far = c.position.distanceTo(player) > 110;
       if (far || (!c.alive && (c.strippedT > 90 || (c.harvested && c.strippedT < 0) || c.deadTime > 300))) this.remove(c);
     }

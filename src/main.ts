@@ -238,6 +238,9 @@ async function main() {
   let wasNight = meta?.wasNight ?? false;
   let nights = meta?.nights ?? 0;
   const fauna = new Fauna((x, z) => world.groundAt(x, z));
+  fauna.blocked = (x, z, r) => flora.trunkAt(x, z, r) || wreck.covers(x, z, r * 0.5)
+    || crates.list.some((c) => Math.hypot(c.position.x - x, c.position.z - z) < 0.6 + r)
+    || campfires.list.some((f) => Math.hypot(f.position.x - x, f.position.z - z) < 0.9 + r);
   scene.add(fauna.group);
 
   // Render scale: the Resolution setting, lowered automatically (down to 50%) while the frame rate is poor.
@@ -1578,7 +1581,7 @@ async function main() {
       const simDt = hitStop > 0 ? dt * 0.05 : dt;
       hitStop = Math.max(0, hitStop - dt);
       for (let k = pendingHits.length - 1; k >= 0; k--) if ((pendingHits[k].t -= dt) <= 0) { const h = pendingHits.splice(k, 1)[0]; landHit(h.c); }
-      fauna.update(simDt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night);
+      fauna.update(simDt, player.position, input.moving && input.down('run') && !player.crouching, player.crouching, sky.night, camera.getWorldDirection(fauna.viewTmp));
       hotbar.update(simDt, input.moving, { yaw: player.yaw, pitch: player.pitch });
       particles.update(simDt);
       updateLamp(dt, fireNearPlayer());
