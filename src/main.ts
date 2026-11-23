@@ -1253,7 +1253,7 @@ async function main() {
     // Pops up on a loss, not while healing (slow regen kept the bar on screen the whole time).
     if (survival.health < lastHp - 0.25) { hpShowT = 4; lastHp = survival.health; } else if (survival.health > lastHp || lastHp < 0) lastHp = survival.health;
     if (survival.warmth < lastHeat - 0.4) { heatShowT = 4; lastHeat = survival.warmth; } else if (survival.warmth > lastHeat) lastHeat = survival.warmth;
-    heatTrend = heatTrend * 0.8 + (survival.warmth - heatPrev) * 0.2; heatPrev = survival.warmth;
+    heatTrend = heatTrend * 0.6 + THREE.MathUtils.clamp(survival.warmth - heatPrev, -1, 1) * 0.4; heatPrev = survival.warmth; // (clamped: a jump, like respawning at 60%, must not mask the trend for seconds)
     hpShowT = Math.max(0, hpShowT - dtv); heatShowT = Math.max(0, heatShowT - dtv);
     showGroup(hpGroup, settings.fullHud || survival.health < 75 || hpShowT > 0);
     showGroup(heatGroup, settings.fullHud || survival.cold || survival.warmth < 60 || heatShowT > 0);
