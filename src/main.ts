@@ -1166,7 +1166,8 @@ async function main() {
     const near = (q: THREE.Vector3, pad: number) => Math.hypot(q.x - at.x, q.z - at.z) < power.radius + pad && Math.abs(q.y - at.y) < power.radius + 1.5;
     const inWay = crates.list.some((c) => near(c.position, 0.6)) ? 'A crate' : campfires.list.some((f) => near(f.position, 0.7)) ? 'Your campfire'
       : placeables.solars.some((p) => near(p.pos, 0.8)) ? 'The solar panel' : placeables.flares.some((f) => near(f.pos, 0.3)) ? 'The flare'
-      : packs.list.some((p) => near(p.position, 0.4)) ? 'A pack' : chips.list.some((c) => c.placed && near(c.group.position, 0.3)) ? 'A data chip' : '';
+      : packs.list.some((p) => near(p.position, 0.4)) ? 'A pack' : chips.list.some((c) => c.placed && near(c.group.position, 0.3)) ? 'A data chip'
+      : wreck.placed && wreck.covers(at.x, at.z, power.radius * 0.5) && at.y < wreck.center.y + 1 ? 'The wreck' : ''; // it would hang over the hole
     if (inWay) { audio.deny(); flash(`${inWay} is in the way.`); return; }
     if (fill && at.distanceTo(player.position) < power.radius + 0.9) { audio.deny(); flash('Too close: step back to fill.'); return; } // don't bury yourself
     if (hotbar.slot !== 'hands') useTool(hotbar.slot);
