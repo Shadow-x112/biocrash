@@ -230,6 +230,12 @@ async function main() {
   const placeables = new Placeables(RAPIER, physics);
   scene.add(placeables.group);
   placeables.load(meta?.placed);
+  // Mushrooms don't grow (or sprout) through what you've built: a sprout could come up inside a fire, crate or panel.
+  const wreckBlocked = flora.blocked;
+  flora.blocked = (x, z) => !!wreckBlocked?.(x, z)
+    || campfires.list.some((f) => Math.hypot(f.position.x - x, f.position.z - z) < 0.9)
+    || crates.list.some((c) => Math.hypot(c.position.x - x, c.position.z - z) < 0.9)
+    || placeables.solars.some((p) => Math.hypot(p.pos.x - x, p.pos.z - z) < 1.0);
   const flarePreview = placeables.makePreview('flare'), solarPreview = placeables.makePreview('solar');
   scene.add(flarePreview.group, solarPreview.group);
   const chips = new Chips(spawnPoint, (id) => scanned.has(id), wreck);
@@ -1076,6 +1082,7 @@ async function main() {
       if (!hit || hit.normal.y < 0.8) return 'Look at flatter ground nearby to set up the panel.';
       if (wreck.debrisAt(hit.point.x, hit.point.z, 0.6)) return 'A hull plate is in the way.';
       if ([...crates.list.map((c) => c.position), ...placeables.solars.map((s) => s.pos), ...campfires.list.map((f) => f.position)].some((p) => p.distanceTo(hit.point) < 1.4)) return 'Too close to something else.';
+      if (flora.trunkAt(hit.point.x, hit.point.z, 0.7)) return 'A mushroom is in the way.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to set it up here.';
       if (placeables.solars.length >= MAX_SOLARS) return `You have ${MAX_SOLARS} panels already.`;
       if (!inventory.has(costOf('solar'))) return 'You no longer have the materials for a panel.';
@@ -1086,6 +1093,8 @@ async function main() {
       if (wreck.debrisAt(hit.point.x, hit.point.z, 0.6)) return 'A hull plate is in the way.';
       if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.1)) return 'Too close to another crate.';
       if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.3)) return 'Too close to the fire.';
+      if (placeables.solars.some((s) => s.pos.distanceTo(hit.point) < 1.4)) return 'Too close to the solar panel.';
+      if (flora.trunkAt(hit.point.x, hit.point.z, 0.6)) return 'A mushroom is in the way.';
       if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 1.0) return 'Step back a little to place it here.';
       if (crates.list.length >= MAX_CRATES) return `You have ${MAX_CRATES} crates already.`;
       if (!inventory.has(crateCost)) return 'You no longer have the materials for a crate.';
@@ -1095,9 +1104,15 @@ async function main() {
     if (wreck.debrisAt(hit.point.x, hit.point.z, 0.5)) return 'A hull plate is in the way.';
     // Guards: not on top of another fire (spamming B stacked them), not inside your own feet, and a sane total.
     if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
+    // Fires went anywhere else: into a crate or a solar panel (their colliders overlapping), or the foot of a mushroom.
+    if (crates.list.some((c) => c.position.distanceTo(hit.point) < 1.3)) return 'Too close to the crate.';
+    if (placeables.solars.some((s) => s.pos.distanceTo(hit.point) < 1.4)) return 'Too close to the solar panel.';
+    if (placeables.flares.some((f) => f.pos.distanceTo(hit.point) < 0.9)) return 'A flare is in the way.';
+    if (flora.trunkAt(hit.point.x, hit.point.z, 0.6)) return 'A mushroom is in the way.';
     if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) return 'Step back a little to build here.';
     // At the cap, the oldest cold fire pit is cleared to make room; if every fire is burning, refuse.
-    if (campfires.list.length >= MAX_FIRES && !campfires.list.some((f) => !f.lit && f.cooking.length === 0 && f.ready.length === 0)) return `You have ${MAX_FIRES} fires burning already.`;
+    if (campfires.list.length >= MAX_FIRES && !campfires.list.some((f) => !f.lit && f.cooking.length === 0 && f.ready.length === 0))
+      return campfires.list.every((f) => f.lit) ? `You have ${MAX_FIRES} fires burning already.` : `You have ${MAX_FIRES} fires already, and the cold ones still have meat on the spit: take it off first.`;
     if (!inventory.has(CAMPFIRE_COST)) return `A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`;
     return '';
   };
