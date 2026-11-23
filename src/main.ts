@@ -1240,7 +1240,7 @@ async function main() {
     hotbar.select(owned[(i + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length], () => true);
   });
 
-  if (import.meta.env.DEV) Object.assign(window, { __bc: { wreck, packs, crates, world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, post, renderer, scene, getState: () => state, setNights: (n: number) => { nights = n; } } });
+  if (import.meta.env.DEV) Object.assign(window, { __bc: { wreck, packs, crates, placeables, chips, world, player, camera, saveNow, store, sky, survival, props, inventory, campfires, hotbar, fauna, flora, input, audio, particles, horror, post, renderer, scene, getState: () => state, setNights: (n: number) => { nights = n; } } });
 
   // --- HUD -----------------------------------------------------------------------------------------
   const deathEl = $('death'), frostEl = $('frost'), promptEl = $('prompt');
