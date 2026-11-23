@@ -1555,11 +1555,13 @@ async function main() {
         if (survival.dead) {
           setState('dead');
           audio.death();
-          // Materials stay where you fell, in a pack on your compass. Tools and gear come with you, and so does a small
-          // fire kit (2 stalkwood), so a night death can't chain into another one before you reach your pack.
+          // Materials stay where you fell, in a pack on your compass. Tools and gear come with you, and so does a fire
+          // kit: what one campfire costs. (It kept 2 stalkwood, but a fire takes 4 stalkwood and 5 stone, so the kit
+          // couldn't build anything and a night death chained straight into the next.)
           const items: Record<string, number> = {};
+          const kitFull = inventory.has(CAMPFIRE_COST);
           for (const k of MATERIALS) {
-            const keep = k === 'stalkwood' ? Math.min(2, inventory.counts[k]) : 0;
+            const keep = Math.min((CAMPFIRE_COST as Partial<Record<ItemId, number>>)[k] ?? 0, inventory.counts[k]);
             if (inventory.counts[k] - keep > 0) items[k] = inventory.counts[k] - keep;
           }
           const dropped = Object.keys(items).length > 0;
@@ -1571,15 +1573,26 @@ async function main() {
           const ages = Object.fromEntries(PERISHABLE.filter((k) => items[k]).map((k) => [k, inventory.ages[k].slice(0, items[k])]));
           if (dropped) { packs.add(feet, items, ages); inventory.take(items as Partial<Record<ItemId, number>>); }
           deathText.textContent = 'You froze.';
-          // Wake at the nearest fire you built that's still burning; with none, at the crash site.
-          let wake: THREE.Vector3 = spawnPoint, best = Infinity;
+          // Wake at the nearest fire you built that will keep burning a while (one about to gutter out only chained
+          // the deaths); with none, at the crash site.
+          let wake: THREE.Vector3 = spawnPoint, best = Infinity, fire: (typeof campfires.list)[number] | null = null;
           for (const f of campfires.list) {
             const d = f.position.distanceTo(player.position);
-            if (f.lit && d < best) { best = d; wake = f.position.clone().add(new THREE.Vector3(1.6, 1.4, 0)); }
+            if (f.fuel > 60 && d < best) { best = d; fire = f; }
           }
-          const atFire = wake !== spawnPoint;
-          if (atFire) { const gw = world.groundAt(wake.x, wake.z); if (gw && Math.abs(gw.y - wake.y) < 4) wake.y = gw.y + 1.2; }
-          deathHint.textContent = dropped ? `Your materials are where you fell, marked on the compass. You kept a fire kit. Waking ${atFire ? 'at your fire' : 'at the crash site'}\u2026`
+          if (fire) {
+            // Beside it on open ground: a fixed spot 1.6 m east could be inside a crate or trunk, or off a ledge.
+            wake = fire.position.clone().add(new THREE.Vector3(1.6, 1.2, 0));
+            search: for (const r of [1.8, 2.6, 3.4]) for (let a = 0; a < 8; a++) {
+              const x = fire.position.x + Math.cos(a * Math.PI / 4) * r, z = fire.position.z + Math.sin(a * Math.PI / 4) * r;
+              const g = world.groundAt(x, z);
+              if (!g || g.ny < 0.7 || Math.abs(g.y - fire.position.y) > 1.5 || fauna.blocked?.(x, z, 0.4)) continue;
+              wake = new THREE.Vector3(x, g.y + 1.2, z);
+              break search;
+            }
+          }
+          const atFire = !!fire;
+          deathHint.textContent = dropped ? `Your materials are where you fell, marked on the compass.${kitFull ? ' You kept enough for one campfire.' : ''} Waking ${atFire ? 'at your fire' : 'at the crash site'}\u2026`
             : 'Fire and shelter keep your core temperature up. Cooked meat and a hide wrap help you last the night.';
           deathEl.style.display = 'flex';
           respawnTo = wake.clone(); // a save in the next 3 s (tab closed on the death screen) stores the wake-up, not the corpse
