@@ -830,7 +830,9 @@ async function main() {
     switch (t.kind) {
       case 'creature':
         return t.c.alive ? t.c.species.name
-          : inventory.counts.stone_knife > 0 ? `${K('use')}  harvest ${t.c.species.name}` : `${t.c.species.name}  ·  needs a stone knife to harvest`;
+          : inventory.counts.stone_knife <= 0 ? `${t.c.species.name}  ·  needs a stone knife to harvest`
+          : t.c.position.distanceTo(player.position) > USE_REACH + 1 ? `${t.c.species.name}  ·  step closer to harvest` // E did nothing from here
+          : `${K('use')}  harvest ${t.c.species.name}`;
       case 'prop': return `${K('use')}  pick up ${ITEM_NAMES[t.p.kind].toLowerCase()}`;
       case 'fire': {
         const cook = (t.f.ready.length ? `  \u00b7  ${K('eat')}  take ${t.f.ready.length} cooked meat` : '')
@@ -886,7 +888,8 @@ async function main() {
       if (inventory.room(t.p.kind) < 1) { packFull(t.p.kind); return; }
       props.pick(t.p);
       audio.pickup(t.p.kind);
-      give(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? 2 : 1);
+      // The knife's second fiber only if there's room for it (it spilled into a pack on the ground).
+      give(t.p.kind, t.p.kind === 'fiber' && hotbar.slot === 'stone_knife' ? Math.min(2, inventory.room('fiber')) : 1);
       if (t.p.kind === 'fiber' && hotbar.slot === 'stone_knife') useTool('stone_knife');
       hotbar.swing();
     } else if (t.kind === 'fire') {
@@ -1190,7 +1193,7 @@ async function main() {
     const d = Math.max(0, fauna.lastDist - 0.15);
     camera.getWorldDirection(losDir);
     if (world.raycast(camera.position, losDir, d) || wreck.blocks(camera.position, losDir, d)) return null;
-    for (let s = 0.5; s < d; s += 0.5) if (flora.trunkAt(camera.position.x + losDir.x * s, camera.position.z + losDir.z * s, 0)) return null;
+    for (let s = 0.5; s < d; s += 0.5) if (flora.trunkAt(camera.position.x + losDir.x * s, camera.position.z + losDir.z * s, 0, 1)) return null; // the stem at eye height, not the flared foot
     return c;
   };
   const landHit = (c: Creature, slot: Slot) => {

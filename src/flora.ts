@@ -435,10 +435,10 @@ export class Flora {
   private gridAdd(s: Shroom) { const k = this.cellOf(s.base.x, s.base.z); let a = this.trunkGrid.get(k); if (!a) this.trunkGrid.set(k, (a = [])); a.push(s); }
   private gridRemove(s: Shroom) { const a = this.trunkGrid.get(this.cellOf(s.base.x, s.base.z)); if (a) { const i = a.indexOf(s); if (i >= 0) a.splice(i, 1); } }
   /** Is (x, z) inside (or right against) a mushroom trunk's foot? */
-  trunkAt(x: number, z: number, pad = 0.35) {
+  trunkAt(x: number, z: number, pad = 0.35, flare = 1.6) {
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const a = this.trunkGrid.get(`${Math.floor(x / 8) + dx},${Math.floor(z / 8) + dz}`);
-      if (a) for (const s of a) if (s.alive && Math.hypot(x - s.base.x, z - s.base.z) < s.radius * 1.6 + pad) return true; // the foot flares to ~1.6x
+      if (a) for (const s of a) if (s.alive && Math.hypot(x - s.base.x, z - s.base.z) < s.radius * flare + pad) return true; // the foot flares to ~1.6x
     }
     return false;
   }
