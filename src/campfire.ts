@@ -13,12 +13,15 @@ const HEAT_RADIUS = 8;
 const HEAT_C = 62; // a full fire keeps you comfortable to ~5 m, room to cook and craft beside it
 const MAX_LIGHTS = 2; // only the two nearest fires cast light: every light costs every lit pixel
 
-export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; /** Ground slope it sits on. */ nx?: number; nz?: number }
+export interface CampfireSave { x: number; y: number; z: number; fuel: number; cooking?: number[]; /** Ages of cooked pieces waiting on the spit. */ ready?: number[]; /** Ground slope it sits on. */ nx?: number; nz?: number }
 /** Rotation that stands something on ground with normal (nx, ny, nz). */
 const tiltTo = (nx = 0, nz = 0) => { const ny = Math.sqrt(Math.max(0.01, 1 - nx * nx - nz * nz)); return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(nx, ny, nz).normalize()); };
 
 /** Seconds to cook one piece of meat over a lit fire. */
 export const COOK_TIME = 9;
+/** Pieces the spit holds, cooking and cooked together. */
+export const SPIT_MAX = 4;
+const COOKED_LIFE = 2400; // as carried cooked meat (inventory SHELF_LIFE)
 
 class Campfire {
   readonly group = new THREE.Group();
@@ -28,6 +31,9 @@ class Campfire {
   private t = Math.random() * 10;
   /** Seconds left on each piece of meat on the spit (only the first cooks; the fire must be lit). */
   cooking: number[] = [];
+  /** Cooked pieces left on the spit (you weren't there to take them), by age in seconds; they spoil like carried meat. */
+  ready: number[] = [];
+  get spitFree() { return SPIT_MAX - this.cooking.length - this.ready.length; }
   private meat: THREE.Mesh;
   /** Flicker: a random walk toward new targets every few frames (sines read as mechanical). */
   private flick = 1;
@@ -84,14 +90,26 @@ class Campfire {
   gutterNow(seconds: number) { this.gutter = 1.6; this.fuel = Math.max(1, this.fuel - seconds); }
 
   /** Returns how many pieces finished cooking this frame (via `done`). */
-  update(dt: number, done: () => void = () => {}) {
+  update(dt: number, done: () => void = () => {}, out: () => void = () => {}) {
+    const was = this.lit;
+    // Cooking spends the same time slice as the fuel (it used to cook a full frame past the last of the fuel).
+    const burn = Math.min(dt, this.fuel);
     this.fuel = Math.max(0, this.fuel - dt);
+    if (was && !this.lit) out();
     this.t += dt;
-    if (this.lit && this.cooking.length && (this.cooking[0] -= dt) <= 0) { this.cooking.shift(); done(); }
-    this.meat.visible = this.cooking.length > 0;
+    let cookDt = burn;
+    while (cookDt > 0 && this.cooking.length) {
+      const step = Math.min(cookDt, this.cooking[0]);
+      this.cooking[0] -= step; cookDt -= step;
+      if (this.cooking[0] <= 1e-6) { this.cooking.shift(); done(); } // (a long resting frame can finish more than one)
+      else break;
+    }
+    for (let i = 0; i < this.ready.length; i++) this.ready[i] += dt;
+    while (this.ready.length && this.ready[0] >= COOKED_LIFE) this.ready.shift(); // oldest first
+    this.meat.visible = this.cooking.length + this.ready.length > 0;
     if (this.meat.visible) {
       this.meat.rotation.y += dt * 0.8;
-      const c = 1 - Math.max(0, this.cooking[0]) / COOK_TIME; // browns as it cooks
+      const c = this.cooking.length ? 1 - Math.max(0, this.cooking[0]) / COOK_TIME : 1; // browns as it cooks
       (this.meat.material as THREE.MeshStandardMaterial).color.setRGB(0.75 - c * 0.38, 0.32 - c * 0.12, 0.3 - c * 0.17);
     }
     // Small fires (low fuel) burn lower and give less heat.
@@ -220,7 +238,7 @@ export class Campfires {
   }
 
   /** Solid fires: you walked straight into the flames (and stood in them). A post the height of a step-up won't do,
-   *  so the ring gets an invisible 1.2 m column that the player capsule can't climb onto. */
+   *  so the ring gets an invisible 2 m column that the player capsule can't climb onto. */
   private phys?: { R: typeof RAPIER; world: RAPIER.World };
   private bodies = new Map<Campfire, RAPIER.RigidBody>();
   setPhysics(R: typeof RAPIER, world: RAPIER.World) {
@@ -230,8 +248,10 @@ export class Campfires {
   private addBody(f: Campfire) {
     if (!this.phys || this.bodies.has(f)) return;
     const { R, world } = this.phys, p = f.position;
-    const body = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(p.x, p.y + 0.6, p.z));
-    world.createCollider(R.ColliderDesc.cylinder(0.6, 0.45), body);
+    // 2 m tall: on a slope the uphill ground stands ~0.45 m above the fire's centre, and a 1.2 m column was then a
+    // step the capsule could climb onto.
+    const body = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(p.x, p.y + 1.0, p.z));
+    world.createCollider(R.ColliderDesc.cylinder(1.0, 0.45), body);
     this.bodies.set(f, body);
   }
 
@@ -287,10 +307,12 @@ export class Campfires {
 
   /** Called when a piece of meat finishes cooking on a fire. */
   onCooked: (f: Campfire) => void = () => {};
+  /** Called when a fire runs out of fuel. */
+  onOut: (f: Campfire) => void = () => {};
 
   update(dt: number, viewer: THREE.Vector3) {
     flameTime.value += dt;
-    const strengths = this.list.map((f) => f.update(dt, () => this.onCooked(f)));
+    const strengths = this.list.map((f) => f.update(dt, () => this.onCooked(f), () => this.onOut(f)));
     const lit = this.list.map((f, i) => ({ f, s: strengths[i], d: f.position.distanceToSquared(viewer) }))
       .filter((x) => x.s > 0).sort((a, b) => a.d - b.d);
     this.lights.forEach((l, i) => {
@@ -305,10 +327,10 @@ export class Campfires {
   }
 
   save(): CampfireSave[] {
-    return this.list.map((f) => { const n = new THREE.Vector3(0, 1, 0).applyQuaternion(f.tilt); return { x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel, cooking: [...f.cooking], nx: n.x, nz: n.z }; });
+    return this.list.map((f) => { const n = new THREE.Vector3(0, 1, 0).applyQuaternion(f.tilt); return { x: f.position.x, y: f.position.y, z: f.position.z, fuel: f.fuel, cooking: [...f.cooking], ready: [...f.ready], nx: n.x, nz: n.z }; });
   }
 
   load(list: CampfireSave[] | undefined) {
-    for (const s of list ?? []) { const f = this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel, s.nx ?? 0, s.nz ?? 0); f.cooking = [...(s.cooking ?? [])]; f.flare = 0; }
+    for (const s of list ?? []) { const f = this.add(new THREE.Vector3(s.x, s.y, s.z), s.fuel, s.nx ?? 0, s.nz ?? 0); f.cooking = [...(s.cooking ?? [])]; f.ready = [...(s.ready ?? [])].sort((a, b) => b - a); f.flare = 0; }
   }
 }

@@ -102,7 +102,8 @@ export function sanitizeMeta(raw: unknown): SaveMeta | null {
       if (!f || typeof f !== 'object') continue;
       const [x, y, z] = [num(f.x, -1e6, 1e6), num(f.y, -1e4, 1e4), num(f.z, -1e6, 1e6)];
       const cooking = Array.isArray(f.cooking) ? (f.cooking as unknown[]).map((c) => num(c, 0, 60)).filter((c): c is number => c !== undefined).slice(0, 20) : [];
-      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0, cooking, ...tilt(f) });
+      const ready = Array.isArray(f.ready) ? (f.ready as unknown[]).map((c) => num(c, 0, 1e5)).filter((c): c is number => c !== undefined).slice(0, 20) : [];
+      if (x !== undefined && y !== undefined && z !== undefined) out.campfires.push({ x, y, z, fuel: num(f.fuel, 0, 1e5) ?? 0, cooking, ...(ready.length ? { ready } : {}), ...tilt(f) });
     }
     out.campfires = out.campfires.slice(0, 500);
   }

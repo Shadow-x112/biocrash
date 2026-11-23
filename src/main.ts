@@ -254,7 +254,7 @@ async function main() {
   const tutorial = new Tutorial($('core'), meta?.tutorialStep ?? 0, meta?.milestones);
   tutorial.goalMet = (id: MilestoneId) => {
     switch (id) {
-      case 'raw_meat': return inventory.counts.cooked_meat > 0 || survival.fed > 0 || campfires.list.some((f) => f.cooking.length > 0);
+      case 'raw_meat': return inventory.counts.cooked_meat > 0 || survival.fed > 0 || campfires.list.some((f) => f.cooking.length > 0 || f.ready.length > 0);
       case 'cooked': return survival.fed > 0;
       case 'hide': return inventory.counts.hide_wrap > 0;
       case 'dawn': return player.position.distanceTo(spawnPoint) < 15;
@@ -827,8 +827,9 @@ async function main() {
           : inventory.counts.stone_knife > 0 ? `${K('use')}  harvest ${t.c.species.name}` : `${t.c.species.name}  ·  needs a stone knife to harvest`;
       case 'prop': return `${K('use')}  pick up ${ITEM_NAMES[t.p.kind].toLowerCase()}`;
       case 'fire': {
-        const cook = t.f.cooking.length ? `  \u00b7  cooking ${Math.ceil(t.f.cooking[0])}s${t.f.cooking.length > 1 ? ` (+${t.f.cooking.length - 1})` : ''}`
-          : inventory.counts.raw_meat > 0 && t.f.lit ? `  \u00b7  ${K('eat')}  cook raw meat` : '';
+        const cook = (t.f.ready.length ? `  \u00b7  ${K('eat')}  take ${t.f.ready.length} cooked meat` : '')
+          + (t.f.cooking.length ? `  \u00b7  cooking ${Math.ceil(t.f.cooking[0])}s${t.f.cooking.length > 1 ? ` (+${t.f.cooking.length - 1})` : ''}${t.f.lit ? '' : ' (stopped)'}` : '')
+          + (!t.f.ready.length && inventory.counts.raw_meat > 0 && t.f.lit && t.f.spitFree > 0 ? `  \u00b7  ${K('eat')}  ${t.f.cooking.length ? 'add' : 'cook'} raw meat` : '');
         return (t.f.lit ? `${K('use')}  add stalkwood  \u00b7  burns ${fmtTime(t.f.fuel)}` : `${K('use')}  relight with stalkwood`) + cook;
       }
       case 'chip': return `${K('use')}  read data chip`;
@@ -960,13 +961,22 @@ async function main() {
   /** Q: cook raw meat on the fire you're looking at, otherwise eat cooked meat. */
   const food = () => {
     const f = campfires.lookAt(camera, USE_REACH);
+    if (f && f.ready.length) { // cooked pieces waiting on the spit come off first
+      const n = Math.min(f.ready.length, inventory.room('cooked_meat'));
+      if (n < 1) { packFull('cooked_meat'); return; }
+      for (const age of f.ready.splice(0, n)) inventory.add('cooked_meat', 1, age);
+      audio.pickup('fiber');
+      flash(`Took ${n} cooked meat off the spit.${f.ready.length ? ` ${f.ready.length} left: no room.` : ''}`);
+      return;
+    }
     if (f && inventory.counts.raw_meat > 0) {
       if (!f.lit) { audio.deny(); flash(`Light the fire first: ${K('use')} with stalkwood.`); return; }
-      if (f.cooking.length >= 4) { flash('The spit is full.'); return; }
+      if (f.spitFree < 1) { flash('The spit is full.'); return; }
+      if (f.fuel < COOK_TIME * (f.cooking.length + 1)) flash(`The fire won't last that long: add stalkwood (${K('use')}) or it stops cooking.`);
       inventory.take({ raw_meat: 1 });
       f.cooking.push(COOK_TIME);
       audio.fireLit(f.position);
-      flash(`Cooking. It takes ${COOK_TIME} seconds; keep the fire lit.`);
+      if (f.fuel >= COOK_TIME * f.cooking.length) flash(`Cooking. It takes ${COOK_TIME} seconds; keep the fire lit.`);
       return;
     }
     if (inventory.counts.cooked_meat > 0) {
@@ -981,10 +991,22 @@ async function main() {
     audio.deny();
     flash(inventory.counts.raw_meat > 0 ? `Cook raw meat first: look at a lit fire and press ${K('eat')}.` : 'Nothing to eat. Hunt, then cook the meat at a fire.');
   };
+  // Cooked meat comes to you only when you're at the fire with room for it. It used to jump into your pack from anywhere
+  // (or spill a pack at your feet a kilometre away): now it waits on the spit.
   campfires.onCooked = (f) => {
-    const got = give('cooked_meat', 1);
     tutorial.milestone('cooked');
-    if (got && f.position.distanceTo(player.position) < 12) { audio.pickup('fiber'); flash('Meat cooked.'); } // (not over the pack-full note)
+    const d = f.position.distanceTo(player.position);
+    if (d < USE_REACH + 1 && state !== 'dead' && inventory.room('cooked_meat') > 0) {
+      give('cooked_meat', 1);
+      audio.pickup('fiber'); flash('Meat cooked.');
+    } else {
+      f.ready.push(0);
+      if (d < 12 && state !== 'dead') flash(`Meat cooked: it's waiting on the spit (${K('eat')} at the fire to take it).`);
+    }
+  };
+  campfires.onOut = (f) => {
+    if (state === 'dead' || f.position.distanceTo(player.position) > 15) return;
+    flash(f.cooking.length ? `The fire went out with meat on the spit. Feed it stalkwood (${K('use')}) to finish cooking.` : 'The fire burned out.');
   };
 
   /** Station-core lines triggered by the world (the tutorial queues them and shows one at a time). */
@@ -1075,7 +1097,7 @@ async function main() {
     if (campfires.list.some((f) => f.position.distanceTo(hit.point) < 1.6)) return 'Too close to another fire.';
     if (hit.point.distanceTo(player.position.clone().setY(player.position.y - 0.9)) < 0.9) return 'Step back a little to build here.';
     // At the cap, the oldest cold fire pit is cleared to make room; if every fire is burning, refuse.
-    if (campfires.list.length >= MAX_FIRES && !campfires.list.some((f) => !f.lit && f.cooking.length === 0)) return `You have ${MAX_FIRES} fires burning already.`;
+    if (campfires.list.length >= MAX_FIRES && !campfires.list.some((f) => !f.lit && f.cooking.length === 0 && f.ready.length === 0)) return `You have ${MAX_FIRES} fires burning already.`;
     if (!inventory.has(CAMPFIRE_COST)) return `A campfire needs ${CAMPFIRE_COST.stalkwood} stalkwood and ${CAMPFIRE_COST.stone} stone.`;
     return '';
   };
@@ -1115,7 +1137,7 @@ async function main() {
       return;
     }
     inventory.take(CAMPFIRE_COST);
-    if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0)!); // paid for: now clear the oldest cold pit
+    if (campfires.list.length >= MAX_FIRES) campfires.remove(campfires.list.find((f) => !f.lit && f.cooking.length === 0 && f.ready.length === 0)!); // paid for: now clear the oldest cold pit
     campfires.add(hit.point.clone(), FUEL_START, hit.normal.x, hit.normal.z);
     audio.place(hit.point);
     flash(`Campfire built. Add stalkwood (${K('use')}) to keep it burning.`);
