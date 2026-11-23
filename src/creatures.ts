@@ -146,6 +146,8 @@ export const SPECIES: Record<Species['id'], Species> = {
 type Built = { root: THREE.Group; legs: THREE.Object3D[]; body: THREE.Object3D; glow: THREE.MeshStandardMaterial; ball?: THREE.Object3D };
 const TEMPLATES = new Map<string, Built>();
 const UP = new THREE.Vector3(0, 1, 0), Q = new THREE.Quaternion();
+/** Ground speed (m/s) each clip's planted feet move at when played at normal rate. */
+const STRIDE: Record<Species['id'], { Walk: number; Run: number }> = { tuko: { Walk: 0.54, Run: 1.18 }, oomi: { Walk: 0.9, Run: 3.8 } };
 const CARCASS = new THREE.MeshStandardMaterial({ color: 0x3a2a2c, roughness: 1, flatShading: true });
 
 export class Creature {
@@ -225,6 +227,12 @@ export class Creature {
   private useModel(m: CreatureModels) {
     const rig = SkeletonUtils.clone(m.rigs[this.species.id]);
     this.root.add(rig);
+    // The Oomi's armature sits 3 m to the side in the Blender layout, so it was drawn 3 m away from where it really
+    // is (its hit sphere, collisions and sounds): you aimed at empty air. Centre the rig's root bone on the creature.
+    rig.updateMatrixWorld(true);
+    const bones: THREE.Bone[] = []; rig.traverse((o) => { if ((o as THREE.Bone).isBone) bones.push(o as THREE.Bone); });
+    const rootBone = bones.find((b) => !(b.parent as THREE.Bone | null)?.isBone);
+    if (rootBone) { const w = rootBone.getWorldPosition(new THREE.Vector3()); this.root.worldToLocal(w); rig.position.x -= w.x; rig.position.z -= w.z; }
     rig.traverse((o) => {
       const mesh = o as THREE.SkinnedMesh;
       if (!mesh.isMesh) return;
@@ -237,7 +245,10 @@ export class Creature {
     });
     this.mixer = new THREE.AnimationMixer(rig);
     const pre = this.species.id === 'tuko' ? 'Tuko_' : 'Oomi_';
-    for (const c of m.clips) if (c.name.startsWith(pre)) {
+    // The export broadcasts every clip to both rigs, so each name comes twice: once with this rig's bones and once
+    // with the other's (static). Take the one that drives this rig: the Oomi was getting the Tuko copies and never
+    // moved its legs.
+    for (const c of m.clips) if (c.name.startsWith(pre) && c.tracks.some((t) => rig.getObjectByName(t.name.split('.')[0]))) {
       const a = this.mixer.clipAction(c);
       const once = /Curl|Death|Sleep/.test(c.name);
       if (once) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
@@ -381,7 +392,9 @@ export class Creature {
       // Animation by state; walk and run play at the speed the creature is actually moving.
       const clip = this.state === 'curl' ? 'Curl' : this.state === 'sleep' ? 'Sleep' : this.speed > 2.2 ? 'Run' : this.speed > 0.15 ? 'Walk' : 'Idle';
       this.play(clip);
-      if (this.current && (clip === 'Walk' || clip === 'Run')) this.current.timeScale = Math.max(0.4, this.speed / (clip === 'Run' ? sp.run : sp.walk));
+      // Played at the rate its planted feet keep pace with the ground (measured from the clips). Scaling by the
+      // species' walk/run speed made a Tuko's feet skate: its walk cycle covers 0.54 m/s, not 1.1.
+      if (this.current && (clip === 'Walk' || clip === 'Run')) this.current.timeScale = Math.max(0.4, this.speed / STRIDE[sp.id][clip]);
       else if (this.current) this.current.timeScale = 1;
       this.mixer.update(dt);
       if (this.skinMat) { if (this.skinMat.emissiveMap) this.skinMat.color.setHex(this.hurtFlash > 0 ? 0xff5040 : 0xffffff); else this.skinMat.emissive.setHex(this.hurtFlash > 0 ? 0x701010 : 0x000000); }

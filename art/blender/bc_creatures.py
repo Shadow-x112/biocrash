@@ -248,7 +248,9 @@ def oomi_walk(speed):
         for i, (n, a, k, ft) in enumerate(OLEGS):
             ph = t * math.tau + i * math.tau / 3
             rot(oomi, n + "_u", (1, 0, 0), math.sin(ph) * 0.35 * speed)
-            rot(oomi, n + "_l", (1, 0, 0), -max(0, math.cos(ph)) * 0.5 * speed)
+            # The knee lifts the foot while it swings forward (foot moves forward as sin(ph) falls). It lifted on the
+            # backstroke, so planted feet slid forward: the Oomi moonwalked.
+            rot(oomi, n + "_l", (1, 0, 0), -max(0, -math.cos(ph)) * 0.55 * speed)
         oomi.pose.bones["o_body"].location = (0, 0, 0)
         rot(oomi, "body", (0, 1, 0), math.sin(t * math.tau) * 0.05 * speed)
         rot(oomi, "neck1", (1, 0, 0), math.sin(t * math.tau * 2) * 0.06 * speed)
