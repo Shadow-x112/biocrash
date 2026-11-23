@@ -213,6 +213,7 @@ async function main() {
   const campfires = new Campfires(survival.heatSources);
   scene.add(campfires.group);
   campfires.load(meta?.campfires);
+  campfires.setPhysics(RAPIER, physics);
   const packs = new Packs();
   scene.add(packs.group);
   packs.load(meta?.packs);

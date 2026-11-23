@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { addDetail, prepGlow } from './assets';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { HeatSource } from './survival';
+import type RAPIER from '@dimforge/rapier3d';
 
 export const CAMPFIRE_COST = { stalkwood: 4, stone: 5 } as const;
 export const FUEL_START = 180;     // seconds of burn when built
@@ -218,8 +219,25 @@ export class Campfires {
     }
   }
 
+  /** Solid fires: you walked straight into the flames (and stood in them). A post the height of a step-up won't do,
+   *  so the ring gets an invisible 1.2 m column that the player capsule can't climb onto. */
+  private phys?: { R: typeof RAPIER; world: RAPIER.World };
+  private bodies = new Map<Campfire, RAPIER.RigidBody>();
+  setPhysics(R: typeof RAPIER, world: RAPIER.World) {
+    this.phys = { R, world };
+    for (const f of this.list) this.addBody(f);
+  }
+  private addBody(f: Campfire) {
+    if (!this.phys || this.bodies.has(f)) return;
+    const { R, world } = this.phys, p = f.position;
+    const body = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(p.x, p.y + 0.6, p.z));
+    world.createCollider(R.ColliderDesc.cylinder(0.6, 0.45), body);
+    this.bodies.set(f, body);
+  }
+
   add(position: THREE.Vector3, fuel = FUEL_START, nx = 0, nz = 0) {
     const f = new Campfire(position, fuel, this.parts, tiltTo(nx, nz));
+    this.addBody(f);
     this.list.push(f);
     this.group.add(f.group);
     this.heatSources.push(f.heat);
@@ -260,6 +278,8 @@ export class Campfires {
     if (i < 0) return;
     this.list.splice(i, 1);
     this.group.remove(f.group);
+    const b = this.bodies.get(f);
+    if (b && this.phys) { this.phys.world.removeRigidBody(b); this.bodies.delete(f); }
     const h = this.heatSources.indexOf(f.heat);
     if (h >= 0) this.heatSources.splice(h, 1);
     f.dispose();

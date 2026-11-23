@@ -16,6 +16,7 @@ const ACCEL_GROUND = 30, ACCEL_AIR = 8;
 const STEP_WALK = 1.7, STEP_RUN = 2.3, STEP_SNEAK = 1.2; // metres between footsteps
 const BOB = 0.035;
 const MAX_FALL = 45; // m/s
+const STEEP_NY = Math.cos((52 * Math.PI) / 180); // jumpable footing: a touch past the 50° walk limit
 
 export class Player {
   readonly position = new THREE.Vector3();
@@ -52,6 +53,8 @@ export class Player {
   private fovKick = 0;
   private velY = 0;
   private grounded = false;
+  /** Up-component of the best floor normal under the capsule (1 = flat). */
+  private groundNy = 1;
   private dragging = false;
   private body: RAPIER.RigidBody;
   private collider: RAPIER.Collider;
@@ -124,7 +127,8 @@ export class Player {
       const jumpDown = inp.down('jump');
       if (jumpDown && !this.jumpHeld) this.jumpBuffer = JUMP_BUFFER;
       this.jumpHeld = jumpDown;
-      this.coyote = this.grounded ? COYOTE : this.coyote - dt;
+      // Only footing you could walk up counts for jumping: hopping on a too-steep slope climbed any cliff.
+      this.coyote = this.grounded && this.groundNy >= STEEP_NY ? COYOTE : this.coyote - dt;
       this.jumpBuffer -= dt;
       if (this.jumpBuffer > 0 && this.coyote > 0) {
         this.velY = JUMP; this.coyote = 0; this.jumpBuffer = 0; this.grounded = false;
@@ -139,6 +143,12 @@ export class Player {
       const out = this.controller.computedMovement();
       const wasGrounded = this.grounded;
       this.grounded = this.controller.computedGrounded();
+      const n = this.controller.numComputedCollisions();
+      if (this.grounded && n > 0) { // keep the last reading on frames with no contacts (ground snapping)
+        let ny = 0;
+        for (let i = 0; i < n; i++) ny = Math.max(ny, this.controller.computedCollision(i)?.normal1.y ?? 0);
+        this.groundNy = ny;
+      }
       if (this.grounded && !wasGrounded && fallSpeed > 4) {
         const impact = fallSpeed;
         this.landDip = Math.min(0.25, impact * 0.018);
